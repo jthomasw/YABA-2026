@@ -1,13 +1,116 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <link rel="stylesheet" href="/static/style.css">
-    <title>Dashboard - YABA</title>
+<title>YABA Dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
 </head>
+
 <body>
-<div class="container">
-    <h2>Welcome, {{.}}</h2>
-    <p>You are successfully logged in to YABA 🎉</p>
+
+<!-- TOP HEADER -->
+<div class="topbar">
+
+    <div class="logo">
+        Budgeting App
+    </div>
+
+    <div class="user-actions">
+        <span>Welcome, <b>{{.}}</b></span>
+        <a href="/logout" class="logout-btn">Logout</a>
+    </div>
+
 </div>
+
+
+<div class="main-container">
+
+<div class="budget-header">
+<h1>Create Your Budget</h1>
+<p>Understanding your income and expenses is the foundation of financial success.</p>
+</div>
+
+
+<div class="cards">
+
+<div class="card income">
+<h3>Income</h3>
+<p id="incomeTotal">$0</p>
+</div>
+
+<div class="card expense">
+<h3>Expenses</h3>
+<p id="expenseTotal">$0</p>
+</div>
+
+<div class="card net">
+<h3>Net</h3>
+<p id="netTotal">$0</p>
+</div>
+
+</div>
+
+
+<div class="budget-form">
+
+<h2>Monthly Income</h2>
+
+<div class="input-row">
+<label>Salary/Wages</label>
+<input type="number" id="salary" value="0">
+</div>
+
+<div class="input-row">
+<label>Other Income</label>
+<input type="number" id="otherIncome" value="0">
+</div>
+
+
+<h2>Monthly Expenses</h2>
+
+<div class="input-row">
+<label>Rent</label>
+<input type="number" id="rent" value="0">
+</div>
+
+<div class="input-row">
+<label>Food</label>
+<input type="number" id="food" value="0">
+</div>
+
+<div class="input-row">
+<label>Transportation</label>
+<input type="number" id="transport" value="0">
+</div>
+
+<button onclick="calculateBudget()">Calculate Budget</button>
+
+</div>
+
+</div>
+
+
+<script>
+
+function calculateBudget(){
+
+let salary = parseFloat(document.getElementById("salary").value) || 0;
+let other = parseFloat(document.getElementById("otherIncome").value) || 0;
+
+let rent = parseFloat(document.getElementById("rent").value) || 0;
+let food = parseFloat(document.getElementById("food").value) || 0;
+let transport = parseFloat(document.getElementById("transport").value) || 0;
+
+let income = salary + other;
+let expenses = rent + food + transport;
+let net = income - expenses;
+
+document.getElementById("incomeTotal").innerText = "$" + income;
+document.getElementById("expenseTotal").innerText = "$" + expenses;
+document.getElementById("netTotal").innerText = "$" + net;
+
+}
+
+</script>
+
 </body>
 </html>

@@ -162,6 +162,7 @@ func loginUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func dashboard(w http.ResponseWriter, r *http.Request) {
+
 	session, _ := store.Get(r, "session")
 	user := session.Values["user"]
 
