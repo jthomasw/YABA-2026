@@ -23,3 +23,12 @@ as you have a folder and it contains a main.go file in it then go to the new tab
 
 http://localhost:8080/templates/main.html
 
+Install Required Packages
+
+Run inside your project:
+
+go mod init yaba
+go get github.com/mattn/go-sqlite3
+go get golang.org/x/crypto/bcrypt
+go get github.com/gorilla/sessions
+
