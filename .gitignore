@@ -1,9 +1,10 @@
 Open .gitignore and paste:
 
 # Database files
-*.db
-*.sqlite
-*.sqlite3
+
+#*.db
+#*.sqlite
+#*.sqlite3 
 
 # OS files
 .DS_Store
