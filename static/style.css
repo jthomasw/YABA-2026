@@ -129,3 +129,13 @@ cursor:pointer;
 button:hover{
 background:#3e8e41;
 }
+
+.container {
+  max-width: 400px;
+  margin: 100px auto;
+  background: white;
+  padding: 30px;
+  border-radius: 10px;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+  text-align: center;
+}
