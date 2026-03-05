@@ -1,0 +1,14 @@
+Open .gitignore and paste:
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go build files
+*.exe
+*.out
