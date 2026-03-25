@@ -139,3 +139,386 @@ background:#3e8e41;
   box-shadow: 0 3px 10px rgba(0,0,0,0.1);
   text-align: center;
 }
+
+/* ============ CREATE NEW BUDGET BUTTON ============ */
+
+.create-budget-btn {
+  margin-top: 15px;
+  padding: 10px 20px;
+  background: #3498db;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.3s ease;
+}
+
+.create-budget-btn.small {
+  padding: 6px 12px;
+  font-size: 12px;
+  margin-left: 10px;
+}
+
+.create-budget-btn:hover {
+  background: #2980b9;
+}
+
+/* ============ BUDGET CREATOR MODAL ============ */
+
+/* Modal overlay - semi-transparent background */
+.budget-creator-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+/* header row inside modal (title + add category button) */
+.modal-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+
+/* Modal container - the white box that holds the content */
+.budget-creator-container {
+  background: white;
+  border-radius: 10px;
+  padding: 30px;
+  min-width: 500px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+  position: relative;
+}
+
+/* Close button (X) in top-right corner */
+.close-modal {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  background: none;
+  border: none;
+  font-size: 28px;
+  cursor: pointer;
+  color: #666;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+}
+
+.close-modal:hover {
+  color: #000;
+}
+
+/* Back button - returns from category edit view to category selection */
+.back-button {
+  padding: 10px 16px;
+  background: #95a5a6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  margin-bottom: 15px;
+  transition: background 0.3s ease;
+}
+
+.back-button:hover {
+  background: #7f8c8d;
+}
+
+/* Category list item - shown when viewing all categories */
+.category-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 15px;
+  background: white;
+  border: 2px solid #3498db;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  transition: background 0.2s ease;
+  cursor: pointer;
+}
+
+.category-list-item:hover {
+  background: #ecf0f1;
+}
+
+/* Clickable category name in list */
+.category-name-link {
+  flex: 1;
+  font-weight: bold;
+  color: #2c3e50;
+  font-size: 16px;
+}
+
+/* Item count badge */
+.item-count {
+  background: #95a5a6;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  margin: 0 10px;
+}
+
+/* Title inside the modal */
+.budget-creator-container h2 {
+  margin-top: 0;
+  color: #333;
+}
+
+/* ============ CATEGORY INPUT SECTION ============ */
+
+/* Container for adding new categories */
+.category-input-section {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 25px;
+}
+
+.category-input-section input {
+  flex: 1;
+  padding: 10px;
+  border: 2px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: border-color 0.3s ease;
+}
+
+.category-input-section input:focus {
+  outline: none;
+  border-color: #3498db;
+}
+
+.category-input-section button {
+  padding: 10px 20px;
+  background: #2ecc71;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background 0.3s ease;
+}
+
+.category-input-section button:hover {
+  background: #27ae60;
+}
+
+/* ============ CATEGORIES CONTAINER (SHOPPING LIST) ============ */
+
+/* Main container for all categories */
+.budget-categories-container {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+/* Empty state message when no categories exist */
+.empty-state {
+  text-align: center;
+  color: #999;
+  padding: 30px;
+  font-style: italic;
+}
+
+/* ============ INDIVIDUAL CATEGORY STYLING ============ */
+
+/* Single category card - like a shopping list section */
+.category-item {
+  background: #f9f9f9;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 15px;
+  transition: box-shadow 0.3s ease;
+}
+
+.category-item:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Category header with title and delete button */
+.category-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  border-bottom: 2px solid #3498db;
+  padding-bottom: 10px;
+}
+
+.category-header h3 {
+  margin: 0;
+  color: #2c3e50;
+  font-size: 18px;
+}
+
+/* Delete category button */
+.delete-btn {
+  background: #e74c3c;
+  color: white;
+  border: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.3s ease;
+}
+
+.delete-btn:hover {
+  background: #c0392b;
+}
+
+/* ============ ITEMS LIST STYLING ============ */
+
+/* Container for all items in a category */
+.items-list {
+  margin-bottom: 15px;
+  padding-left: 10px;
+}
+
+/* Individual item or subcategory */
+.item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  margin: 6px 0;
+  background: white;
+  border-left: 4px solid #3498db;
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+.item:hover {
+  background: #f0f8ff;
+}
+
+/* Subcategory styling - slightly different from regular items */
+.item.subcategory {
+  border-left-color: #9b59b6;
+  margin-left: 10px;
+  padding-left: 15px;
+}
+
+.item-text {
+  flex: 1;
+  color: #333;
+  font-size: 14px;
+}
+
+/* Remove/delete button for individual items */
+.remove-item-btn {
+  background: #e74c3c;
+  color: white;
+  border: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.3s ease;
+  margin-left: 10px;
+}
+
+.remove-item-btn:hover {
+  background: #c0392b;
+}
+
+/* ============ ITEM INPUT AREA ============ */
+
+/* Container for adding new items to a category */
+.item-input-area {
+  display: flex;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #eee;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Input field for new items */
+.item-input {
+  flex: 1;
+  min-width: 150px;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.item-input:focus {
+  outline: none;
+  border-color: #3498db;
+}
+
+/* Input field for item price */
+.item-price-input {
+  width: 100px;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.item-price-input:focus {
+  outline: none;
+  border-color: #3498db;
+}
+
+/* Button to add new item or subcategory */
+.add-item-btn {
+  padding: 8px 16px;
+  background: #3498db;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: bold;
+  transition: background 0.3s ease;
+  white-space: nowrap;
+}
+
+.add-item-btn:hover {
+  background: #2980b9;
+}
+
+/* Add Subcategory button - styled slightly different to distinguish from Add Item */
+.add-subcat-btn {
+  background: #9b59b6;
+}
+
+.add-subcat-btn:hover {
+  background: #8e44ad;
+}
+
+/* Controls vs form appearance */
+.item-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.item-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
