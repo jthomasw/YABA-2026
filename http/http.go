@@ -23,7 +23,7 @@ func NewServer(att ServerAttachments) nethttp.Server {
 	mux.HandleFunc("/", loginPage)
 	mux.HandleFunc("/register", registerPage)
 	mux.HandleFunc("/login", loginUser(att.DB, att.Store))
-	mux.HandleFunc("/dashboard", auth(dashboard(att.Store), att.Store))
+	mux.HandleFunc("/dashboard", auth(dashboard(att.DB, att.Store), att.Store))
 	mux.HandleFunc("/add-income", auth(addIncome(att.DB, att.Store), att.Store))
 	mux.HandleFunc("/logout", logout(att.Store))
 
@@ -91,17 +91,22 @@ func loginUser(db *sql.DB, store *sessions.CookieStore) nethttp.HandlerFunc {
 	}
 }
 
-func dashboard(store *sessions.CookieStore) nethttp.HandlerFunc {
+func dashboard(db *sql.DB, store *sessions.CookieStore) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 		session, _ := store.Get(r, "session")
+		user := session.Values["user"]
 
-		if session.Values["user"] == nil {
+		if user == nil {
 			nethttp.Redirect(w, r, "/", nethttp.StatusSeeOther)
 			return
 		}
 
-		template.Must(template.ParseFiles("templates/dashboard.html")).Execute(w, nil)
+		data := map[string]interface{}{
+			"Username": user,
+		}
+
+		template.Must(template.ParseFiles("templates/dashboard.html")).Execute(w, data)
 	}
 }
 
