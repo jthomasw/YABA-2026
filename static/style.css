@@ -359,3 +359,62 @@ tr:nth-child(even) {
 .question-btn:hover {
     background: #1f2937;
 }
+.modal-btn {
+    width: 100%;
+    padding: 14px;
+    margin: 10px 0;
+    border-radius: 12px;
+    border: 1px solid #4b5563;
+    background: transparent;
+    color: white;
+    font-size: 15px;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+.modal-btn:hover {
+    background: #1f2937;
+}
+/* USER TEXT */
+.welcome-text {
+    color: #e5e7eb;
+    font-size: 15px;
+    font-weight: 500;
+}
+
+/* IMPROVED TOPBAR */
+.topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 40px;
+    background: #111827;
+    border-bottom: 1px solid #1f2937;
+}
+
+.logo {
+    font-size: 22px;
+    font-weight: bold;
+    color: #4ade80;
+}
+
+/* USER SECTION */
+.user-actions {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+/* LOGOUT BUTTON */
+.logout-btn {
+    background: #ef4444;
+    color: white;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 14px;
+    transition: 0.3s;
+}
+
+.logout-btn:hover {
+    background: #dc2626;
+}

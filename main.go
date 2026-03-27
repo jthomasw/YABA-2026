@@ -64,7 +64,7 @@ func createTables(db *sql.DB) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS expense (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		user TEXT,
-		source TEXT,
+		category TEXT,
 		date TEXT,
 		amount REAL
 	)`)
