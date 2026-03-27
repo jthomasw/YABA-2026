@@ -26,7 +26,6 @@
         <h3>Current Funds</h3>
         <p>$23456</p>
     </div>
-
     <div class="card orange">
         <h3>Emergency Fund (x months)</h3>
         <p>$12345 / $23456</p>
@@ -149,6 +148,7 @@
     <a href="/transactions" class="btn btn-dark">View Transactions</a>
     <a href="/add-expense" class="btn btn-dark">Add Expense</a>
 </div>
+
 
 </div>
 
@@ -521,3 +521,40 @@ function renderCategoryItems() {
 
 </body>
 </html>
+<div id="expenseModal" class="modal">
+
+    <div class="modal-content">
+        <span class="close" onclick="closeModal()">&times;</span>
+
+        <h3 id="modalTitle">Choose Import Method</h3>
+
+        <!-- STEP 1 -->
+        <div id="methodOptions">
+            <button onclick="showManual()" class="modal-btn">Enter Manually</button>
+            <button class="modal-btn">Upload Receipt</button>
+        </div>
+
+        <!-- STEP 2 (MANUAL QUESTIONS) -->
+        <div id="manualOptions" style="display:none;">
+
+            <button class="question-btn">Manual?</button>
+
+
+            <!-- FINAL FORM -->
+            <form id="expenseForm" method="POST" action="/add-expense" style="display:none;">
+
+                <input type="text" name="category" placeholder="What (Food, Rent...)" required>
+                <input type="date" name="date" required>
+                <input type="text" name="place" placeholder="Where">
+                <input type="text" name="note" placeholder="Why (optional)">
+                <input type="number" name="amount" placeholder="Amount" required>
+
+                <button type="submit" class="btn-submit">Save Expense</button>
+
+            </form>
+
+        </div>
+
+    </div>
+
+</div>

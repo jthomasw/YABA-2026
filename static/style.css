@@ -252,3 +252,110 @@ tr:nth-child(even) {
 .logout-btn:hover {
     background: #dc2626;
 }
+/* MODAL BACKGROUND */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.7);
+}
+
+/* MODAL BOX */
+.modal-content {
+    background: #111827;
+    margin: 10% auto;
+    padding: 30px;
+    border-radius: 20px;
+    width: 350px;
+    text-align: center;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+}
+
+/* CLOSE BUTTON */
+.close {
+    float: right;
+    font-size: 25px;
+    cursor: pointer;
+    color: white;
+}
+
+/* BUTTONS */
+.modal-btn {
+    width: 100%;
+    padding: 12px;
+    margin: 10px 0;
+    border-radius: 10px;
+    border: none;
+    background: #1f2937;
+    color: white;
+    cursor: pointer;
+}
+
+.modal-btn:hover {
+    background: #374151;
+}
+
+/* FORM INSIDE MODAL */
+#manualForm input {
+    width: 100%;
+    padding: 12px;
+    margin: 10px 0;
+    border-radius: 10px;
+    border: none;
+    background: #1f2937;
+    color: white;
+}
+/* QUESTION BUTTONS (LIKE YOUR IMAGE) */
+.question-btn {
+    width: 100%;
+    padding: 14px;
+    margin: 10px 0;
+    border-radius: 12px;
+    border: 1px solid #4b5563;
+    background: transparent;
+    color: white;
+    font-size: 15px;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+.question-btn:hover {
+    background: #1f2937;
+}
+
+/* MODAL BUTTON */
+.modal-btn {
+    width: 100%;
+    padding: 14px;
+    margin: 10px 0;
+    border-radius: 12px;
+    border: none;
+    background: #1f2937;
+    color: white;
+    cursor: pointer;
+    font-size: 15px;
+}
+
+.modal-btn:hover {
+    background: #374151;
+}
+.question-btn {
+    width: 100%;
+    padding: 14px;
+    margin: 10px 0;
+    border-radius: 12px;
+    border: 1px solid #4b5563;
+    background: transparent;
+    color: white;
+    font-size: 15px;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+.question-btn:hover {
+    background: #1f2937;
+}

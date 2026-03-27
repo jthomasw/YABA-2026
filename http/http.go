@@ -26,6 +26,7 @@ func NewServer(att ServerAttachments) nethttp.Server {
 	mux.HandleFunc("/dashboard", auth(dashboard(att.DB, att.Store), att.Store))
 	mux.HandleFunc("/add-income", auth(addIncome(att.DB, att.Store), att.Store))
 	mux.HandleFunc("/logout", logout(att.Store))
+	mux.HandleFunc("/add-expense", auth(addExpense(att.DB, att.Store), att.Store))
 
 	mux.Handle("/static/", nethttp.StripPrefix("/static/", nethttp.FileServer(nethttp.Dir("static"))))
 
@@ -102,8 +103,13 @@ func dashboard(db *sql.DB, store *sessions.CookieStore) nethttp.HandlerFunc {
 			return
 		}
 
+		var totalIncome float64
+
+		db.QueryRow("SELECT IFNULL(SUM(amount),0) FROM income WHERE user=?", user).
+			Scan(&totalIncome)
+
 		data := map[string]interface{}{
-			"Username": user,
+			"Income": totalIncome,
 		}
 
 		template.Must(template.ParseFiles("templates/dashboard.html")).Execute(w, data)
@@ -136,6 +142,51 @@ func addIncome(db *sql.DB, store *sessions.CookieStore) nethttp.HandlerFunc {
 		db.Exec("INSERT INTO income(user, source, date, amount) VALUES(?,?,?,?)",
 			user, source, date, amount)
 
+		nethttp.Redirect(w, r, "/dashboard", nethttp.StatusSeeOther)
+	}
+}
+func addExpense(db *sql.DB, store *sessions.CookieStore) nethttp.HandlerFunc {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+
+		// Get session user
+		session, _ := store.Get(r, "session")
+		user := session.Values["user"]
+
+		if user == nil {
+			nethttp.Redirect(w, r, "/", nethttp.StatusSeeOther)
+			return
+		}
+
+		// If GET → show page (optional if using modal only)
+		if r.Method == nethttp.MethodGet {
+			template.Must(template.ParseFiles("templates/add_expense.html")).Execute(w, nil)
+			return
+		}
+
+		// POST → handle form
+		r.ParseForm()
+
+		category := r.FormValue("category")
+		date := r.FormValue("date")
+		amountStr := r.FormValue("amount")
+
+		amount, err := strconv.ParseFloat(amountStr, 64)
+		if err != nil {
+			nethttp.Error(w, "Invalid amount", 400)
+			return
+		}
+
+		// Insert into DB
+		_, err = db.Exec(
+			"INSERT INTO expense(user, category, date, amount) VALUES(?,?,?,?)",
+			user, category, date, amount,
+		)
+		if err != nil {
+			nethttp.Error(w, "Database error", 500)
+			return
+		}
+
+		// Redirect back to dashboard
 		nethttp.Redirect(w, r, "/dashboard", nethttp.StatusSeeOther)
 	}
 }
