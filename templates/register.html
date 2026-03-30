@@ -1,18 +1,37 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <title>Register</title>
     <link rel="stylesheet" href="/static/style.css">
-    <title>Register - YABA</title>
 </head>
 <body>
-<div class="container">
-    <h2>Create Account</h2>
-    <form action="/register-user" method="POST">
-        <input type="text" name="username" placeholder="Username" required>
-        <input type="password" name="password" placeholder="Password" required>
-        <button type="submit">Register</button>
-    </form>
-    <p>Already have an account? <a href="/">Login</a></p>
+
+<div class="form-wrapper">
+    <div class="form-card">
+
+        <h2>Register</h2>
+
+        <form method="POST" action="/register">
+
+            <div class="input-group">
+                <input type="text" name="username" placeholder="Username" required>
+            </div>
+
+            <div class="input-group">
+                <input type="password" name="password" placeholder="Password" required>
+            </div>
+
+            <button type="submit" class="btn-submit">Register</button>
+
+        </form>
+
+        <p style="color: #ccc; margin-top:15px;">
+            Already have an account?
+            <a href="/" style="color:#4ade80;">Login here</a>
+        </p>
+
+    </div>
 </div>
+
 </body>
 </html>

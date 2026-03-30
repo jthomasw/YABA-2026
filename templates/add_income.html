@@ -1,0 +1,30 @@
+<body>
+
+<div class="form-wrapper">
+    <div class="form-card">
+
+        <h2>Add Income</h2>
+
+        <form method="POST" action="/add-income">
+
+            <div class="input-group">
+                <input type="text" name="source" placeholder="Income Source" required>
+            </div>
+
+            <div class="input-group">
+                <input type="date" name="date" required>
+            </div>
+
+            <div class="input-group">
+                <input type="number" name="amount" placeholder="Amount ($)" required>
+            </div>
+
+            <button type="submit" class="btn-submit">Add Income</button>
+
+        </form>
+
+    </div>
+</div>
+
+</body>
+<link rel="stylesheet" href="/static/style.css">

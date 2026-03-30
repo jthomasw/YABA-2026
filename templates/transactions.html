@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Transactions</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="form-wrapper">
+    <div class="form-card">
+
+        <h2>Transaction History</h2>
+
+        <div style="margin-bottom:15px;">
+            <a href="/transactions">All</a> |
+            <a href="/transactions?type=income">Income</a> |
+            <a href="/transactions?type=expense">Expense</a>
+        </div>
+
+        <table style="width:100%;">
+            <tr>
+                <th>Type</th>
+                <th>Name</th>
+                <th>Date</th>
+                <th>Amount</th>
+                <th>Action</th>
+            </tr>
+
+            {{range .Transactions}}
+            <tr>
+                <td>{{.Type}}</td>
+                <td>{{.Name}}</td>
+                <td>{{.Date}}</td>
+
+                {{if eq .Type "Income"}}
+                    <td style="color:green;">+${{.Amount}}</td>
+                {{else}}
+                    <td style="color:red;">-${{.Amount}}</td>
+                {{end}}
+
+                <td>
+                    {{if eq .Type "Income"}}
+                        <a href="/delete-transaction?id={{.ID}}&type=income"
+                           onclick="return confirm('Delete this transaction?')">❌</a>
+                    {{else}}
+                        <a href="/delete-transaction?id={{.ID}}&type=expense"
+                           onclick="return confirm('Delete this transaction?')">❌</a>
+                    {{end}}
+                </td>
+            </tr>
+            {{end}}
+
+        </table>
+
+        <p style="margin-top:20px;">
+            <a href="/dashboard">← Back to Dashboard</a>
+        </p>
+
+    </div>
+</div>
+
+</body>
+</html>
