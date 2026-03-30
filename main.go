@@ -2,184 +2,71 @@ package main
 
 import (
 	"database/sql"
-	"html/template"
 	"log"
-	"net/http"
+
+	nethttp "net/http"
 
 	"github.com/gorilla/sessions"
-	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
+
+	"github.com/jthomasw/YABA-2026/http"
 )
 
-var db *sql.DB
-var store = sessions.NewCookieStore([]byte("super-secret-key"))
-
 func main() {
-	var err error
 
-	// Open SQLite database
-	db, err = sql.Open("sqlite", "yaba.db")
+	// DB
+	db, err := sql.Open("sqlite", "yaba.db")
 	if err != nil {
-		log.Fatal("Database open error:", err)
+		log.Fatal(err)
 	}
 
-	// Test DB connection
 	if err = db.Ping(); err != nil {
-		log.Fatal("Database connection failed:", err)
+		log.Fatal(err)
 	}
 
-	log.Println("Database connected successfully")
+	createTables(db)
 
-	createTable()
+	// SESSION
+	store := sessions.NewCookieStore([]byte("super-secret-key"))
+	store.Options = &sessions.Options{
+		Path:     "/",
+		MaxAge:   86400,
+		HttpOnly: true,
+		Secure:   false,
+		SameSite: nethttp.SameSiteLaxMode,
+	}
 
-	// Static files
-	http.Handle("/static/",
-		http.StripPrefix("/static/",
-			http.FileServer(http.Dir("static"))))
+	// SERVER
+	server := http.NewServer(http.ServerAttachments{
+		DB:    db,
+		Store: store,
+	})
 
-	// Routes
-	http.HandleFunc("/", loginPage)
-	http.HandleFunc("/register", registerPage)
-	http.HandleFunc("/login", loginUser)
-	http.HandleFunc("/register-user", registerUser)
-	http.HandleFunc("/dashboard", dashboard)
-	http.HandleFunc("/logout", logout)
-
-	log.Println("Server running at http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Println("Running at http://localhost:8000")
+	log.Fatal(server.ListenAndServe())
 }
 
-func createTable() {
-	query := `
-	CREATE TABLE IF NOT EXISTS users (
+func createTables(db *sql.DB) {
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS users (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		username TEXT UNIQUE NOT NULL,
-		password TEXT NOT NULL
-	);`
+		username TEXT UNIQUE,
+		password TEXT
+	)`)
 
-	_, err := db.Exec(query)
-	if err != nil {
-		log.Fatal("Table creation failed:", err)
-	}
+	db.Exec(`CREATE TABLE IF NOT EXISTS income (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user TEXT,
+		source TEXT,
+		date TEXT,
+		amount REAL
+	)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS expense (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user TEXT,
+		category TEXT,
+		date TEXT,
+		amount REAL
+	)`)
 
-	log.Println("Users table ready")
-}
-
-func registerPage(w http.ResponseWriter, r *http.Request) {
-	tmpl := template.Must(template.ParseFiles("templates/register.html"))
-	tmpl.Execute(w, nil)
-}
-
-func loginPage(w http.ResponseWriter, r *http.Request) {
-	tmpl := template.Must(template.ParseFiles("templates/login.html"))
-	tmpl.Execute(w, nil)
-}
-
-func registerUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Redirect(w, r, "/register", http.StatusSeeOther)
-		return
-	}
-
-	err := r.ParseForm()
-	if err != nil {
-		http.Error(w, "Form parsing error", http.StatusBadRequest)
-		return
-	}
-
-	username := r.FormValue("username")
-	password := r.FormValue("password")
-
-	if username == "" || password == "" {
-		http.Error(w, "Username and password required", http.StatusBadRequest)
-		return
-	}
-
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		http.Error(w, "Password hashing failed", http.StatusInternalServerError)
-		return
-	}
-
-	_, err = db.Exec(
-		"INSERT INTO users(username, password) VALUES(?, ?)",
-		username,
-		string(hashedPassword),
-	)
-
-	if err != nil {
-		http.Error(w, "Username already taken", http.StatusBadRequest)
-		return
-	}
-
-	log.Println("User registered:", username)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
-func loginUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
-
-	err := r.ParseForm()
-	if err != nil {
-		http.Error(w, "Form parsing error", http.StatusBadRequest)
-		return
-	}
-
-	username := r.FormValue("username")
-	password := r.FormValue("password")
-
-	var storedPassword string
-
-	err = db.QueryRow(
-		"SELECT password FROM users WHERE username = ?",
-		username,
-	).Scan(&storedPassword)
-
-	if err != nil {
-		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
-		return
-	}
-
-	err = bcrypt.CompareHashAndPassword(
-		[]byte(storedPassword),
-		[]byte(password),
-	)
-
-	if err != nil {
-		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
-		return
-	}
-
-	session, _ := store.Get(r, "session")
-	session.Values["user"] = username
-	session.Save(r, w)
-
-	log.Println("User logged in:", username)
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
-}
-
-func dashboard(w http.ResponseWriter, r *http.Request) {
-
-	session, _ := store.Get(r, "session")
-	user := session.Values["user"]
-
-	if user == nil {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
-
-	tmpl := template.Must(template.ParseFiles("templates/dashboard.html"))
-	tmpl.Execute(w, user)
-}
-
-func logout(w http.ResponseWriter, r *http.Request) {
-	session, _ := store.Get(r, "session")
-	session.Options.MaxAge = -1
-	session.Save(r, w)
-
-	log.Println("User logged out")
-	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

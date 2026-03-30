@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Add Expense</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="form-wrapper">
+    <div class="form-card">
+
+        <h2 id="title">Add Expense</h2>
+
+        <!-- STEP BUTTONS -->
+        <div id="questionStep">
+
+            <button class="question-btn" onclick="showForm()">Manual?</button>
+            <button class="question-btn" onclick="showForm()">Upload?</button>
+
+        </div>
+
+        <!-- FORM -->
+        <form id="expenseForm" method="POST" action="/add-expense" style="display:none;">
+
+            <div class="input-group">
+                <input type="text" name="category" placeholder="What (Food, Rent...)" required>
+            </div>
+
+            <div class="input-group">
+                <input type="date" name="date" required>
+            </div>
+
+            <div class="input-group">
+                <input type="text" name="place" placeholder="Where">
+            </div>
+
+            <div class="input-group">
+                <input type="text" name="note" placeholder="Why (optional)">
+            </div>
+
+            <div class="input-group">
+                <input type="number" step="0.01" name="amount" placeholder="Amount ($)" required>
+            </div>
+
+            <button type="submit" class="btn-submit">Save Expense</button>
+
+        </form>
+
+        <p style="margin-top:15px; color:#ccc;">
+            ← <a href="/dashboard" style="color:#4ade80;">Back to Dashboard</a>
+        </p>
+
+    </div>
+</div>
+
+<script>
+function showForm() {
+    document.getElementById("questionStep").style.display = "none";
+    document.getElementById("expenseForm").style.display = "block";
+    document.getElementById("title").innerText = "Enter Expense Details";
+}
+</script>
+
+</body>
+</html>
