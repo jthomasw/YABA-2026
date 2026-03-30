@@ -21,7 +21,7 @@ func NewServer(att ServerAttachments) http.Server {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", loginPage)
-	mux.HandleFunc("/register", registerPage)
+	mux.HandleFunc("/register", registerUser(att.DB))
 	mux.HandleFunc("/login", loginUser(att.DB, att.Store))
 	mux.HandleFunc("/dashboard", auth(dashboard(att.DB, att.Store), att.Store))
 	mux.HandleFunc("/add-income", auth(addIncome(att.DB, att.Store), att.Store))
@@ -59,8 +59,46 @@ func loginPage(w http.ResponseWriter, r *http.Request) {
 	template.Must(template.ParseFiles("templates/login.html")).Execute(w, nil)
 }
 
-func registerPage(w http.ResponseWriter, r *http.Request) {
-	template.Must(template.ParseFiles("templates/register.html")).Execute(w, nil)
+func registerUser(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			template.Must(template.ParseFiles("templates/register.html")).Execute(w, nil)
+			return
+		}
+
+		if r.Method != http.MethodPost {
+			http.Redirect(w, r, "/register", http.StatusSeeOther)
+			return
+		}
+
+		r.ParseForm()
+		username := r.FormValue("username")
+		password := r.FormValue("password")
+
+		if username == "" || password == "" {
+			http.Error(w, "Username and password required", http.StatusBadRequest)
+			return
+		}
+
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			http.Error(w, "Could not hash password", http.StatusInternalServerError)
+			return
+		}
+
+		_, err = db.Exec(
+			"INSERT INTO users(username, password) VALUES(?, ?)",
+			username,
+			string(hashedPassword),
+		)
+		if err != nil {
+			log.Println("REGISTER ERROR:", err)
+			http.Error(w, "Could not register user", http.StatusInternalServerError)
+			return
+		}
+
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	}
 }
 
 func loginUser(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
@@ -89,9 +127,9 @@ func loginUser(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 
 		session, _ := store.Get(r, "session")
 		session.Values["user"] = username
-		session.Save(r, w)
+		err = session.Save(r, w)
 		if err != nil {
-			log.Println("SESSION SAVE ERROR:", err)
+		log.Println("SESSION SAVE ERROR:", err)
 		}
 
 		log.Println("LOGIN SAVED USER:", session.Values["user"])
