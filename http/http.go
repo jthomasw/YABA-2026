@@ -25,11 +25,11 @@ func NewServer(attachments ServerAttachments) http.Server {
 	router.HandleFunc("/dashboard", authMiddleware(dashboard(attachments.Store), attachments.Store))
 	router.HandleFunc("/logout", logout(attachments.Store))
 	router.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-	httpServer := http.Server{
+	server := http.Server{
 		Handler: router,
 		Addr:    ":8080",
 	}
-	return httpServer
+	return server
 }
 
 type ServerAttachments struct {
@@ -124,12 +124,18 @@ func newHandleFooV1Get(fooService *foo.Service) http.HandlerFunc {
 
 func registerPage(w http.ResponseWriter, r *http.Request) {
 	tmpl := template.Must(template.ParseFiles("templates/register.html"))
-	tmpl.Execute(w, nil)
+	if err := tmpl.Execute(w, nil); err != nil {
+		log.Println("Error rendering register page:", err)
+		http.Error(w, "Template rendering error", http.StatusInternalServerError)
+	}
 }
 
 func loginPage(w http.ResponseWriter, r *http.Request) {
 	tmpl := template.Must(template.ParseFiles("templates/login.html"))
-	tmpl.Execute(w, nil)
+	if err := tmpl.Execute(w, nil); err != nil {
+		log.Println("Error rendering login page:", err)
+		http.Error(w, "Template rendering error", http.StatusInternalServerError)
+	}
 }
 
 func registerUser(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
@@ -233,7 +239,10 @@ func dashboard(store *sessions.CookieStore) http.HandlerFunc {
 		}
 
 		tmpl := template.Must(template.ParseFiles("templates/dashboard.html"))
-		tmpl.Execute(w, user)
+		if err := tmpl.Execute(w, user); err != nil {
+			log.Println("Error rendering dashboard:", err)
+			http.Error(w, "Template rendering error", http.StatusInternalServerError)
+		}
 	}
 }
 

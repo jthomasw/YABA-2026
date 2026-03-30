@@ -9,7 +9,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/jthomasw/YABA-2026/foo"
-	"github.com/jthomasw/YABA-2026/httpserver"
+	"github.com/jthomasw/YABA-2026/http"
 	"github.com/jthomasw/YABA-2026/sqlite"
 )
 
@@ -50,7 +50,7 @@ func main() {
 
 	store := sessions.NewCookieStore([]byte("super-secret-key"))
 
-	server := httpserver.NewServer(httpserver.ServerAttachments{
+	server := http.NewServer(http.ServerAttachments{
 		FooService: fooService,
 		DB:         db,
 		Store:      store,
