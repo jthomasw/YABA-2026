@@ -2,6 +2,7 @@ package http
 
 import (
 	"database/sql"
+	"encoding/json"
 	"html/template"
 	"log"
 	"net/http"
@@ -26,10 +27,12 @@ func NewServer(att ServerAttachments) http.Server {
 	mux.HandleFunc("/dashboard", auth(dashboard(att.DB, att.Store), att.Store))
 	mux.HandleFunc("/add-income", auth(addIncome(att.DB, att.Store), att.Store))
 	mux.HandleFunc("/add-expense", auth(addExpense(att.DB, att.Store), att.Store))
-	mux.HandleFunc("/logout", logout(att.Store))
+
 	mux.HandleFunc("/transactions", auth(viewTransactions(att.DB, att.Store), att.Store))
 	mux.HandleFunc("/delete-transaction", auth(deleteTransaction(att.DB, att.Store), att.Store))
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	mux.HandleFunc("/api/funds", auth(getFundsChartData(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/logout", logout(att.Store))
 
 	return http.Server{
 		Addr:    ":8000",
@@ -307,6 +310,73 @@ func deleteTransaction(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc
 		}
 
 		http.Redirect(w, r, "/transactions", http.StatusSeeOther)
+	}
+}
+func getFundsChartData(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+
+		if !ok || user == "" {
+			http.Error(w, "Unauthorized", 401)
+			return
+		}
+
+		type Data struct {
+			Date    string  `json:"date"`
+			Balance float64 `json:"balance"`
+		}
+
+		rows, err := db.Query(`
+			SELECT date, SUM(amount) as total, type FROM (
+				SELECT date, amount, 'income' as type FROM income WHERE user=?
+				UNION ALL
+				SELECT date, amount, 'expense' as type FROM expense WHERE user=?
+			)
+			GROUP BY date, type
+			ORDER BY date
+		`, user, user)
+
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		defer rows.Close()
+
+		balanceMap := make(map[string]float64)
+
+		for rows.Next() {
+			var date string
+			var total float64
+			var t string
+
+			err := rows.Scan(&date, &total, &t)
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+
+			if t == "income" {
+				balanceMap[date] += total
+			} else {
+				balanceMap[date] -= total
+			}
+		}
+
+		var result []Data
+		var running float64 = 0
+
+		for date, value := range balanceMap {
+			running += value
+			result = append(result, Data{
+				Date:    date,
+				Balance: running,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
 	}
 }
 

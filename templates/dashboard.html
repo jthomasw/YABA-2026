@@ -18,14 +18,15 @@
     </div>
 </div>
 
-</div>
-<!-- Top Summary Cards -->
+<!-- SUMMARY CARDS -->
 <div class="summary-cards">
     
-    <div class="card blue">
+    <!-- CLICKABLE CURRENT FUNDS -->
+    <div class="card blue" onclick="loadFundsChart()" style="cursor:pointer;">
       <h3>Current Funds</h3>
       <p>${{.CurrentFunds}}</p>
     </div>
+
     <div class="card orange">
         <h3>Emergency Fund (x months)</h3>
         <p>$12345 / $23456</p>
@@ -43,518 +44,111 @@
 
 </div>
 
+<!-- 🔥 HIDDEN CHART -->
+<div id="chartContainer" style="display:none; margin:30px;">
+    <canvas id="fundsChart"></canvas>
+    <p id="noDataMsg" style="display:none; color:white; text-align:center; margin-top:10px;">
+        No data available. Please add income or expense.
+    </p>
+</div>
 
+<!-- MAIN -->
 <div class="main-container">
 
 <div class="budget-header">
 <h1>Create Your Budget</h1>
-<p>Understanding your income and expenses is the foundation of financial success.</p>
-<!-- Create New Budget Button - Opens a modal/form for creating budget categories -->
-<button class="create-budget-btn" onclick="toggleBudgetCreator()">+ Create New Budget</button>
 </div>
 
-
-<!-- Budget Creator Section - Hidden by default, shown when user clicks "Create New Budget" -->
-<div id="budgetCreatorModal" class="budget-creator-modal" style="display:none;">
-  <div class="budget-creator-container">
-    <!-- Close button -->
-    <button class="close-modal" onclick="toggleBudgetCreator()">×</button>
-    
-    <!-- Modal header - displays "Organize Your Budget" initially, then switches to category name when editing -->
-    <div class="modal-header-row">
-      <h2 id="modalHeader">Organize Your Budget</h2>
-      <!-- Always-visible add category button inside modal -->
-      <button class="create-budget-btn small" onclick="focusCategoryInput()">+ Add Category</button>
-    </div>
-    
-    <!-- Input section for creating new categories (toggleable) -->
-    <div id="categoryInputSection" class="category-input-section" style="display:none;">
-      <input 
-        type="text" 
-        id="categoryInput" 
-        placeholder="Enter category name (e.g., Groceries, Utilities)" 
-        onkeypress="handleCategoryKeypress(event)"
-      >
-      <button onclick="addCategory()">Add Category</button>
-    </div>
-    
-    <!-- Back button - shown when editing a category, allows returning to category selection -->
-    <button id="backButton" class="back-button" onclick="exitCategoryEdit()" style="display:none;">← Back to Categories</button>
-
-    <!-- Shopping list style categorized display -->
-    <div id="budgetCategoriesContainer" class="budget-categories-container">
-      <!-- Categories and their items will be dynamically added here -->
-    </div>
-  </div>
-</div>
-
-<div class="cards">
-
-<div class="card income">
-<h3>Income</h3>
-<p id="incomeTotal">$0</p>
-</div>
-
-<div class="card expense">
-<h3>Expenses</h3>
-<p id="expenseTotal">$0</p>
-</div>
-
-<div class="card net">
-<h3>Net</h3>
-<p id="netTotal">$0</p>
-</div>
-
-</div>
-
-
-<div class="budget-form">
-
-<h2>Monthly Income</h2>
-
-<div class="input-row">
-<label>Salary/Wages</label>
-<input type="number" id="salary" value="0">
-</div>
-
-<div class="input-row">
-<label>Other Income</label>
-<input type="number" id="otherIncome" value="0">
-</div>
-
-
-<h2>Monthly Expenses</h2>
-
-<div class="input-row">
-<label>Rent</label>
-<input type="number" id="rent" value="0">
-</div>
-
-<div class="input-row">
-<label>Food</label>
-<input type="number" id="food" value="0">
-</div>
-
-<div class="input-row">
-<label>Transportation</label>
-<input type="number" id="transport" value="0">
-</div>
-
-<button onclick="calculateBudget()">Calculate Budget</button>
-
-<!-- Action Buttons Section -->
 <div class="action-buttons">
     <a href="/add-income" class="btn btn-dark">Add Income</a>
     <a href="/transactions" class="btn btn-dark">View Transactions</a>
     <a href="/add-expense" class="btn btn-dark">Add Expense</a>
 </div>
 
-
 </div>
 
-</div>
-
-
+<!-- JS -->
 <script>
 
-let budgetChart;
+let fundsChart;
 
-function calculateBudget(){
+// 🚀 LOAD CHART ON CLICK
+async function loadFundsChart() {
 
-let salary = parseFloat(document.getElementById("salary").value) || 0;
-let other = parseFloat(document.getElementById("otherIncome").value) || 0;
+    console.log("Clicked Current Funds");
 
-let rent = parseFloat(document.getElementById("rent").value) || 0;
-let food = parseFloat(document.getElementById("food").value) || 0;
-let transport = parseFloat(document.getElementById("transport").value) || 0;
+    const container = document.getElementById("chartContainer");
+    const noDataMsg = document.getElementById("noDataMsg");
 
-let income = salary + other;
-let expenses = rent + food + transport;
-let net = income - expenses;
+    container.style.display = "block";
+    noDataMsg.style.display = "none";
 
-document.getElementById("incomeTotal").innerText = "$" + income;
-document.getElementById("expenseTotal").innerText = "$" + expenses;
-document.getElementById("netTotal").innerText = "$" + net;
+    try {
+        const res = await fetch('/api/funds');
 
-if (budgetChart) {
-    budgetChart.destroy();
-}
+        if (!res.ok) {
+            throw new Error("API failed");
+        }
 
-budgetChart = new Chart(document.getElementById('budgetChart'), {
-    type: 'pie',
-    data: {
-        labels: ['Income', 'Expenses'],
-        datasets: [{
-            data: [income, expenses],
-            backgroundColor: ['green', 'red'],
-        }]
-    },
-    options: {
-        responsive: false,
+        const data = await res.json();
+
+        console.log("API DATA:", data);
+
+        if (!data || data.length === 0) {
+            noDataMsg.style.display = "block";
+            return;
+        }
+
+        const labels = data.map(d => d.date);
+        const values = data.map(d => d.balance);
+
+        const ctx = document.getElementById('fundsChart').getContext('2d');
+
+        if (fundsChart) {
+            fundsChart.destroy();
+        }
+
+        fundsChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Current Funds Over Time',
+                    data: values,
+                    borderColor: '#00ffff',
+                    backgroundColor: 'rgba(0,255,255,0.1)',
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: "white"
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: "white" }
+                    },
+                    y: {
+                        ticks: { color: "white" }
+                    }
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error("ERROR LOADING CHART:", error);
+        alert("Error loading chart. Check console.");
     }
-});
-
-}
-
-// ============ BUDGET CREATOR FUNCTIONALITY ============
-
-// Data structure to store budget categories and items
-// Format: { "Category Name": [{ name: "item/subcategory", price: 0, isSubcategory: bool }, ...] }
-let budgetCategories = {};
-
-// Toggle the visibility of the budget creator modal
-function toggleBudgetCreator() {
-  const modal = document.getElementById('budgetCreatorModal');
-  modal.style.display = modal.style.display === 'none' ? 'block' : 'none';
-}
-
-// Show the category input section and focus the field
-function focusCategoryInput() {
-  const section = document.getElementById('categoryInputSection');
-  section.style.display = 'flex';
-  document.getElementById('categoryInput').focus();
-}
-
-// Hide category input and return to whatever view is active
-function hideCategoryInput() {
-  const section = document.getElementById('categoryInputSection');
-  section.style.display = 'none';
-}
-
-// Exit editing a specific category and return to category selection
-function exitCategoryEdit() {
-  currentCategory = null;
-  updateModalView();
-}
-
-// Update the modal view based on whether we're editing a category or viewing categories
-function updateModalView() {
-  const header = document.getElementById('modalHeader');
-  const categoryInputSection = document.getElementById('categoryInputSection');
-  const backButton = document.getElementById('backButton');
-  const container = document.getElementById('budgetCategoriesContainer');
-  
-  if (currentCategory) {
-    // We're editing a specific category - show that category's name in the header
-    header.textContent = currentCategory;
-    categoryInputSection.style.display = 'none';
-    backButton.style.display = 'inline-block';
-    renderCategoryItems();
-  } else {
-    // We're viewing all categories - show default header and category creation
-    header.textContent = 'Organize Your Budget';
-    // keep input section hidden until user presses Add Category
-    categoryInputSection.style.display = 'none';
-    backButton.style.display = 'none';
-    renderBudgetCategories();
-  }
-}
-
-// Handle Enter key press in category input field
-function handleCategoryKeypress(event) {
-  // If user presses Enter, add the category instead of creating a new line
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    addCategory();
-  }
-}
-
-// Add a new category to the budget
-function addCategory() {
-  const categoryInput = document.getElementById('categoryInput');
-  const categoryName = categoryInput.value.trim();
-  
-  // Validate input - category name cannot be empty
-  if (!categoryName) {
-    alert('Please enter a category name');
-    return;
-  }
-  
-  // Prevent duplicate categories
-  if (budgetCategories[categoryName]) {
-    alert('Category already exists!');
-    return;
-  }
-  
-  // Initialize the category with an empty array of items
-  budgetCategories[categoryName] = [];
-  
-  // Clear the input field for next entry
-  categoryInput.value = '';
-  
-  // Switch to editing this new category
-  currentCategory = categoryName;
-  updateModalView();
-}
-
-// Remove a category entirely from the budget
-function removeCategory(categoryName) {
-  delete budgetCategories[categoryName];
-  updateModalView();
-}
-
-// Add a regular item to the current category
-function addItemToCategory() {
-  if (!currentCategory) return;
-  addItemToCategoryWithType(false);
-}
-
-// Add a subcategory to the current category
-function addSubcategoryToCategory() {
-  if (!currentCategory) return;
-  addItemToCategoryWithType(true);
-}
-
-// Helper function to add an item or subcategory with a specified type
-function addItemToCategoryWithType(isSubcategory) {
-  // Get the input field and price field for this category
-  const inputId = `item-input-${currentCategory}`;
-  const priceId = `item-price-${currentCategory}`;
-  const input = document.getElementById(inputId);
-  const priceInput = document.getElementById(priceId);
-  const itemName = input.value.trim();
-  const itemPrice = parseFloat(priceInput.value) || 0;
-  
-  // Validate input - item name cannot be empty
-  if (!itemName) {
-    alert('Please enter a name');
-    return;
-  }
-  
-  // Add the item to the category's array with name, price, and type
-  budgetCategories[currentCategory].push({
-    name: itemName,
-    price: itemPrice,
-    isSubcategory: isSubcategory
-  });
-  
-  // Clear the input fields
-  input.value = '';
-  priceInput.value = '';
-  
-  // Re-render to show the new item
-  renderCategoryItems();
-}
-
-// Remove an item/subcategory from the current category
-function removeItemFromCategory(itemIndex) {
-  if (!currentCategory) return;
-  budgetCategories[currentCategory].splice(itemIndex, 1);
-  renderCategoryItems();
-}
-
-// Render all categories as a list for selection
-function renderBudgetCategories() {
-  const container = document.getElementById('budgetCategoriesContainer');
-  
-  // Clear existing content
-  container.innerHTML = '';
-  
-  // If there are no categories, show empty state message
-  if (Object.keys(budgetCategories).length === 0) {
-    container.innerHTML = '<p class="empty-state">No categories yet. Add one to get started!</p>';
-    return;
-  }
-  
-  // Create a list of categories that can be clicked to edit or deleted
-  for (const categoryName in budgetCategories) {
-    const categoryDiv = document.createElement('div');
-    categoryDiv.className = 'category-list-item';
-    
-    // Clickable category name - opens that category for editing
-    const categoryNameSpan = document.createElement('span');
-    categoryNameSpan.className = 'category-name-link';
-    categoryNameSpan.textContent = categoryName;
-    categoryNameSpan.onclick = () => {
-      currentCategory = categoryName;
-      updateModalView();
-    };
-    
-    // Item count display
-    const itemCountSpan = document.createElement('span');
-    itemCountSpan.className = 'item-count';
-    itemCountSpan.textContent = `${budgetCategories[categoryName].length} items`;
-    
-    // Delete button
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'delete-btn';
-    deleteBtn.textContent = '✕';
-    deleteBtn.onclick = (e) => {
-      e.stopPropagation();
-      removeCategory(categoryName);
-    };
-    
-    categoryDiv.appendChild(categoryNameSpan);
-    categoryDiv.appendChild(itemCountSpan);
-    categoryDiv.appendChild(deleteBtn);
-    container.appendChild(categoryDiv);
-  }
-}
-
-// Render all items in the current category being edited
-function renderCategoryItems() {
-  if (!currentCategory) return;
-  
-  const container = document.getElementById('budgetCategoriesContainer');
-  container.innerHTML = '';
-  
-  // Create a single card for the current category with all its items
-  const categoryDiv = document.createElement('div');
-  categoryDiv.className = 'category-item';
-  
-  // Create items list for this category
-  const itemsList = document.createElement('div');
-  itemsList.className = 'items-list';
-  
-  // Add each item/subcategory in this category
-  if (budgetCategories[currentCategory].length === 0) {
-    const emptyMsg = document.createElement('p');
-    emptyMsg.className = 'empty-state';
-    emptyMsg.textContent = 'No items yet. Add one below!';
-    itemsList.appendChild(emptyMsg);
-  } else {
-    budgetCategories[currentCategory].forEach((item, index) => {
-      const itemDiv = document.createElement('div');
-      itemDiv.className = `item ${item.isSubcategory ? 'subcategory' : 'regular-item'}`;
-      
-      // Display item with bullet or folder icon, and show the price
-      const itemText = document.createElement('span');
-      itemText.className = 'item-text';
-      const prefix = item.isSubcategory ? '📁 ' : '• ';
-      const priceText = item.price > 0 ? ` - $${item.price.toFixed(2)}` : '';
-      itemText.textContent = prefix + item.name + priceText;
-      
-      // Delete button for individual item
-      const removeBtn = document.createElement('button');
-      removeBtn.className = 'remove-item-btn';
-      removeBtn.textContent = '−';
-      removeBtn.onclick = () => removeItemFromCategory(index);
-      
-      itemDiv.appendChild(itemText);
-      itemDiv.appendChild(removeBtn);
-      itemsList.appendChild(itemDiv);
-    });
-  }
-  
-  categoryDiv.appendChild(itemsList);
-  
-  // Container that holds either the initial action buttons or the input form
-  const itemInputDiv = document.createElement('div');
-  itemInputDiv.className = 'item-input-area';
-  
-  // initial control buttons (always visible)
-  const controlsDiv = document.createElement('div');
-  controlsDiv.className = 'item-controls';
-  
-  const showItemFormButton = document.createElement('button');
-  showItemFormButton.className = 'add-item-btn';
-  showItemFormButton.textContent = 'Add Item';
-  showItemFormButton.onclick = () => renderForm(false);
-  
-  const showSubcatFormButton = document.createElement('button');
-  showSubcatFormButton.className = 'add-item-btn add-subcat-btn';
-  showSubcatFormButton.textContent = 'Add Subcategory';
-  showSubcatFormButton.onclick = () => renderForm(true);
-  
-  controlsDiv.appendChild(showItemFormButton);
-  controlsDiv.appendChild(showSubcatFormButton);
-  
-  itemInputDiv.appendChild(controlsDiv);
-  
-  // form area (hidden initially)
-  const formDiv = document.createElement('div');
-  formDiv.className = 'item-form';
-  formDiv.style.display = 'none';
-  
-  // shared fields
-  const itemInput = document.createElement('input');
-  itemInput.type = 'text';
-  itemInput.id = `item-input-${currentCategory}`;
-  itemInput.placeholder = '+ Item name';
-  itemInput.className = 'item-input';
-  
-  const priceInput = document.createElement('input');
-  priceInput.type = 'number';
-  priceInput.step = '0.01';
-  priceInput.min = '0';
-  priceInput.id = `item-price-${currentCategory}`;
-  priceInput.placeholder = 'Price';
-  priceInput.className = 'item-price-input';
-  
-  const submitBtn = document.createElement('button');
-  submitBtn.className = 'add-item-btn';
-  submitBtn.textContent = 'Save';
-  
-  const cancelBtn = document.createElement('button');
-  cancelBtn.className = 'add-item-btn';
-  cancelBtn.textContent = 'Cancel';
-  cancelBtn.onclick = () => {
-    formDiv.style.display = 'none';
-    controlsDiv.style.display = 'flex';
-  };
-  
-  // helper to render either item or subcategory form
-  function renderForm(isSub) {
-    controlsDiv.style.display = 'none';
-    formDiv.innerHTML = '';
-    formDiv.appendChild(itemInput);
-    formDiv.appendChild(priceInput);
-    submitBtn.textContent = isSub ? 'Add Subcategory' : 'Add Item';
-    submitBtn.onclick = () => {
-      if (isSub) addSubcategoryToCategory();
-      else addItemToCategory();
-    };
-    formDiv.appendChild(submitBtn);
-    formDiv.appendChild(cancelBtn);
-    formDiv.style.display = 'flex';
-    itemInput.focus();
-  }
-  
-  itemInputDiv.appendChild(formDiv);
-  
-  // Assemble the complete category section
-  categoryDiv.appendChild(itemInputDiv);
-  container.appendChild(categoryDiv);
 }
 
 </script>
 
 </body>
 </html>
-<div id="expenseModal" class="modal">
-
-    <div class="modal-content">
-        <span class="close" onclick="closeModal()">&times;</span>
-
-        <h3 id="modalTitle">Choose Import Method</h3>
-
-        <!-- STEP 1 -->
-        <div id="methodOptions">
-            <button onclick="showManual()" class="modal-btn">Enter Manually</button>
-            <button class="modal-btn">Upload Receipt</button>
-        </div>
-
-        <!-- STEP 2 (MANUAL QUESTIONS) -->
-        <div id="manualOptions" style="display:none;">
-
-            <button class="question-btn">Manual?</button>
-
-
-            <!-- FINAL FORM -->
-            <form id="expenseForm" method="POST" action="/add-expense" style="display:none;">
-
-                <input type="text" name="category" placeholder="What (Food, Rent...)" required>
-                <input type="date" name="date" required>
-                <input type="text" name="place" placeholder="Where">
-                <input type="text" name="note" placeholder="Why (optional)">
-                <input type="number" name="amount" placeholder="Amount" required>
-
-                <button type="submit" class="btn-submit">Save Expense</button>
-
-            </form>
-
-        </div>
-
-    </div>
-
-</div>
