@@ -2,6 +2,7 @@ package http
 
 import (
 	"database/sql"
+	"encoding/json"
 	"html/template"
 	"log"
 	"net/http"
@@ -163,12 +164,90 @@ func dashboard(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 		log.Println("Expense:", expense)
 		log.Println("Current:", current)
 
-		data := map[string]interface{}{
-			"Username":     user,
-			"CurrentFunds": current,
+		type ChartPoint struct {
+			Date   string
+			Amount float64
+			Type   string
 		}
 
-		template.Must(template.ParseFiles("templates/dashboard.html")).Execute(w, data)
+		rows, err := db.Query(`
+			SELECT date, amount, 'income' as type
+			FROM income
+			WHERE user=?
+
+			UNION ALL
+
+			SELECT date, amount, 'expense' as type
+			FROM expense
+			WHERE user=?
+
+			ORDER BY date ASC
+		`, user, user)
+
+		if err != nil {
+			log.Println("CHART QUERY ERROR:", err)
+			http.Error(w, "Could not load dashboard chart data", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var labels []string
+		var balances []float64
+		var runningBalance float64 = 0
+
+		for rows.Next() {
+			var p ChartPoint
+			err := rows.Scan(&p.Date, &p.Amount, &p.Type)
+			if err != nil {
+				log.Println("CHART SCAN ERROR:", err)
+				continue
+			}
+
+			if p.Type == "income" {
+				runningBalance += p.Amount
+			} else if p.Type == "expense" {
+				runningBalance -= p.Amount
+			}
+
+			labels = append(labels, p.Date)
+			balances = append(balances, runningBalance)
+		}
+
+		labelsJSON, err := json.Marshal(labels)
+		if err != nil {
+			log.Println("LABELS JSON ERROR:", err)
+			http.Error(w, "Could not prepare chart labels", http.StatusInternalServerError)
+			return
+		}
+
+		balancesJSON, err := json.Marshal(balances)
+		if err != nil {
+			log.Println("BALANCES JSON ERROR:", err)
+			http.Error(w, "Could not prepare chart values", http.StatusInternalServerError)
+			return
+		}
+
+		data := map[string]interface{}{
+			"Username":      user,
+			"CurrentFunds":  current,
+			"ChartLabels":   template.JS(labelsJSON),
+			"ChartBalances": template.JS(balancesJSON),
+		}
+
+		t := template.Must(template.ParseFiles(
+			"templates/dashboard.html",
+			"templates/dashboard_current.html",
+			"templates/dashboard_emergency.html",
+			"templates/dashboard_income.html",
+			"templates/dashboard_expenses.html",
+		))
+
+		err = t.Execute(w, data)
+		if err != nil {
+			log.Println("DASHBOARD TEMPLATE ERROR:", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 }
 
