@@ -168,7 +168,20 @@ func dashboard(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 			"CurrentFunds": current,
 		}
 
-		template.Must(template.ParseFiles("templates/dashboard.html")).Execute(w, data)
+		t := template.Must(template.ParseFiles(
+			"templates/dashboard.html",
+			"templates/dashboard_current.html",
+			"templates/dashboard_emergency.html",
+			"templates/dashboard_income.html",
+			"templates/dashboard_expenses.html",
+		))
+
+		err := t.Execute(w, data)
+		if err != nil {
+			log.Println("DASHBOARD TEMPLATE ERROR:", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 }
 
