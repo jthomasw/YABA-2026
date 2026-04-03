@@ -77,11 +77,6 @@
 
 <div class="main-container">
 
-    <div class="budget-header">
-        <h1>Create Your Budget</h1>
-        <p>Understanding your income and expenses is the foundation of financial success.</p>
-    </div>
-
     <div id="currentSection" class="tab-section active-section">
         {{template "current" .}}
     </div>
@@ -108,6 +103,7 @@
 
 <script>
 let budgetChart;
+let currentFundsChartInstance;
 
 function calculateBudget() {
     let salary = parseFloat(document.getElementById("salary")?.value) || 0;
@@ -146,7 +142,61 @@ function calculateBudget() {
             }]
         },
         options: {
-            responsive: false
+            responsive: true
+        }
+    });
+}
+
+function renderCurrentFundsChart() {
+    const chartCanvas = document.getElementById("currentFundsChart");
+    if (!chartCanvas) return;
+
+    if (currentFundsChartInstance) {
+        currentFundsChartInstance.destroy();
+    }
+
+    const labels = JSON.parse('{{.ChartLabels}}');
+    const values = JSON.parse('{{.ChartBalances}}');
+
+    currentFundsChartInstance = new Chart(chartCanvas, {
+        type: "line",
+        data: {
+            labels: labels,
+            datasets: [{
+                label: "Current Funds",
+                data: values,
+                borderColor: "#2563eb",
+                backgroundColor: "rgba(37,99,235,0.15)",
+                borderWidth: 3,
+                fill: false,
+                tension: 0.25
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+                x: {
+                    ticks: {
+                        color: "#374151",
+                        maxRotation: 45,
+                        minRotation: 45
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        color: "#374151"
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    labels: {
+                        color: "#374151"
+                    }
+                }
+            }
         }
     });
 }
@@ -163,6 +213,7 @@ function showSection(section) {
     if (section === "current") {
         document.getElementById("currentSection").classList.add("active-section");
         document.querySelector(".blue.clickable-card").classList.add("active-tab");
+        renderCurrentFundsChart();
     }
 
     if (section === "emergency") {
@@ -180,6 +231,10 @@ function showSection(section) {
         document.querySelector(".red.clickable-card").classList.add("active-tab");
     }
 }
+
+window.onload = function() {
+    renderCurrentFundsChart();
+};
 </script>
 
 </body>
