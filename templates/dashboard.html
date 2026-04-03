@@ -34,9 +34,10 @@
         }
 
         .action-buttons {
-            margin-top: 20px;
+            margin-top: 30px;
             display: flex;
-            gap: 12px;
+            justify-content: center;
+            gap: 40px;
             flex-wrap: wrap;
         }
     </style>
@@ -97,12 +98,12 @@
         {{template "expenses" .}}
     </div>
 
-    <div class="action-buttons">
-        <a href="/add-income" class="btn btn-dark">Add Income</a>
-        <a href="/transactions" class="btn btn-dark">View Transactions</a>
-        <a href="/add-expense" class="btn btn-dark">Add Expense</a>
-    </div>
+</div>
 
+<div class="action-buttons">
+    <a href="/add-income" class="btn btn-dark">Add Income</a>
+    <a href="/transactions" class="btn btn-dark">View Transactions</a>
+    <a href="/add-expense" class="btn btn-dark">Add Expense</a>
 </div>
 
 <script>
