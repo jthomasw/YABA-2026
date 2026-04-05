@@ -510,7 +510,7 @@ tr:hover {
     margin-top: 15px;
     border: none;
     border-radius: 12px;
-    background: linear-gradient(135deg, #ef4444, #f87171);
+    background: linear-gradient(135deg, #05fc19, #f87171);
     color: white;
     font-size: 17px;
     font-weight: bold;
@@ -520,7 +520,7 @@ tr:hover {
 
 .btn-submit:hover {
     transform: translateY(-2px);
-    box-shadow: 0 10px 25px rgba(239, 68, 68, 0.4);
+    box-shadow: 0 10px 25px rgba(58, 235, 4, 0.4);
 }
 
 /* Back Link */
