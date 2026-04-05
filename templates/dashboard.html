@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>YABA Dashboard</title>
-<link rel="stylesheet" href="/static/style.css">
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>YABA Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
@@ -20,8 +20,6 @@
 
 <!-- SUMMARY CARDS -->
 <div class="summary-cards">
-    
-    <!-- CLICKABLE CURRENT FUNDS -->
     <div class="card blue" onclick="loadFundsChart()" style="cursor:pointer;">
       <h3>Current Funds</h3>
       <p>${{.CurrentFunds}}</p>
@@ -41,42 +39,54 @@
         <h3>Expected Monthly Expenses</h3>
         <p>$1234 - $2345</p>
     </div>
-
 </div>
 
 <!-- 🔥 HIDDEN CHART -->
-<div id="chartContainer" style="display:none; margin:30px;">
+<div id="chartContainer" style="display:none; margin:30px auto; max-width:1100px;">
     <canvas id="fundsChart"></canvas>
     <p id="noDataMsg" style="display:none; color:white; text-align:center; margin-top:10px;">
         No data available. Please add income or expense.
     </p>
 </div>
 
-<!-- MAIN -->
+<!-- MAIN - CREATE YOUR BUDGET SECTION -->
 <div class="main-container">
+    <div class="budget-section">
+        <h1 class="budget-title">Create Your Budget</h1>
+        
+        <div class="action-cards">
+            <!-- Add Income Card -->
+            <div class="action-card">
+                <div class="action-icon">💰</div>
+                <h3>Add Income</h3>
+                <p>Record your earnings and salary</p>
+                <a href="/add-income" class="action-btn income-btn">Add Income</a>
+            </div>
 
-<div class="budget-header">
-<h1>Create Your Budget</h1>
-</div>
+            <!-- View Transactions Card -->
+            <div class="action-card">
+                <div class="action-icon">📊</div>
+                <h3>View Transactions</h3>
+                <p>See all income and expenses</p>
+                <a href="/transactions" class="action-btn view-btn">View Transactions</a>
+            </div>
 
-<div class="action-buttons">
-    <a href="/add-income" class="btn btn-dark">Add Income</a>
-    <a href="/transactions" class="btn btn-dark">View Transactions</a>
-    <a href="/add-expense" class="btn btn-dark">Add Expense</a>
-</div>
-
+            <!-- Add Expense Card -->
+            <div class="action-card">
+                <div class="action-icon">🛍️</div>
+                <h3>Add Expense</h3>
+                <p>Log your daily spending</p>
+                <a href="/add-expense" class="action-btn expense-btn">Add Expense</a>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- JS -->
 <script>
-
 let fundsChart;
 
-// 🚀 LOAD CHART ON CLICK
 async function loadFundsChart() {
-
-    console.log("Clicked Current Funds");
-
     const container = document.getElementById("chartContainer");
     const noDataMsg = document.getElementById("noDataMsg");
 
@@ -85,14 +95,9 @@ async function loadFundsChart() {
 
     try {
         const res = await fetch('/api/funds');
-
-        if (!res.ok) {
-            throw new Error("API failed");
-        }
+        if (!res.ok) throw new Error("API failed");
 
         const data = await res.json();
-
-        console.log("API DATA:", data);
 
         if (!data || data.length === 0) {
             noDataMsg.style.display = "block";
@@ -104,9 +109,7 @@ async function loadFundsChart() {
 
         const ctx = document.getElementById('fundsChart').getContext('2d');
 
-        if (fundsChart) {
-            fundsChart.destroy();
-        }
+        if (fundsChart) fundsChart.destroy();
 
         fundsChart = new Chart(ctx, {
             type: 'line',
@@ -125,19 +128,11 @@ async function loadFundsChart() {
             options: {
                 responsive: true,
                 plugins: {
-                    legend: {
-                        labels: {
-                            color: "white"
-                        }
-                    }
+                    legend: { labels: { color: "white" } }
                 },
                 scales: {
-                    x: {
-                        ticks: { color: "white" }
-                    },
-                    y: {
-                        ticks: { color: "white" }
-                    }
+                    x: { ticks: { color: "white" } },
+                    y: { ticks: { color: "white" } }
                 }
             }
         });
@@ -147,7 +142,6 @@ async function loadFundsChart() {
         alert("Error loading chart. Check console.");
     }
 }
-
 </script>
 
 </body>

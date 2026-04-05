@@ -6,55 +6,63 @@
 </head>
 <body>
 
-<div class="form-wrapper">
-    <div class="form-card">
+<div class="main-container">
+    <div class="content-card">
 
         <h2>Transaction History</h2>
 
-        <div style="margin-bottom:15px;">
-            <a href="/transactions">All</a> |
-            <a href="/transactions?type=income">Income</a> |
-            <a href="/transactions?type=expense">Expense</a>
+        <!-- Filter Buttons -->
+        <div class="filter-tabs">
+        <a href="/transactions" class="{{if not .Type}}active{{end}}">All</a>
+        <a href="/transactions?type=income" class="{{if eq .Type "income"}}active{{end}}">Income</a>
+        <a href="/transactions?type=expense" class="{{if eq .Type "expense"}}active{{end}}">Expense</a>
         </div>
 
-        <table style="width:100%;">
-            <tr>
-                <th>Type</th>
-                <th>Name</th>
-                <th>Date</th>
-                <th>Amount</th>
-                <th>Action</th>
-            </tr>
-
-            {{range .Transactions}}
-            <tr>
-                <td>{{.Type}}</td>
-                <td>{{.Name}}</td>
-                <td>{{.Date}}</td>
-
-                {{if eq .Type "Income"}}
-                    <td style="color:green;">+${{.Amount}}</td>
-                {{else}}
-                    <td style="color:red;">-${{.Amount}}</td>
-                {{end}}
-
-                <td>
+        <!-- Table -->
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="type-col">Type</th>
+                        <th class="name-col">Name</th>
+                        <th class="date-col">Date</th>
+                        <th class="amount-col">Amount</th>
+                        <th class="action-col">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {{range .Transactions}}
+                <tr>
+                    <td>{{.Type}}</td>
+                    <td>{{.Name}}</td>
+                    <td>{{.Date}}</td>
+                    
                     {{if eq .Type "Income"}}
-                        <a href="/delete-transaction?id={{.ID}}&type=income"
-                           onclick="return confirm('Delete this transaction?')">❌</a>
+                        <td class="income-amount">+${{.Amount}}</td>
                     {{else}}
-                        <a href="/delete-transaction?id={{.ID}}&type=expense"
-                           onclick="return confirm('Delete this transaction?')">❌</a>
+                        <td class="expense-amount">-{{.Amount}}</td>
                     {{end}}
-                </td>
-            </tr>
-            {{end}}
+                    
+                    <td>
+                        {{if eq .Type "Income"}}
+                            <a href="/delete-transaction?id={{.ID}}&type=income" 
+                               class="delete-btn"
+                               onclick="return confirm('Delete this transaction?')">×</a>
+                        {{else}}
+                            <a href="/delete-transaction?id={{.ID}}&type=expense" 
+                               class="delete-btn"
+                               onclick="return confirm('Delete this transaction?')">×</a>
+                        {{end}}
+                    </td>
+                </tr>
+                {{end}}
+                </tbody>
+            </table>
+        </div>
 
-        </table>
-
-        <p style="margin-top:20px;">
+        <div class="back-link">
             <a href="/dashboard">← Back to Dashboard</a>
-        </p>
+        </div>
 
     </div>
 </div>

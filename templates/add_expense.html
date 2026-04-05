@@ -6,49 +6,52 @@
 </head>
 <body>
 
-<div class="form-wrapper">
-    <div class="form-card">
+<div class="add-expense-wrapper">
+    <div class="add-expense-card">
 
         <h2 id="title">Add Expense</h2>
 
-        <!-- STEP BUTTONS -->
-        <div id="questionStep">
-
-            <button class="question-btn" onclick="showForm()">Manual?</button>
-            <button class="question-btn" onclick="showForm()">Upload?</button>
-
+        <!-- Step 1: Choice Buttons -->
+        <div id="questionStep" class="choice-section">
+            <button class="choice-btn manual-btn" onclick="showForm()">Manual Entry</button>
+            <button class="choice-btn upload-btn" onclick="showForm()">Upload Receipt</button>
         </div>
 
-        <!-- FORM -->
-        <form id="expenseForm" method="POST" action="/add-expense" style="display:none;">
+        <!-- Step 2: Actual Form -->
+        <form id="expenseForm" method="POST" action="/add-expense" style="display: none;">
 
             <div class="input-group">
-                <input type="text" name="category" placeholder="What (Food, Rent...)" required>
+                <label>Category</label>
+                <input type="text" name="category" placeholder="e.g. Food, Rent, Transport" required>
             </div>
 
             <div class="input-group">
+                <label>Date</label>
                 <input type="date" name="date" required>
             </div>
 
             <div class="input-group">
-                <input type="text" name="place" placeholder="Where">
+                <label>Place / Merchant</label>
+                <input type="text" name="place" placeholder="Where did you spend?">
             </div>
 
             <div class="input-group">
-                <input type="text" name="note" placeholder="Why (optional)">
+                <label>Note (Optional)</label>
+                <input type="text" name="note" placeholder="Any extra note">
             </div>
 
             <div class="input-group">
-                <input type="number" step="0.01" name="amount" placeholder="Amount ($)" required>
+                <label>Amount ($)</label>
+                <input type="number" step="0.01" name="amount" placeholder="0.00" required>
             </div>
 
             <button type="submit" class="btn-submit">Save Expense</button>
-
         </form>
 
-        <p style="margin-top:15px; color:#ccc;">
-            ← <a href="/dashboard" style="color:#4ade80;">Back to Dashboard</a>
-        </p>
+        <!-- Back Link -->
+        <div class="back-link">
+            <a href="/dashboard">← Back to Dashboard</a>
+        </div>
 
     </div>
 </div>
