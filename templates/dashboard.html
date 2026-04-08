@@ -59,8 +59,8 @@
     </div>
 
     <div class="card orange clickable-card" onclick="showSection('emergency')">
-        <h3>Emergency Fund (x months)</h3>
-        <p>$12345 / $23456</p>
+        <h3>Emergency Fund {{if gt .MonthsRemaining 0}}({{printf "%.1f" .MonthsRemaining}} months){{end}}</h3>
+        <p>${{printf "%.2f" .EmergencyBalance}} / ${{printf "%.2f" .EmergencyGoal}}</p>
     </div>
 
     <div class="card green clickable-card" onclick="showSection('income')">
@@ -150,6 +150,11 @@ function calculateBudget() {
     });
 }
 
+document.addEventListener('DOMContentLoaded', function() {
+    renderEmergencyGoalChart();
+    updateEmergencyGoalPlan();
+});
+
 function showSection(section) {
     document.getElementById("currentSection").classList.remove("active-section");
     document.getElementById("emergencySection").classList.remove("active-section");
@@ -167,6 +172,7 @@ function showSection(section) {
     if (section === "emergency") {
         document.getElementById("emergencySection").classList.add("active-section");
         document.querySelector(".orange.clickable-card").classList.add("active-tab");
+        setTimeout(() => renderEmergencyGoalChart(), 100);
     }
 
     if (section === "income") {
