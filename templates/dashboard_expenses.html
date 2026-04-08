@@ -1,0 +1,45 @@
+{{define "expenses"}}
+<div class="budget-form">
+
+    <h2>Monthly Expenses</h2>
+
+    <div class="input-row">
+        <label>Rent</label>
+        <input type="number" id="rent" value="0">
+    </div>
+
+    <div class="input-row">
+        <label>Food</label>
+        <input type="number" id="food" value="0">
+    </div>
+
+    <div class="input-row">
+        <label>Transportation</label>
+        <input type="number" id="transport" value="0">
+    </div>
+
+    <button onclick="calculateBudget()">Calculate Budget</button>
+
+    <div class="cards">
+        <div class="card income">
+            <h3>Income</h3>
+            <p id="incomeTotal">$0</p>
+        </div>
+
+        <div class="card expense">
+            <h3>Expenses</h3>
+            <p id="expenseTotal">$0</p>
+        </div>
+
+        <div class="card net">
+            <h3>Net</h3>
+            <p id="netTotal">$0</p>
+        </div>
+    </div>
+
+    <div style="display:flex; justify-content:center; margin-top:20px;">
+        <canvas id="budgetChart" width="300" height="300"></canvas>
+    </div>
+
+</div>
+{{end}}
