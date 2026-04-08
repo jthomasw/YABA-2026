@@ -1,156 +1,82 @@
 package http
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"html/template"
-	"io"
 	"log"
-	http "net/http"
+	"net/http"
+	"strconv"
 
 	"github.com/gorilla/sessions"
-	"github.com/jthomasw/YABA-2026/errs"
-	"github.com/jthomasw/YABA-2026/foo"
 	"golang.org/x/crypto/bcrypt"
 )
 
-func NewServer(attachments ServerAttachments) http.Server {
-	router := http.NewServeMux()
-	router.HandleFunc("POST /foo/v1", authMiddleware(newHandleFooV1Post(attachments.FooService), attachments.Store))
-	router.HandleFunc("GET /foo/v1/{id}", authMiddleware(newHandleFooV1Get(attachments.FooService), attachments.Store))
-	router.HandleFunc("/", loginPage)
-	router.HandleFunc("/register", registerPage)
-	router.HandleFunc("POST /login", loginUser(attachments.DB, attachments.Store))
-	router.HandleFunc("POST /register-user", registerUser(attachments.DB, attachments.Store))
-	router.HandleFunc("/dashboard", authMiddleware(dashboard(attachments.Store), attachments.Store))
-	router.HandleFunc("/logout", logout(attachments.Store))
-	router.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-	server := http.Server{
-		Handler: router,
-		Addr:    ":8080",
-	}
-	return server
-}
-
 type ServerAttachments struct {
-	FooService *foo.Service
-	DB         *sql.DB
-	Store      *sessions.CookieStore
+	DB    *sql.DB
+	Store *sessions.CookieStore
 }
 
-func authMiddleware(next http.HandlerFunc, store *sessions.CookieStore) http.HandlerFunc {
+func NewServer(att ServerAttachments) http.Server {
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/", loginPage)
+	mux.HandleFunc("/register", registerUser(att.DB))
+	mux.HandleFunc("/login", loginUser(att.DB, att.Store))
+	mux.HandleFunc("/dashboard", auth(dashboard(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/add-income", auth(addIncome(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/add-expense", auth(addExpense(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/add-emergency-deposit", auth(addEmergencyDeposit(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/add-emergency-withdrawal", auth(addEmergencyWithdrawal(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/set-emergency-goal", auth(setEmergencyGoal(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/logout", logout(att.Store))
+	mux.HandleFunc("/transactions", auth(viewTransactions(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/delete-transaction", auth(deleteTransaction(att.DB, att.Store), att.Store))
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+
+	return http.Server{
+		Addr:    ":8000",
+		Handler: mux,
+	}
+}
+
+func auth(next http.HandlerFunc, store *sessions.CookieStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+
 		session, _ := store.Get(r, "session")
+
+		log.Println("AUTH CHECK USER:", session.Values["user"])
+
 		if session.Values["user"] == nil {
+			log.Println("REDIRECTING TO LOGIN ❌")
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
+
+		log.Println("USER AUTHORIZED ✅")
 		next(w, r)
 	}
 }
 
-func newHandleFooV1Post(fooService *foo.Service) http.HandlerFunc {
-	return func(httpResponseWriter http.ResponseWriter, httpRequest *http.Request) {
-		ctx := httpRequest.Context()
-		httpRequestBody, err := io.ReadAll(httpRequest.Body)
-		if err != nil {
-			httpResponseWriter.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		var fooRequest foo.CreateBarRequest
-		err = json.Unmarshal(httpRequestBody, &fooRequest)
-		if err != nil {
-			httpResponseWriter.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		fooResponse, err := fooService.CreateBar(ctx, fooRequest)
-		if err != nil {
-			switch errs.Cause(err).(type) {
-			case errs.BadRequest:
-				httpResponseWriter.WriteHeader(http.StatusBadRequest)
-				return
-			default:
-				httpResponseWriter.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-		}
-		httpResponseBody, err := json.Marshal(fooResponse)
-		if err != nil {
-			httpResponseWriter.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		httpResponseWriter.Header().Add("Content-Type", "application/json")
-		_, err = httpResponseWriter.Write(httpResponseBody)
-		if err != nil {
-			httpResponseWriter.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		// httpResponseWriter.WriteHeader(http.StatusOK) Shown as example, but not needed if there is a successful write to the body.
-		// Will actually generate a log message saying a superfluous header write was made or something like that
-	}
-}
-
-func newHandleFooV1Get(fooService *foo.Service) http.HandlerFunc {
-	return func(httpResponseWriter http.ResponseWriter, httpRequest *http.Request) {
-		ctx := httpRequest.Context()
-		id := httpRequest.PathValue("id") // The path value here needs to match what was inside the curly braces above, {id}, so "id" here
-		fooRequest := foo.GetBarByIdRequest{
-			Id: id,
-		}
-		bar, err := fooService.GetBarById(ctx, fooRequest)
-		if err != nil {
-			switch errs.Cause(err).(type) {
-			case errs.BadRequest:
-				httpResponseWriter.WriteHeader(http.StatusBadRequest)
-				return
-			default:
-				httpResponseWriter.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-		}
-		httpResponseBody, err := json.Marshal(bar)
-		if err != nil {
-			httpResponseWriter.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		httpResponseWriter.Header().Add("Content-Type", "application/json")
-		_, err = httpResponseWriter.Write(httpResponseBody)
-		if err != nil {
-			httpResponseWriter.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-	}
-}
-
-func registerPage(w http.ResponseWriter, r *http.Request) {
-	tmpl := template.Must(template.ParseFiles("templates/register.html"))
-	if err := tmpl.Execute(w, nil); err != nil {
-		log.Println("Error rendering register page:", err)
-		http.Error(w, "Template rendering error", http.StatusInternalServerError)
-	}
-}
-
 func loginPage(w http.ResponseWriter, r *http.Request) {
-	tmpl := template.Must(template.ParseFiles("templates/login.html"))
-	if err := tmpl.Execute(w, nil); err != nil {
-		log.Println("Error rendering login page:", err)
-		http.Error(w, "Template rendering error", http.StatusInternalServerError)
-	}
+	template.Must(template.ParseFiles("templates/login.html")).Execute(w, nil)
 }
 
-func registerUser(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
+func registerUser(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			template.Must(template.ParseFiles("templates/register.html")).Execute(w, nil)
+			return
+		}
+
 		if r.Method != http.MethodPost {
 			http.Redirect(w, r, "/register", http.StatusSeeOther)
 			return
 		}
 
-		err := r.ParseForm()
-		if err != nil {
-			http.Error(w, "Form parsing error", http.StatusBadRequest)
-			return
-		}
-
+		r.ParseForm()
 		username := r.FormValue("username")
 		password := r.FormValue("password")
 
@@ -161,7 +87,7 @@ func registerUser(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
-			http.Error(w, "Password hashing failed", http.StatusInternalServerError)
+			http.Error(w, "Could not hash password", http.StatusInternalServerError)
 			return
 		}
 
@@ -170,79 +96,398 @@ func registerUser(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 			username,
 			string(hashedPassword),
 		)
-
 		if err != nil {
-			http.Error(w, "Username already taken", http.StatusBadRequest)
+			log.Println("REGISTER ERROR:", err)
+			http.Error(w, "Could not register user", http.StatusInternalServerError)
 			return
 		}
 
-		log.Println("User registered:", username)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	}
 }
 
 func loginUser(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+
 		if r.Method != http.MethodPost {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
 
-		err := r.ParseForm()
-		if err != nil {
-			http.Error(w, "Form parsing error", http.StatusBadRequest)
-			return
-		}
-
+		r.ParseForm()
 		username := r.FormValue("username")
 		password := r.FormValue("password")
 
-		var storedPassword string
-
-		err = db.QueryRow(
-			"SELECT password FROM users WHERE username = ?",
-			username,
-		).Scan(&storedPassword)
-
+		var stored string
+		err := db.QueryRow("SELECT password FROM users WHERE username=?", username).Scan(&stored)
 		if err != nil {
-			http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+			http.Error(w, "Invalid login", 401)
 			return
 		}
 
-		err = bcrypt.CompareHashAndPassword(
-			[]byte(storedPassword),
-			[]byte(password),
-		)
-
-		if err != nil {
-			http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+		if bcrypt.CompareHashAndPassword([]byte(stored), []byte(password)) != nil {
+			http.Error(w, "Invalid login", 401)
 			return
 		}
 
 		session, _ := store.Get(r, "session")
 		session.Values["user"] = username
-		session.Save(r, w)
+		err = session.Save(r, w)
+		if err != nil {
+			log.Println("SESSION SAVE ERROR:", err)
+		}
 
-		log.Println("User logged in:", username)
+		log.Println("LOGIN SAVED USER:", session.Values["user"])
+
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 	}
 }
 
-func dashboard(store *sessions.CookieStore) http.HandlerFunc {
+func dashboard(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		session, _ := store.Get(r, "session")
-		user := session.Values["user"]
 
-		if user == nil {
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+
+		if !ok || user == "" {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
 
-		tmpl := template.Must(template.ParseFiles("templates/dashboard.html"))
-		if err := tmpl.Execute(w, user); err != nil {
-			log.Println("Error rendering dashboard:", err)
-			http.Error(w, "Template rendering error", http.StatusInternalServerError)
+		log.Println("DASHBOARD USER:", user)
+
+		var income float64
+		var expense float64
+
+		db.QueryRow("SELECT IFNULL(SUM(amount),0) FROM income WHERE user=?", user).Scan(&income)
+		db.QueryRow("SELECT IFNULL(SUM(amount),0) FROM expense WHERE user=?", user).Scan(&expense)
+
+		current := income - expense
+
+		log.Println("Income:", income)
+		log.Println("Expense:", expense)
+		log.Println("Current:", current)
+
+		type ChartPoint struct {
+			Date   string
+			Amount float64
+			Type   string
 		}
+
+		rows, err := db.Query(`
+			SELECT date, amount, 'income' as type
+			FROM income
+			WHERE user=?
+
+			UNION ALL
+
+			SELECT date, amount, 'expense' as type
+			FROM expense
+			WHERE user=?
+
+			ORDER BY date ASC
+		`, user, user)
+
+		if err != nil {
+			log.Println("CHART QUERY ERROR:", err)
+			http.Error(w, "Could not load dashboard chart data", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var labels []string
+		var balances []float64
+		var runningBalance float64 = 0
+
+		for rows.Next() {
+			var p ChartPoint
+			err := rows.Scan(&p.Date, &p.Amount, &p.Type)
+			if err != nil {
+				log.Println("CHART SCAN ERROR:", err)
+				continue
+			}
+
+			if p.Type == "income" {
+				runningBalance += p.Amount
+			} else if p.Type == "expense" {
+				runningBalance -= p.Amount
+			}
+
+			labels = append(labels, p.Date)
+			balances = append(balances, runningBalance)
+		}
+
+		labelsJSON, err := json.Marshal(labels)
+		if err != nil {
+			log.Println("LABELS JSON ERROR:", err)
+			http.Error(w, "Could not prepare chart labels", http.StatusInternalServerError)
+			return
+		}
+
+		balancesJSON, err := json.Marshal(balances)
+		if err != nil {
+			log.Println("BALANCES JSON ERROR:", err)
+			http.Error(w, "Could not prepare chart values", http.StatusInternalServerError)
+			return
+		}
+
+		// Calculate emergency fund data
+		var emergencyDeposits float64
+		var emergencyWithdrawals float64
+		var emergencyGoal float64
+		var emergencyMonths int
+
+		db.QueryRow("SELECT IFNULL(SUM(amount),0) FROM emergency_fund WHERE user=? AND type='deposit'", user).Scan(&emergencyDeposits)
+		db.QueryRow("SELECT IFNULL(SUM(amount),0) FROM emergency_fund WHERE user=? AND type='withdrawal'", user).Scan(&emergencyWithdrawals)
+		db.QueryRow("SELECT IFNULL(target_amount,0), IFNULL(months_target,0) FROM emergency_goals WHERE user=?", user).Scan(&emergencyGoal, &emergencyMonths)
+
+		emergencyBalance := emergencyDeposits - emergencyWithdrawals
+
+		// Calculate monthly withdrawal rate from emergency fund transactions
+		var monthlyWithdrawalRate float64
+		rows2, err := db.Query(`
+			SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
+			FROM emergency_fund
+			WHERE user=? AND type='withdrawal'
+			GROUP BY strftime('%Y-%m', date)
+			ORDER BY month DESC
+			LIMIT 3
+		`, user)
+		if err == nil {
+			defer rows2.Close()
+			var rates []float64
+			for rows2.Next() {
+				var month string
+				var total float64
+				rows2.Scan(&month, &total)
+				rates = append(rates, total)
+			}
+			if len(rates) > 0 {
+				// Average of last 3 months
+				sum := 0.0
+				for _, rate := range rates {
+					sum += rate
+				}
+				monthlyWithdrawalRate = sum / float64(len(rates))
+			}
+		}
+
+		// Calculate projection
+		var monthsRemaining float64
+		if monthlyWithdrawalRate > 0 {
+			monthsRemaining = emergencyBalance / monthlyWithdrawalRate
+		} else {
+			monthsRemaining = -1 // Infinite if no withdrawals
+		}
+
+		data := map[string]interface{}{
+			"Username":              user,
+			"CurrentFunds":          current,
+			"ChartLabels":           template.JS(labelsJSON),
+			"ChartBalances":         template.JS(balancesJSON),
+			"EmergencyBalance":      emergencyBalance,
+			"EmergencyGoal":         emergencyGoal,
+			"EmergencyMonthsTarget": emergencyMonths,
+			"MonthlyWithdrawalRate": monthlyWithdrawalRate,
+			"MonthsRemaining":       monthsRemaining,
+		}
+
+		t := template.Must(template.ParseFiles(
+			"templates/dashboard.html",
+			"templates/dashboard_current.html",
+			"templates/dashboard_emergency.html",
+			"templates/dashboard_income.html",
+			"templates/dashboard_expenses.html",
+		))
+
+		var buf bytes.Buffer
+		err = t.Execute(&buf, data)
+		if err != nil {
+			log.Println("DASHBOARD TEMPLATE ERROR:", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		_, err = buf.WriteTo(w)
+		if err != nil {
+			log.Println("DASHBOARD WRITE ERROR:", err)
+		}
+	}
+}
+
+func addIncome(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+
+		if !ok || user == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+
+		if r.Method == http.MethodGet {
+			template.Must(template.ParseFiles("templates/add_income.html")).Execute(w, nil)
+			return
+		}
+
+		r.ParseForm()
+
+		source := r.FormValue("source")
+		date := r.FormValue("date")
+		amount, _ := strconv.ParseFloat(r.FormValue("amount"), 64)
+
+		log.Println("INSERT INCOME:", user, amount)
+
+		_, err := db.Exec(
+			"INSERT INTO income(user, source, date, amount) VALUES(?,?,?,?)",
+			user, source, date, amount,
+		)
+
+		if err != nil {
+			log.Println("ERROR:", err)
+		}
+
+		http.Redirect(w, r, "/dashboard?tab=emergency", http.StatusSeeOther)
+	}
+}
+
+func addExpense(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+
+		if !ok || user == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+
+		if r.Method == http.MethodGet {
+			template.Must(template.ParseFiles("templates/add_expense.html")).Execute(w, nil)
+			return
+		}
+
+		r.ParseForm()
+
+		category := r.FormValue("category")
+		date := r.FormValue("date")
+		amount, _ := strconv.ParseFloat(r.FormValue("amount"), 64)
+
+		log.Println("INSERT EXPENSE:", user, amount)
+
+		db.Exec(
+			"INSERT INTO expense(user, category, date, amount) VALUES(?,?,?,?)",
+			user, category, date, amount,
+		)
+
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	}
+}
+func viewTransactions(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+
+		if !ok || user == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+
+		log.Println("INSIDE TRANSACTIONS PAGE ✅")
+
+		filter := r.URL.Query().Get("type")
+
+		type Transaction struct {
+			ID     int
+			Type   string
+			Name   string
+			Date   string
+			Amount float64
+		}
+
+		var transactions []Transaction
+
+		// ✅ INCOME
+		if filter == "" || filter == "income" {
+			rows, err := db.Query(`
+				SELECT id, source, date, amount 
+				FROM income 
+				WHERE user=? 
+				ORDER BY date DESC`, user)
+
+			if err != nil {
+				log.Println("INCOME QUERY ERROR:", err)
+			} else {
+				defer rows.Close()
+
+				for rows.Next() {
+					var t Transaction
+					err := rows.Scan(&t.ID, &t.Name, &t.Date, &t.Amount)
+					if err == nil {
+						t.Type = "Income"
+						transactions = append(transactions, t)
+					}
+				}
+			}
+		}
+
+		// ✅ EXPENSE (FIXED COLUMN NAME)
+		if filter == "" || filter == "expense" {
+			rows, err := db.Query(`
+				SELECT id, category, date, amount 
+				FROM expense 
+				WHERE user=? 
+				ORDER BY date DESC`, user)
+
+			if err != nil {
+				log.Println("EXPENSE QUERY ERROR:", err)
+			} else {
+				defer rows.Close()
+
+				for rows.Next() {
+					var t Transaction
+					err := rows.Scan(&t.ID, &t.Name, &t.Date, &t.Amount)
+					if err == nil {
+						t.Type = "Expense"
+						transactions = append(transactions, t)
+					}
+				}
+			}
+		}
+
+		data := map[string]interface{}{
+			"Transactions": transactions,
+			"Username":     user,
+			"Filter":       filter,
+		}
+
+		template.Must(template.ParseFiles("templates/transactions.html")).Execute(w, data)
+	}
+}
+
+func deleteTransaction(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+
+		if !ok || user == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+
+		id := r.URL.Query().Get("id")
+		tType := r.URL.Query().Get("type")
+
+		if tType == "income" {
+			db.Exec("DELETE FROM income WHERE id=? AND user=?", id, user)
+		} else if tType == "expense" {
+			db.Exec("DELETE FROM expense WHERE id=? AND user=?", id, user)
+		}
+
+		http.Redirect(w, r, "/transactions", http.StatusSeeOther)
 	}
 }
 
@@ -252,7 +497,94 @@ func logout(store *sessions.CookieStore) http.HandlerFunc {
 		session.Options.MaxAge = -1
 		session.Save(r, w)
 
-		log.Println("User logged out")
 		http.Redirect(w, r, "/", http.StatusSeeOther)
+	}
+}
+
+func addEmergencyDeposit(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+
+		if !ok || user == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+
+		if r.Method == http.MethodPost {
+			r.ParseForm()
+			amount, _ := strconv.ParseFloat(r.FormValue("amount"), 64)
+			date := r.FormValue("date")
+
+			if amount > 0 {
+				_, err := db.Exec(
+					"INSERT INTO emergency_fund(user, date, amount, type) VALUES(?,?,?,'deposit')",
+					user, date, amount,
+				)
+				if err != nil {
+					log.Println("EMERGENCY DEPOSIT ERROR:", err)
+				}
+			}
+		}
+
+		http.Redirect(w, r, "/dashboard?tab=emergency", http.StatusSeeOther)
+	}
+}
+
+func addEmergencyWithdrawal(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+
+		if !ok || user == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+
+		if r.Method == http.MethodPost {
+			r.ParseForm()
+			amount, _ := strconv.ParseFloat(r.FormValue("amount"), 64)
+			date := r.FormValue("date")
+
+			if amount > 0 {
+				_, err := db.Exec(
+					"INSERT INTO emergency_fund(user, date, amount, type) VALUES(?,?,?,'withdrawal')",
+					user, date, amount,
+				)
+				if err != nil {
+					log.Println("EMERGENCY WITHDRAWAL ERROR:", err)
+				}
+			}
+		}
+
+		http.Redirect(w, r, "/dashboard?tab=emergency", http.StatusSeeOther)
+	}
+}
+
+func setEmergencyGoal(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+
+		if !ok || user == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+
+		if r.Method == http.MethodPost {
+			r.ParseForm()
+			targetAmount, _ := strconv.ParseFloat(r.FormValue("target_amount"), 64)
+			monthsTarget, _ := strconv.Atoi(r.FormValue("months_target"))
+
+			_, err := db.Exec(
+				"INSERT OR REPLACE INTO emergency_goals(user, target_amount, months_target) VALUES(?,?,?)",
+				user, targetAmount, monthsTarget,
+			)
+			if err != nil {
+				log.Println("EMERGENCY GOAL ERROR:", err)
+			}
+		}
+
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 	}
 }

@@ -4,87 +4,84 @@ import (
 	"database/sql"
 	"log"
 
-	"github.com/google/uuid"
+	nethttp "net/http"
+
 	"github.com/gorilla/sessions"
 	_ "modernc.org/sqlite"
 
-	"github.com/jthomasw/YABA-2026/foo"
 	"github.com/jthomasw/YABA-2026/http"
-	"github.com/jthomasw/YABA-2026/sqlite"
 )
 
-type uuidGenerator struct{}
-
-func (u *uuidGenerator) GenerateId() (string, error) {
-	return uuid.New().String(), nil
-}
-
 func main() {
-	var err error
 
-	// Open SQLite database
+	// DB
 	db, err := sql.Open("sqlite", "yaba.db")
 	if err != nil {
-		log.Fatal("Database open error:", err)
+		log.Fatal(err)
 	}
 
-	// Test DB connection
 	if err = db.Ping(); err != nil {
-		log.Fatal("Database connection failed:", err)
+		log.Fatal(err)
 	}
-
-	log.Println("Database connected successfully")
 
 	createTables(db)
 
-	// Initialize components
-	sqliteClient, err := sqlite.NewClient("yaba.db")
-	if err != nil {
-		log.Fatal("SQLite client error:", err)
+	// SESSION
+	store := sessions.NewCookieStore([]byte("super-secret-key"))
+	store.Options = &sessions.Options{
+		Path:     "/",
+		MaxAge:   86400,
+		HttpOnly: true,
+		Secure:   false,
+		SameSite: nethttp.SameSiteLaxMode,
 	}
 
-	fooService := foo.NewService(foo.ServiceAttachments{
-		BarRepository: &sqliteClient,
-		IdGenerator:   &uuidGenerator{},
-	})
-
-	store := sessions.NewCookieStore([]byte("super-secret-key"))
-
+	// SERVER
 	server := http.NewServer(http.ServerAttachments{
-		FooService: fooService,
-		DB:         db,
-		Store:      store,
+		DB:    db,
+		Store: store,
 	})
 
-	log.Println("Server running at http://localhost:8080")
+	log.Println("Running at http://localhost:8000")
 	log.Fatal(server.ListenAndServe())
 }
 
 func createTables(db *sql.DB) {
-	userQuery := `
-	CREATE TABLE IF NOT EXISTS users (
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS users (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		username TEXT UNIQUE NOT NULL,
-		password TEXT NOT NULL
-	);`
+		username TEXT UNIQUE,
+		password TEXT
+	)`)
 
-	_, err := db.Exec(userQuery)
-	if err != nil {
-		log.Fatal("Users table creation failed:", err)
-	}
+	db.Exec(`CREATE TABLE IF NOT EXISTS income (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user TEXT,
+		source TEXT,
+		date TEXT,
+		amount REAL
+	)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS expense (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user TEXT,
+		category TEXT,
+		date TEXT,
+		amount REAL
+	)`)
 
-	barQuery := `
-	CREATE TABLE IF NOT EXISTS bar (
-		id TEXT PRIMARY KEY,
-		b INTEGER,
-		a INTEGER,
-		r INTEGER
-	);`
+	db.Exec(`CREATE TABLE IF NOT EXISTS emergency_fund (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user TEXT,
+		date TEXT,
+		amount REAL,
+		type TEXT -- 'deposit' or 'withdrawal'
+	)`)
 
-	_, err = db.Exec(barQuery)
-	if err != nil {
-		log.Fatal("Bar table creation failed:", err)
-	}
+	db.Exec(`CREATE TABLE IF NOT EXISTS emergency_goals (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user TEXT UNIQUE,
+		target_amount REAL,
+		months_target INTEGER
+	)`)
 
-	log.Println("Tables ready")
 }
