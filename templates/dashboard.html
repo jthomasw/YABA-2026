@@ -59,7 +59,7 @@
     </div>
 
     <div class="card orange clickable-card" onclick="showSection('emergency')">
-        <h3>Emergency Fund {{if gt .MonthsRemaining 0}}({{printf "%.1f" .MonthsRemaining}} months){{end}}</h3>
+        <h3>Emergency Fund {{if gt .MonthsRemaining 0.0}}({{printf "%.1f" .MonthsRemaining}} months){{end}}</h3>
         <p>${{printf "%.2f" .EmergencyBalance}} / ${{printf "%.2f" .EmergencyGoal}}</p>
     </div>
 
