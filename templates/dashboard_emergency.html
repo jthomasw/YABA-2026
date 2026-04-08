@@ -1,7 +1,529 @@
 {{define "emergency"}}
-<div class="placeholder-section">
-    <h2>Emergency Fund</h2>
-    <p>This section can later show emergency fund recommendations.</p>
-    <p>For example: 3 months, 6 months, or custom savings goals.</p>
+<div class="emergency-fund-section">
+    <h2>Emergency Fund Status</h2>
+
+    <div class="emergency-stats">
+        <div class="stat-card">
+            <h3>Current Balance</h3>
+            <p class="balance">${{.EmergencyBalance}}</p>
+        </div>
+
+        <div class="stat-card">
+            <h3>Target Goal</h3>
+            <p class="goal">${{.EmergencyGoal}}</p>
+        </div>
+
+        <div class="stat-card">
+            <h3>Monthly Withdrawal Rate</h3>
+            <p class="rate">${{.MonthlyWithdrawalRate}}</p>
+        </div>
+    </div>
+
+    <div class="projection-section">
+        <h3>Fund Duration Projection</h3>
+        {{if eq .MonthsRemaining -1.0}}
+            <p class="projection-text">No emergency withdrawals recorded. Fund will last indefinitely at current rate.</p>
+        {{else if lt .MonthsRemaining 0.0}}
+            <p class="projection-text warning">Emergency fund is being depleted faster than contributions. Consider reducing withdrawals or increasing contributions.</p>
+        {{else}}
+            <p class="projection-text">
+                At your current withdrawal rate of <strong>${{.MonthlyWithdrawalRate}}</strong> per month,
+                your emergency fund will last approximately <strong>{{printf "%.1f" .MonthsRemaining}} months</strong>.
+            </p>
+            {{if lt .MonthsRemaining 3.0}}
+                <p class="warning">⚠️ Your emergency fund will be depleted soon. Consider building it up or reducing emergency expenses.</p>
+            {{end}}
+        {{end}}
+    </div>
+
+    {{if gt .EmergencyGoal 0.0}}
+    <div class="goal-projection-section">
+        <h3>Goal Savings Projection</h3>
+        <p class="projection-text">
+            Your emergency goal is <strong>${{printf "%.2f" .EmergencyGoal}}</strong> and your current balance is <strong>${{printf "%.2f" .EmergencyBalance}}</strong>.
+        </p>
+        <div class="goal-graphic-card">
+            <div class="goal-graphic-header">
+                <span>Goal progress</span>
+                <strong id="goalProgressPercentText">0%</strong>
+            </div>
+            <canvas id="goalProgressChart" width="240" height="240"></canvas>
+        </div>
+        <div class="input-group">
+            <label for="goalProjectionAmount">Add per month</label>
+            <input type="number" id="goalProjectionAmount" min="0" step="0.01" value="0.00" oninput="updateEmergencyGoalPlan()">
+        </div>
+        <p class="projection-text" id="goalProjectionResult">Enter a monthly savings amount to see how many months it will take to reach your goal if you stop withdrawing.</p>
+        {{if gt .EmergencyMonthsTarget 0}}
+            <p class="projection-text note">Your current target timeline is <strong>{{.EmergencyMonthsTarget}}</strong> months.</p>
+        {{end}}
+    </div>
+    {{end}}
+
+    <div class="action-buttons">
+        <button class="btn btn-primary" onclick="showEmergencyDepositForm()">Add to Emergency Fund</button>
+        <button class="btn btn-secondary" onclick="showEmergencyWithdrawalForm()">Record Emergency Withdrawal</button>
+        <button class="btn btn-outline" onclick="showEmergencyGoalForm()">Set Emergency Goal</button>
+    </div>
+
+    <!-- Hidden forms -->
+    <div id="emergencyDepositForm" class="modal-form" style="display:none;">
+        <form method="POST" action="/add-emergency-deposit" onsubmit="syncEmergencyDate('deposit')">
+            <h3>Add Emergency Fund Deposit</h3>
+            <div class="input-group date-input-group">
+                <div class="date-summary" id="depositDateSummary">
+                    <span>Current date: <strong id="depositDateText"></strong></span>
+                    <button type="button" class="edit-date-btn" onclick="toggleEmergencyDate('deposit')">Change date</button>
+                </div>
+                <input type="hidden" name="date" id="depositDateHidden">
+                <input type="date" id="depositDatePicker" class="date-picker hidden" aria-label="Deposit date" onchange="updateEmergencyDateText('deposit')">
+            </div>
+            <div class="input-group">
+                <input type="number" step="0.01" name="amount" placeholder="Amount ($)" required>
+            </div>
+            <button type="submit" class="btn-submit">Add Deposit</button>
+            <button type="button" onclick="hideEmergencyDepositForm()">Cancel</button>
+        </form>
+    </div>
+
+    <div id="emergencyWithdrawalForm" class="modal-form" style="display:none;">
+        <form method="POST" action="/add-emergency-withdrawal" onsubmit="syncEmergencyDate('withdrawal')">
+            <h3>Record Emergency Withdrawal</h3>
+            <div class="input-group date-input-group">
+                <div class="date-summary" id="withdrawalDateSummary">
+                    <span>Current date: <strong id="withdrawalDateText"></strong></span>
+                    <button type="button" class="edit-date-btn" onclick="toggleEmergencyDate('withdrawal')">Change date</button>
+                </div>
+                <input type="hidden" name="date" id="withdrawalDateHidden">
+                <input type="date" id="withdrawalDatePicker" class="date-picker hidden" aria-label="Withdrawal date" onchange="updateEmergencyDateText('withdrawal')">
+            </div>
+            <div class="input-group">
+                <input type="number" step="0.01" name="amount" placeholder="Amount ($)" required>
+            </div>
+            <button type="submit" class="btn-submit">Record Withdrawal</button>
+            <button type="button" onclick="hideEmergencyWithdrawalForm()">Cancel</button>
+        </form>
+    </div>
+
+    <div id="emergencyGoalForm" class="modal-form" style="display:none;">
+        <form method="POST" action="/set-emergency-goal">
+            <h3>Set Emergency Fund Goal</h3>
+            <div class="input-group">
+                <input type="number" step="0.01" name="target_amount" placeholder="Target Amount ($)" required>
+            </div>
+            <div class="input-group">
+                <input type="number" name="months_target" placeholder="Months to save for" required>
+            </div>
+            <button type="submit" class="btn-submit">Set Goal</button>
+            <button type="button" onclick="hideEmergencyGoalForm()">Cancel</button>
+        </form>
+    </div>
 </div>
+
+<style>
+.emergency-fund-section {
+    padding: 20px;
+}
+
+.emergency-stats {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 30px;
+    flex-wrap: wrap;
+}
+
+.stat-card {
+    background: #2d3748;
+    padding: 20px;
+    border-radius: 8px;
+    flex: 1;
+    min-width: 200px;
+    text-align: center;
+}
+
+.stat-card h3 {
+    margin: 0 0 10px 0;
+    color: #e2e8f0;
+    font-size: 14px;
+    text-transform: uppercase;
+}
+
+.balance, .goal, .rate {
+    font-size: 24px;
+    font-weight: bold;
+    color: #fbbf24;
+    margin: 0;
+}
+
+.projection-section {
+    background: #1a202c;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 30px;
+}
+
+.goal-projection-section {
+    background: #1a202c;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 30px;
+    display: grid;
+    grid-template-columns: 1fr 260px;
+    gap: 24px;
+    align-items: start;
+}
+
+.goal-graphic-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 0;
+    width: 240px;
+    min-width: 240px;
+    max-width: 240px;
+    height: 240px;
+    position: relative;
+}
+
+.goal-graphic-card canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+.goal-graphic-header {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #cbd5e0;
+    font-size: 0.95rem;
+}
+
+.goal-graphic-header strong {
+    color: #f7fafc;
+}
+
+.goal-projection-section label {
+    display: block;
+    margin-bottom: 8px;
+    color: #cbd5e0;
+    font-size: 0.95rem;
+}
+
+.goal-projection-section input {
+    width: 100%;
+    max-width: 240px;
+}
+
+.projection-section h3 {
+    margin-top: 0;
+    color: #e2e8f0;
+}
+
+.projection-text {
+    color: #a0aec0;
+    line-height: 1.6;
+    margin: 10px 0;
+}
+
+.projection-text strong {
+    color: #fbbf24;
+}
+
+.warning {
+    color: #f56565;
+    font-weight: bold;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.btn-primary {
+    background: #3182ce;
+    color: white;
+}
+
+.btn-secondary {
+    background: #e53e3e;
+    color: white;
+}
+
+.btn-outline {
+    background: transparent;
+    color: #3182ce;
+    border: 2px solid #3182ce;
+}
+
+.modal-form {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #2d3748;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+    min-width: 300px;
+}
+
+.modal-form h3 {
+    margin-top: 0;
+    color: #e2e8f0;
+}
+
+.modal-form .input-group {
+    margin-bottom: 15px;
+}
+
+.modal-form input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #4a5568;
+    border-radius: 4px;
+    background: #1a202c;
+    color: #e2e8f0;
+}
+
+.modal-form .btn-submit {
+    background: #3182ce;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-right: 10px;
+}
+
+.modal-form button[type="button"] {
+    background: #4a5568;
+    color: #e2e8f0;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.date-input-group {
+    margin-bottom: 15px;
+}
+
+.date-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    color: #cbd5e0;
+    font-size: 0.95rem;
+}
+
+.edit-date-btn {
+    background: transparent;
+    color: #63b3ed;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-size: 0.95rem;
+    text-decoration: underline;
+}
+
+.date-picker.hidden {
+    display: none;
+}
+</style>
+
+<script>
+function setTodayEmergencyDates() {
+    const today = new Date().toISOString().slice(0, 10);
+    const depositHidden = document.getElementById('depositDateHidden');
+    const depositPicker = document.getElementById('depositDatePicker');
+    const withdrawalHidden = document.getElementById('withdrawalDateHidden');
+    const withdrawalPicker = document.getElementById('withdrawalDatePicker');
+
+    if (depositHidden) {
+        depositHidden.value = today;
+    }
+    if (depositPicker) {
+        depositPicker.value = today;
+    }
+    if (withdrawalHidden) {
+        withdrawalHidden.value = today;
+    }
+    if (withdrawalPicker) {
+        withdrawalPicker.value = today;
+    }
+
+    const depositDateText = document.getElementById('depositDateText');
+    const withdrawalDateText = document.getElementById('withdrawalDateText');
+    if (depositDateText) {
+        depositDateText.textContent = today;
+    }
+    if (withdrawalDateText) {
+        withdrawalDateText.textContent = today;
+    }
+}
+
+function toggleEmergencyDate(type) {
+    const picker = document.getElementById(type + 'DatePicker');
+    if (!picker) {
+        return;
+    }
+    picker.classList.toggle('hidden');
+}
+
+function updateEmergencyDateText(type) {
+    const picker = document.getElementById(type + 'DatePicker');
+    const text = document.getElementById(type + 'DateText');
+    const hidden = document.getElementById(type + 'DateHidden');
+    if (!text || !hidden) {
+        return;
+    }
+
+    const value = picker && picker.value ? picker.value : hidden.value;
+    text.textContent = value;
+    hidden.value = value;
+}
+
+function syncEmergencyDate(type) {
+    const picker = document.getElementById(type + 'DatePicker');
+    const hidden = document.getElementById(type + 'DateHidden');
+    if (!hidden) {
+        return;
+    }
+
+    if (picker && !picker.classList.contains('hidden') && picker.value) {
+        hidden.value = picker.value;
+    }
+}
+
+function showEmergencyDepositForm() {
+    document.getElementById('emergencyDepositForm').style.display = 'block';
+    setTodayEmergencyDates();
+}
+
+function hideEmergencyDepositForm() {
+    document.getElementById('emergencyDepositForm').style.display = 'none';
+}
+
+function showEmergencyWithdrawalForm() {
+    document.getElementById('emergencyWithdrawalForm').style.display = 'block';
+    setTodayEmergencyDates();
+}
+
+function hideEmergencyWithdrawalForm() {
+    document.getElementById('emergencyWithdrawalForm').style.display = 'none';
+}
+
+let emergencyGoalChart;
+
+function renderEmergencyGoalChart() {
+    const goal = parseFloat('{{printf "%.2f" .EmergencyGoal}}');
+    const balance = parseFloat('{{printf "%.2f" .EmergencyBalance}}');
+    if (!goal || !document.getElementById('goalProgressChart')) {
+        return;
+    }
+
+    const remaining = Math.max(0, goal - balance);
+    const progress = goal > 0 ? Math.min(100, (balance / goal) * 100) : 0;
+    const ctx = document.getElementById('goalProgressChart').getContext('2d');
+
+    if (emergencyGoalChart) {
+        emergencyGoalChart.destroy();
+    }
+
+    emergencyGoalChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Saved', 'Remaining'],
+            datasets: [{
+                data: [balance, remaining],
+                backgroundColor: ['#38b2ac', '#4a5568'],
+                borderWidth: 0,
+            }]
+        },
+        options: {
+            cutout: '75%',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return `${context.label}: $${context.parsed.toFixed(2)}`;
+                        }
+                    }
+                },
+                legend: {
+                    display: false
+                }
+            }
+        }
+    });
+
+    const percentText = document.getElementById('goalProgressPercentText');
+    if (percentText) {
+        percentText.textContent = `${progress.toFixed(0)}%`;
+    }
+}
+
+function updateEmergencyGoalPlan() {
+    const goal = parseFloat('{{printf "%.2f" .EmergencyGoal}}');
+    const balance = parseFloat('{{printf "%.2f" .EmergencyBalance}}');
+    const remaining = Math.max(0, goal - balance);
+    const amountInput = document.getElementById('goalProjectionAmount');
+    const result = document.getElementById('goalProjectionResult');
+
+    if (!amountInput || !result) {
+        return;
+    }
+
+    const monthlyAddition = parseFloat(amountInput.value);
+    if (remaining <= 0) {
+        result.textContent = 'You have already reached your emergency fund goal.';
+        return;
+    }
+
+    if (!monthlyAddition || monthlyAddition <= 0) {
+        result.textContent = `Remaining to goal: $${remaining.toFixed(2)}. Enter a monthly savings amount to see how many months it will take.`;
+        return;
+    }
+
+    const months = remaining / monthlyAddition;
+    let text = `If you stop withdrawing and add $${monthlyAddition.toFixed(2)} per month, you will reach your goal in ${months.toFixed(1)} months.`;
+
+    const targetMonths = {{.EmergencyMonthsTarget}};
+    if (targetMonths > 0) {
+        text += ` Your current target timeline is ${targetMonths} months.`;
+    }
+
+    result.textContent = text;
+}
+
+function showEmergencyGoalForm() {
+    document.getElementById('emergencyGoalForm').style.display = 'block';
+}
+
+function hideEmergencyGoalForm() {
+    document.getElementById('emergencyGoalForm').style.display = 'none';
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    updateEmergencyGoalPlan();
+});
+</script>
 {{end}}

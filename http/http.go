@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"html/template"
@@ -27,6 +28,9 @@ func NewServer(att ServerAttachments) http.Server {
 	mux.HandleFunc("/dashboard", auth(dashboard(att.DB, att.Store), att.Store))
 	mux.HandleFunc("/add-income", auth(addIncome(att.DB, att.Store), att.Store))
 	mux.HandleFunc("/add-expense", auth(addExpense(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/add-emergency-deposit", auth(addEmergencyDeposit(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/add-emergency-withdrawal", auth(addEmergencyWithdrawal(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/set-emergency-goal", auth(setEmergencyGoal(att.DB, att.Store), att.Store))
 	mux.HandleFunc("/logout", logout(att.Store))
 	mux.HandleFunc("/transactions", auth(viewTransactions(att.DB, att.Store), att.Store))
 	mux.HandleFunc("/delete-transaction", auth(deleteTransaction(att.DB, att.Store), att.Store))
@@ -130,7 +134,7 @@ func loginUser(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 		session.Values["user"] = username
 		err = session.Save(r, w)
 		if err != nil {
-		log.Println("SESSION SAVE ERROR:", err)
+			log.Println("SESSION SAVE ERROR:", err)
 		}
 
 		log.Println("LOGIN SAVED USER:", session.Values["user"])
@@ -227,11 +231,65 @@ func dashboard(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 			return
 		}
 
+		// Calculate emergency fund data
+		var emergencyDeposits float64
+		var emergencyWithdrawals float64
+		var emergencyGoal float64
+		var emergencyMonths int
+
+		db.QueryRow("SELECT IFNULL(SUM(amount),0) FROM emergency_fund WHERE user=? AND type='deposit'", user).Scan(&emergencyDeposits)
+		db.QueryRow("SELECT IFNULL(SUM(amount),0) FROM emergency_fund WHERE user=? AND type='withdrawal'", user).Scan(&emergencyWithdrawals)
+		db.QueryRow("SELECT IFNULL(target_amount,0), IFNULL(months_target,0) FROM emergency_goals WHERE user=?", user).Scan(&emergencyGoal, &emergencyMonths)
+
+		emergencyBalance := emergencyDeposits - emergencyWithdrawals
+
+		// Calculate monthly withdrawal rate from emergency fund transactions
+		var monthlyWithdrawalRate float64
+		rows2, err := db.Query(`
+			SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
+			FROM emergency_fund
+			WHERE user=? AND type='withdrawal'
+			GROUP BY strftime('%Y-%m', date)
+			ORDER BY month DESC
+			LIMIT 3
+		`, user)
+		if err == nil {
+			defer rows2.Close()
+			var rates []float64
+			for rows2.Next() {
+				var month string
+				var total float64
+				rows2.Scan(&month, &total)
+				rates = append(rates, total)
+			}
+			if len(rates) > 0 {
+				// Average of last 3 months
+				sum := 0.0
+				for _, rate := range rates {
+					sum += rate
+				}
+				monthlyWithdrawalRate = sum / float64(len(rates))
+			}
+		}
+
+		// Calculate projection
+		var monthsRemaining float64
+		if monthlyWithdrawalRate > 0 {
+			monthsRemaining = emergencyBalance / monthlyWithdrawalRate
+		} else {
+			monthsRemaining = -1 // Infinite if no withdrawals
+		}
+
 		data := map[string]interface{}{
-			"Username":      user,
-			"CurrentFunds":  current,
-			"ChartLabels":   template.JS(labelsJSON),
-			"ChartBalances": template.JS(balancesJSON),
+			"Username":              user,
+			"CurrentFunds":          current,
+			"ChartLabels":           template.JS(labelsJSON),
+			"ChartBalances":         template.JS(balancesJSON),
+			"EmergencyBalance":      emergencyBalance,
+			"EmergencyGoal":         emergencyGoal,
+			"EmergencyMonthsTarget": emergencyMonths,
+			"MonthlyWithdrawalRate": monthlyWithdrawalRate,
+			"MonthsRemaining":       monthsRemaining,
 		}
 
 		t := template.Must(template.ParseFiles(
@@ -242,11 +300,17 @@ func dashboard(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 			"templates/dashboard_expenses.html",
 		))
 
-		err = t.Execute(w, data)
+		var buf bytes.Buffer
+		err = t.Execute(&buf, data)
 		if err != nil {
 			log.Println("DASHBOARD TEMPLATE ERROR:", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+
+		_, err = buf.WriteTo(w)
+		if err != nil {
+			log.Println("DASHBOARD WRITE ERROR:", err)
 		}
 	}
 }
@@ -284,7 +348,7 @@ func addIncome(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 			log.Println("ERROR:", err)
 		}
 
-		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		http.Redirect(w, r, "/dashboard?tab=emergency", http.StatusSeeOther)
 	}
 }
 
@@ -313,7 +377,7 @@ func addExpense(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 		log.Println("INSERT EXPENSE:", user, amount)
 
 		db.Exec(
-			"INSERT INTO expense(user, source, date, amount) VALUES(?,?,?,?)",
+			"INSERT INTO expense(user, category, date, amount) VALUES(?,?,?,?)",
 			user, category, date, amount,
 		)
 
@@ -372,7 +436,7 @@ func viewTransactions(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc 
 		// ✅ EXPENSE (FIXED COLUMN NAME)
 		if filter == "" || filter == "expense" {
 			rows, err := db.Query(`
-				SELECT id, source, date, amount 
+				SELECT id, category, date, amount 
 				FROM expense 
 				WHERE user=? 
 				ORDER BY date DESC`, user)
@@ -434,5 +498,93 @@ func logout(store *sessions.CookieStore) http.HandlerFunc {
 		session.Save(r, w)
 
 		http.Redirect(w, r, "/", http.StatusSeeOther)
+	}
+}
+
+func addEmergencyDeposit(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+
+		if !ok || user == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+
+		if r.Method == http.MethodPost {
+			r.ParseForm()
+			amount, _ := strconv.ParseFloat(r.FormValue("amount"), 64)
+			date := r.FormValue("date")
+
+			if amount > 0 {
+				_, err := db.Exec(
+					"INSERT INTO emergency_fund(user, date, amount, type) VALUES(?,?,?,'deposit')",
+					user, date, amount,
+				)
+				if err != nil {
+					log.Println("EMERGENCY DEPOSIT ERROR:", err)
+				}
+			}
+		}
+
+		http.Redirect(w, r, "/dashboard?tab=emergency", http.StatusSeeOther)
+	}
+}
+
+func addEmergencyWithdrawal(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+
+		if !ok || user == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+
+		if r.Method == http.MethodPost {
+			r.ParseForm()
+			amount, _ := strconv.ParseFloat(r.FormValue("amount"), 64)
+			date := r.FormValue("date")
+
+			if amount > 0 {
+				_, err := db.Exec(
+					"INSERT INTO emergency_fund(user, date, amount, type) VALUES(?,?,?,'withdrawal')",
+					user, date, amount,
+				)
+				if err != nil {
+					log.Println("EMERGENCY WITHDRAWAL ERROR:", err)
+				}
+			}
+		}
+
+		http.Redirect(w, r, "/dashboard?tab=emergency", http.StatusSeeOther)
+	}
+}
+
+func setEmergencyGoal(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+
+		if !ok || user == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+
+		if r.Method == http.MethodPost {
+			r.ParseForm()
+			targetAmount, _ := strconv.ParseFloat(r.FormValue("target_amount"), 64)
+			monthsTarget, _ := strconv.Atoi(r.FormValue("months_target"))
+
+			_, err := db.Exec(
+				"INSERT OR REPLACE INTO emergency_goals(user, target_amount, months_target) VALUES(?,?,?)",
+				user, targetAmount, monthsTarget,
+			)
+			if err != nil {
+				log.Println("EMERGENCY GOAL ERROR:", err)
+			}
+		}
+
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 	}
 }

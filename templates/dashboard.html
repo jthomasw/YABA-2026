@@ -60,8 +60,8 @@
     </div>
 
     <div class="card orange clickable-card" onclick="showSection('emergency')">
-        <h3>Emergency Fund (x months)</h3>
-        <p>$12345 / $23456</p>
+        <h3>Emergency Fund</h3>
+        <p>${{.EmergencyBalance}} / ${{.EmergencyGoal}}</p>
     </div>
 
     <div class="card green clickable-card" onclick="showSection('income')">
@@ -219,6 +219,9 @@ function showSection(section) {
     if (section === "emergency") {
         document.getElementById("emergencySection").classList.add("active-section");
         document.querySelector(".orange.clickable-card").classList.add("active-tab");
+        if (typeof renderEmergencyGoalChart === 'function') {
+            renderEmergencyGoalChart();
+        }
     }
 
     if (section === "income") {
@@ -233,7 +236,14 @@ function showSection(section) {
 }
 
 window.onload = function() {
-    renderCurrentFundsChart();
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+
+    if (tab === 'emergency' || tab === 'income' || tab === 'expenses' || tab === 'current') {
+        showSection(tab);
+    } else {
+        renderCurrentFundsChart();
+    }
 };
 </script>
 
