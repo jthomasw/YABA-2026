@@ -1,27 +1,15 @@
 {{define "current"}}
 <div class="budget-form">
+    <h2 style="margin-top:0; color:white; text-align:center;">
+    Current Funds
+</h2>
 
-    <div style="
-        max-width: 900px;
-        margin: 0 auto;
-        background: #111827;
-        border-radius: 25px;
-        padding: 30px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-    ">
-        <h2 style="margin-top:0; color:white;">Current Funds</h2>
-        <p style="color:#d1d5db; margin-bottom:25px;">
-            Track how your money changes over time
-        </p>
+<p style="color:#d1d5db; margin-bottom:25px; text-align:center;">
+    Track how your money changes over time
+</p>
 
-        <div style="
-            background: white;
-            border-radius: 20px;
-            padding: 20px;
-        ">
-            <canvas id="currentFundsChart"></canvas>
-        </div>
+    <div class="chart-container">
+        <canvas id="currentFundsChart"></canvas>
     </div>
-
 </div>
 {{end}}

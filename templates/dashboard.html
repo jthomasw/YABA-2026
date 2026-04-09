@@ -163,37 +163,43 @@ function renderCurrentFundsChart() {
         data: {
             labels: labels,
             datasets: [{
-                label: "Current Funds",
+                label: "Current Funds Over Time",
                 data: values,
-                borderColor: "#2563eb",
-                backgroundColor: "rgba(37,99,235,0.15)",
+                borderColor: "#00ffff",
+                backgroundColor: "rgba(0,255,255,0.12)",
                 borderWidth: 3,
-                fill: false,
-                tension: 0.25
+                fill: true,
+                tension: 0.4,
+                pointRadius: 4,
+                pointHoverRadius: 6
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
             scales: {
                 x: {
                     ticks: {
-                        color: "#374151",
+                        color: "#ffffff",
                         maxRotation: 45,
                         minRotation: 45
+                    },
+                    grid: {
+                        color: "rgba(255,255,255,0.08)"
                     }
                 },
                 y: {
                     beginAtZero: true,
                     ticks: {
-                        color: "#374151"
-                    }
-                }
-            },
-            plugins: {
-                legend: {
-                    labels: {
-                        color: "#374151"
+                        color: "#ffffff"
+                    },
+                    grid: {
+                        color: "rgba(255,255,255,0.08)"
                     }
                 }
             }

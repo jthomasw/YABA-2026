@@ -69,4 +69,20 @@ func createTables(db *sql.DB) {
 		amount REAL
 	)`)
 
+
+	// jack changes : 
+	db.Exec(`CREATE TABLE IF NOT EXISTS emergency_fund (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user TEXT,
+		date TEXT,
+		amount REAL,
+		type TEXT
+	)`)
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS emergency_goals (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user TEXT UNIQUE,
+		target_amount REAL,
+		months_target INTEGER
+	)`)
 }
