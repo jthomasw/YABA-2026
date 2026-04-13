@@ -1,40 +1,12 @@
 {{define "income"}}
 <div class="budget-form">
+    <h2 style="margin-top:0; color:white; text-align:center;">Expected Monthly Income</h2>
+    <p style="color:#d1d5db; margin-bottom:25px; text-align:center;">
+        Income breakdown by source
+    </p>
 
-    <h2>Monthly Income</h2>
-
-    <div class="input-row">
-        <label>Salary/Wages</label>
-        <input type="number" id="salary" value="0">
+    <div class="chart-container">
+        <canvas id="incomePieChart"></canvas>
     </div>
-
-    <div class="input-row">
-        <label>Other Income</label>
-        <input type="number" id="otherIncome" value="0">
-    </div>
-
-    <button onclick="calculateBudget()">Calculate Budget</button>
-
-    <div class="cards">
-        <div class="card income">
-            <h3>Income</h3>
-            <p id="incomeTotal">$0</p>
-        </div>
-
-        <div class="card expense">
-            <h3>Expenses</h3>
-            <p id="expenseTotal">$0</p>
-        </div>
-
-        <div class="card net">
-            <h3>Net</h3>
-            <p id="netTotal">$0</p>
-        </div>
-    </div>
-
-    <div style="display:flex; justify-content:center; margin-top:20px;">
-        <canvas id="budgetChart" width="300" height="300"></canvas>
-    </div>
-
 </div>
 {{end}}

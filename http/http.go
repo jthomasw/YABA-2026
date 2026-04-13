@@ -231,6 +231,46 @@ func dashboard(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 			return
 		}
 
+		var incomeSourceLabels []string
+		var incomeSourceTotals []float64
+
+		incomeRows, err := db.Query(`
+			SELECT source, SUM(amount) as total
+			FROM income
+			WHERE user=?
+			GROUP BY source
+			ORDER BY total DESC
+		`, user)
+		if err != nil {
+			log.Println("INCOME SOURCE QUERY ERROR:", err)
+		} else {
+			defer incomeRows.Close()
+
+			for incomeRows.Next() {
+				var source string
+				var total float64
+				err := incomeRows.Scan(&source, &total)
+				if err == nil {
+					incomeSourceLabels = append(incomeSourceLabels, source)
+					incomeSourceTotals = append(incomeSourceTotals, total)
+				}
+			}
+		}
+
+		incomeSourceLabelsJSON, err := json.Marshal(incomeSourceLabels)
+		if err != nil {
+			log.Println("INCOME SOURCE LABELS JSON ERROR:", err)
+			http.Error(w, "Could not prepare income chart labels", http.StatusInternalServerError)
+			return
+		}
+
+		incomeSourceTotalsJSON, err := json.Marshal(incomeSourceTotals)
+		if err != nil {
+			log.Println("INCOME SOURCE TOTALS JSON ERROR:", err)
+			http.Error(w, "Could not prepare income chart values", http.StatusInternalServerError)
+			return
+		}
+
 		var emergencyDeposits float64
 		var emergencyWithdrawals float64
 		var emergencyGoal float64
@@ -291,6 +331,8 @@ func dashboard(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 			"CurrentFunds":          current,
 			"ChartLabels":           template.JS(labelsJSON),
 			"ChartBalances":         template.JS(balancesJSON),
+			"IncomeSourceLabels":    template.JS(incomeSourceLabelsJSON),
+			"IncomeSourceTotals":    template.JS(incomeSourceTotalsJSON),
 			"EmergencyBalance":      emergencyBalance,
 			"EmergencyGoal":         emergencyGoal,
 			"EmergencyMonthsTarget": emergencyMonths,
