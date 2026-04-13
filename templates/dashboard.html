@@ -104,6 +104,7 @@
 <script>
 let budgetChart;
 let currentFundsChartInstance;
+let incomePieChartInstance;
 
 function calculateBudget() {
     let salary = parseFloat(document.getElementById("salary")?.value) || 0;
@@ -207,6 +208,51 @@ function renderCurrentFundsChart() {
     });
 }
 
+function renderIncomePieChart() {
+    const chartCanvas = document.getElementById("incomePieChart");
+    if (!chartCanvas) return;
+
+    if (incomePieChartInstance) {
+        incomePieChartInstance.destroy();
+    }
+
+    const labels = JSON.parse('{{.IncomeSourceLabels}}');
+    const values = JSON.parse('{{.IncomeSourceTotals}}');
+
+    if (!labels.length || !values.length) return;
+
+    incomePieChartInstance = new Chart(chartCanvas, {
+        type: "pie",
+        data: {
+            labels: labels,
+            datasets: [{
+                data: values,
+                backgroundColor: [
+                    "#22c55e",
+                    "#3b82f6",
+                    "#a855f7",
+                    "#f59e0b",
+                    "#ef4444",
+                    "#14b8a6"
+                ],
+                borderColor: "#111827",
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    labels: {
+                        color: "#ffffff"
+                    }
+                }
+            }
+        }
+    });
+}
+
 function showSection(section) {
     document.getElementById("currentSection").classList.remove("active-section");
     document.getElementById("emergencySection").classList.remove("active-section");
@@ -228,9 +274,10 @@ function showSection(section) {
     }
 
     if (section === "income") {
-        document.getElementById("incomeSection").classList.add("active-section");
-        document.querySelector(".green.clickable-card").classList.add("active-tab");
-    }
+    document.getElementById("incomeSection").classList.add("active-section");
+    document.querySelector(".green.clickable-card").classList.add("active-tab");
+    renderIncomePieChart();
+}
 
     if (section === "expenses") {
         document.getElementById("expensesSection").classList.add("active-section");
@@ -240,6 +287,7 @@ function showSection(section) {
 
 window.onload = function() {
     renderCurrentFundsChart();
+    renderIncomePieChart();
 };
 </script>
 
