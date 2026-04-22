@@ -3,6 +3,29 @@
 <head>
     <title>Add Expense</title>
     <link rel="stylesheet" href="/static/style.css">
+    <style>
+        /* Specific styles for the upload section */
+        .file-input-wrapper {
+            border: 2px dashed #4a5568;
+            padding: 20px;
+            text-align: center;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        .file-input-wrapper:hover {
+            border-color: #4ade80;
+        }
+        .hidden {
+            display: none;
+        }
+        .upload-info {
+            font-size: 0.85rem;
+            color: #9ca3af;
+            margin-top: 10px;
+            line-height: 1.4;
+        }
+    </style>
 </head>
 <body>
 
@@ -11,23 +34,19 @@
 
         <h2 id="title">Add Expense</h2>
 
-        <!-- STEP BUTTONS -->
         <div id="questionStep">
-
-            <button class="question-btn" onclick="showForm()">Manual?</button>
-            <button class="question-btn" onclick="showForm()">Upload?</button>
-
+            <p style="color:#ccc; margin-bottom: 20px;">How would you like to add this expense?</p>
+            <button class="question-btn" onclick="showManualForm()">Manual Entry</button>
+            <button class="question-btn" onclick="showUploadForm()">Upload Receipt</button>
         </div>
 
-        <!-- FORM -->
         <form id="expenseForm" method="POST" action="/add-expense" style="display:none;">
-
             <div class="input-group">
                 <input type="text" name="category" placeholder="What (Food, Rent...)" required>
             </div>
 
             <div class="input-group">
-                <input type="date" name="date" required>
+                <input type="date" id="manualDate" name="date" required>
             </div>
 
             <div class="input-group">
@@ -42,11 +61,27 @@
                 <input type="number" step="0.01" name="amount" placeholder="Amount ($)" required>
             </div>
 
-            <button type="submit" class="btn-submit">Save Expense</button>
-
+            <button type="submit" class="btn-submit">Add Expense</button>
+            <button type="button" class="btn-submit" style="background:#4a5568; margin-top:10px;" onclick="resetView()">Cancel</button>
         </form>
 
-        <p style="margin-top:15px; color:#ccc;">
+        <form id="uploadForm" method="POST" action="/upload-receipt" enctype="multipart/form-data" style="display:none;">
+            <div class="file-input-wrapper" onclick="document.getElementById('receiptInput').click()">
+                <p id="fileNameDisplay" style="color:#4ade80; margin:0;">Click to select or take a photo</p>
+                <input type="file" id="receiptInput" name="receipt" accept="image/*" class="hidden" onchange="updateFileName(this)" required>
+            </div>
+
+            <div class="upload-info">
+                <p>• Supported formats: JPG, PNG</p>
+                <p>• Picture will be put into a queue for processing.</p>
+                <p>• You will be notified once processing is complete.</p>
+            </div>
+
+            <button type="submit" class="btn-submit" style="margin-top:20px;">Upload & Process</button>
+            <button type="button" class="btn-submit" style="background:#4a5568; margin-top:10px;" onclick="resetView()">Cancel</button>
+        </form>
+
+        <p style="margin-top:25px; color:#ccc;">
             ← <a href="/dashboard" style="color:#4ade80;">Back to Dashboard</a>
         </p>
 
@@ -54,10 +89,36 @@
 </div>
 
 <script>
-function showForm() {
+function showManualForm() {
     document.getElementById("questionStep").style.display = "none";
+    document.getElementById("uploadForm").style.display = "none";
     document.getElementById("expenseForm").style.display = "block";
-    document.getElementById("title").innerText = "Enter Expense Details";
+    document.getElementById("title").innerText = "Enter Details";
+    // Set default date to today
+    document.getElementById("manualDate").valueAsDate = new Date();
+}
+
+function showUploadForm() {
+    document.getElementById("questionStep").style.display = "none";
+    document.getElementById("expenseForm").style.display = "none";
+    document.getElementById("uploadForm").style.display = "block";
+    document.getElementById("title").innerText = "Upload Receipt";
+}
+
+function resetView() {
+    document.getElementById("questionStep").style.display = "block";
+    document.getElementById("expenseForm").style.display = "none";
+    document.getElementById("uploadForm").style.display = "none";
+    document.getElementById("title").innerText = "Add Expense";
+}
+
+function updateFileName(input) {
+    const display = document.getElementById("fileNameDisplay");
+    if (input.files && input.files.length > 0) {
+        display.innerText = "Selected: " + input.files[0].name;
+    } else {
+        display.innerText = "Click to select or take a photo";
+    }
 }
 </script>
 

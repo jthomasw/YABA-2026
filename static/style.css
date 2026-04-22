@@ -3,8 +3,8 @@
 body {
     margin: 0;
     font-family: 'Segoe UI', sans-serif;
-    background: #0f172a;
-    color: #e2e8f0;
+    background: #f4f6f9;
+    color: #2c3e50;
     font-size: 15.5px;
 }
 
@@ -20,8 +20,8 @@ a {
     justify-content: space-between;
     align-items: center;
     padding: 15px 40px;
-    background: #111827;
-    border-bottom: 1px solid #1f2937;
+    background: #1e2a38;
+    border-bottom: 1px solid #d6dbe3;
 }
 
 .logo {
@@ -30,30 +30,30 @@ a {
     text-decoration: none;
     display: inline-block;
     cursor: pointer;
-    color: #c736eb;
-    animation: yabaLavaLamp 3s linear infinite;
+    color: #4A90E2;
+    animation: yabaLavaLamp 4s linear infinite;
 }
 
-@keyframes yabaLavaLamp {            /*gotta press ctrl + shift + R to see the fireworks : ) */
+@keyframes yabaLavaLamp {
     0% {
-        color: #22c55e;
-        text-shadow: 0 0 4px rgba(34, 197, 94, 0.35);
+        color: #4A90E2;
+        text-shadow: 0 0 4px rgba(74, 144, 226, 0.25);
     }
     25% {
-        color: #a855f7;
-        text-shadow: 0 0 8px rgba(168, 85, 247, 0.45);
+        color: #7c3aed;
+        text-shadow: 0 0 8px rgba(124, 58, 237, 0.3);
     }
     50% {
-        color: #2563eb;
-        text-shadow: 0 0 8px rgba(37, 99, 235, 0.45);
+        color: #14b8a6;
+        text-shadow: 0 0 8px rgba(20, 184, 166, 0.3);
     }
     75% {
-        color: #ec4899;
-        text-shadow: 0 0 8px rgba(236, 72, 153, 0.45);
+        color: #6366f1;
+        text-shadow: 0 0 8px rgba(99, 102, 241, 0.3);
     }
     100% {
-        color: #22c55e;
-        text-shadow: 0 0 4px rgba(34, 197, 94, 0.35);
+        color: #4A90E2;
+        text-shadow: 0 0 4px rgba(74, 144, 226, 0.25);
     }
 }
 
@@ -76,25 +76,27 @@ a {
     background: #dc2626;
 }
 
-.welcome-text {                 /*LAVA LAMP FOREVERRRRRRRRRRRRRRRRRRR - ben : ) */
-    font-size: 15px;                     
+.welcome-text {
+    font-size: 15px;
     font-weight: 600;
-    animation: yabaLavaLamp 3s linear infinite;
+    animation: yabaLavaLamp 4s linear infinite;
 }
 
 /* ================= DASHBOARD ================= */
 
 .main-container {
-    max-width: 900px;
+    max-width: 1000px;
     margin: 40px auto;
-    background: #111827;
-    padding: 30px;
-    border-radius: 15px;
-    box-shadow: 0 5px 20px rgba(0,0,0,0.5);
+    background: #ffffff;
+    padding: 35px;
+    border-radius: 24px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+    border: 1px solid #e5e7eb;
 }
 
 .budget-header h1 {
     margin-bottom: 5px;
+    color: #1e2a38;
 }
 
 /* ================= SUMMARY CARDS ================= */
@@ -108,10 +110,13 @@ a {
 .card {
     flex: 1;
     padding: 20px;
-    border-radius: 15px;
+    border-radius: 16px;
     text-align: center;
     font-weight: 600;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+    background: #ffffff;
+    color: #2c3e50;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
     transition: transform 0.2s ease;
 }
 
@@ -120,19 +125,19 @@ a {
 }
 
 .blue {
-    background: #1e3a8a;
+    border-top: 5px solid #4A90E2;
 }
 
 .orange {
-    background: #92400e;
+    border-top: 5px solid #f59e0b;
 }
 
 .green {
-    background: #166534;
+    border-top: 5px solid #22c55e;
 }
 
 .red {
-    background: #7f1d1d;
+    border-top: 5px solid #ef4444;
 }
 
 /* ================= BUTTONS ================= */
@@ -143,14 +148,21 @@ a {
     color: white;
     display: inline-block;
     margin: 10px;
+    background: #4A90E2;
+    transition: 0.25s ease;
+}
+
+.btn:hover {
+    background: #357ABD;
+    transform: translateY(-2px);
 }
 
 .btn-dark {
-    background: #1f2937;
+    background: #334155;
 }
 
 .btn-dark:hover {
-    background: #374151;
+    background: #475569;
 }
 
 /* ================= FORM CENTERING ================= */
@@ -161,19 +173,19 @@ a {
     justify-content: center;
     align-items: center;
     padding: 20px;
-    background: #0f172a;
+    background: #f4f6f9;
 }
 
 /* ================= FORM CARD ================= */
 
 .form-card {
-    background: #1e2937;
+    background: #ffffff;
     padding: 45px 40px;
     border-radius: 20px;
     width: 100%;
     max-width: 440px;
-    box-shadow: 0 15px 45px rgba(0, 0, 0, 0.65);
-    border: 1px solid #334155;
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.08);
+    border: 1px solid #e5e7eb;
     text-align: center;
 }
 
@@ -182,7 +194,7 @@ a {
 .form-card h2 {
     margin: 0 0 35px 0;
     font-size: 29px;
-    color: #f1f5f9;
+    color: #1e2a38;
     font-weight: 700;
 }
 
@@ -192,10 +204,10 @@ a {
     width: 100%;
     padding: 14px 16px;
     margin-bottom: 14px;
-    border: none;
+    border: 1px solid #d1d5db;
     border-radius: 12px;
-    background: #111827;
-    color: white;
+    background: #f9fafb;
+    color: #2c3e50;
     font-size: 16px;
     box-sizing: border-box;
 }
@@ -204,8 +216,8 @@ a {
 
 .input-group input:focus {
     outline: none;
-    border: 2px solid #4ade80;
-    background: #0f172a;
+    border: 2px solid #4A90E2;
+    background: #ffffff;
 }
 
 /* ================= BUTTON ================= */
@@ -216,7 +228,7 @@ a {
     margin-top: 10px;
     border: none;
     border-radius: 12px;
-    background: linear-gradient(135deg, #7c3aed, #2563eb);
+    background: linear-gradient(135deg, #4A90E2, #6366f1);
     color: white;
     font-size: 17px;
     font-weight: bold;
@@ -226,7 +238,7 @@ a {
 
 .btn-submit:hover {
     transform: translateY(-2px);
-    box-shadow: 0 10px 25px rgba(124, 58, 237, 0.4);
+    box-shadow: 0 10px 20px rgba(74, 144, 226, 0.25);
 }
 
 /* ================= TABLE (TRANSACTIONS) ================= */
@@ -235,22 +247,25 @@ table {
     width: 100%;
     border-collapse: collapse;
     margin-top: 20px;
-    background: #111827;
-    border-radius: 10px;
+    background: #ffffff;
+    border-radius: 12px;
     overflow: hidden;
+    border: 1px solid #e5e7eb;
 }
 
 th, td {
     padding: 12px;
     text-align: center;
+    color: #2c3e50;
 }
 
 th {
-    background: #1f2937;
+    background: #e5e7eb;
+    color: #1e2a38;
 }
 
 tr:nth-child(even) {
-    background: #1f2937;
+    background: #f9fafb;
 }
 
 /* ================= MODAL BACKGROUND ================= */
@@ -263,19 +278,20 @@ tr:nth-child(even) {
     top: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0,0,0,0.7);
+    background: rgba(15, 23, 42, 0.55);
 }
 
 /* ================= MODAL BOX ================= */
 
 .modal-content {
-    background: #111827;
+    background: #ffffff;
     margin: 10% auto;
     padding: 30px;
     border-radius: 20px;
     width: 350px;
     text-align: center;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+    border: 1px solid #e5e7eb;
 }
 
 /* ================= CLOSE BUTTON ================= */
@@ -284,26 +300,28 @@ tr:nth-child(even) {
     float: right;
     font-size: 25px;
     cursor: pointer;
-    color: white;
+    color: #475569;
 }
 
 /* ================= MODAL BUTTONS ================= */
 
-.modal-btn {
+.modal-btn,
+.question-btn {
     width: 100%;
     padding: 14px;
     margin: 10px 0;
     border-radius: 12px;
-    border: 1px solid #4b5563;
-    background: transparent;
-    color: white;
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    color: #2c3e50;
     font-size: 15px;
     cursor: pointer;
     transition: 0.3s;
 }
 
-.modal-btn:hover {
-    background: #1f2937;
+.modal-btn:hover,
+.question-btn:hover {
+    background: #f3f4f6;
 }
 
 /* ================= FORM INSIDE MODAL ================= */
@@ -313,39 +331,20 @@ tr:nth-child(even) {
     padding: 12px;
     margin: 10px 0;
     border-radius: 10px;
-    border: none;
-    background: #1f2937;
-    color: white;
-}
-
-/* ================= QUESTION BUTTONS ================= */
-
-.question-btn {
-    width: 100%;
-    padding: 14px;
-    margin: 10px 0;
-    border-radius: 12px;
-    border: 1px solid #4b5563;
-    background: transparent;
-    color: white;
-    font-size: 15px;
-    cursor: pointer;
-    transition: 0.3s;
-}
-
-.question-btn:hover {
-    background: #1f2937;
+    border: 1px solid #d1d5db;
+    background: #f9fafb;
+    color: #2c3e50;
 }
 
 /* ================= CHART CONTAINER ================= */
 
 .chart-container {
-    background: #111827;
+    background: #ffffff;
     border-radius: 24px;
     padding: 30px;
     margin-top: 25px;
-    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.35);
-    border: 1px solid rgba(255,255,255,0.06);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+    border: 1px solid #e5e7eb;
 }
 
 .chart-container canvas {

@@ -1,133 +1,258 @@
 {{define "emergency"}}
 <div class="emergency-fund-section">
-    <h2>Emergency Fund Status</h2>
+    <h2>Emergency Funds</h2>
 
-    <div class="emergency-stats">
-        <div class="stat-card">
-            <h3>Current Balance</h3>
-            <p class="balance">${{.EmergencyBalance}}</p>
+
+    <!-- Create Fund Button and Modal -->
+    <div class="create-fund-bar">
+        <button class="btn btn-primary" id="openCreateFundModal">+ New Fund</button>
+    </div>
+    <div id="createFundModal" class="modal">
+        <div class="modal-content">
+            <span class="close" id="closeCreateFundModal">&times;</span>
+            <h3>Create New Fund</h3>
+            <form method="POST" action="/create-fund">
+                <input type="text" name="name" placeholder="Fund Name" required>
+                <button type="submit" class="btn btn-primary">Create</button>
+            </form>
         </div>
+    </div>
 
-        <div class="stat-card">
-            <h3>Target Goal</h3>
-            <p class="goal">${{.EmergencyGoal}}</p>
+    <!-- Fund List -->
+    <div class="fund-list">
+        <h3>Your Funds</h3>
+        <table>
+            <thead>
+                <tr><th>ID</th><th>Name</th><th>Balance</th><th>Goal</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+                {{range .Funds}}
+                <tr>
+                    <td>{{.ID}}</td>
+                    <td>{{.Name}}</td>
+                    <td>${{printf "%.2f" .Balance}}</td>
+                    <td>${{printf "%.2f" .Goal}}</td>
+                    <td>
+                        <form method="POST" action="/add-to-fund" style="display:inline; margin-right:8px;">
+                            <input type="hidden" name="fund_id" value="{{.ID}}">
+                            <input type="number" name="amount" step="0.01" min="0.01" placeholder="Amount" required style="width:90px;">
+                            <button type="submit" class="btn btn-primary">Add</button>
+                        </form>
+                        <button class="btn btn-outline" onclick="openGoalModal({{.ID}}, '{{.Name}}', {{printf "%.2f" .Goal}})">Change Goal</button>
+                    </td>
+                </tr>
+                {{else}}
+                <tr><td colspan="5">No funds yet.</td></tr>
+                {{end}}
+            </tbody>
+        </table>
+
+        <!-- Change Goal Modal -->
+        <div id="goalModal" class="modal">
+            <div class="modal-content">
+                <span class="close" id="closeGoalModal">&times;</span>
+                <h3 id="goalModalTitle">Change Fund Goal</h3>
+                <form method="POST" action="/update-fund-goal">
+                    <input type="hidden" name="fund_id" id="goalModalFundId">
+                    <label for="goalModalGoal">Goal Amount ($):</label>
+                    <input type="number" step="0.01" min="0" name="goal" id="goalModalGoal" required>
+                    <button type="submit" class="btn btn-primary" style="margin-top:12px;">Update Goal</button>
+                </form>
+            </div>
         </div>
-
-        <div class="stat-card">
-            <h3>Monthly Withdrawal Rate</h3>
-            <p class="rate">${{.MonthlyWithdrawalRate}}</p>
-        </div>
     </div>
 
-    <div class="projection-section">
-        <h3>Fund Duration Projection</h3>
-        {{if eq .MonthsRemaining -1.0}}
-            <p class="projection-text">No emergency withdrawals recorded. Fund will last indefinitely at current rate.</p>
-        {{else if lt .MonthsRemaining 0.0}}
-            <p class="projection-text warning">Emergency fund is being depleted faster than contributions. Consider reducing withdrawals or increasing contributions.</p>
-        {{else}}
-            <p class="projection-text">
-                At your current withdrawal rate of <strong>${{.MonthlyWithdrawalRate}}</strong> per month,
-                your emergency fund will last approximately <strong>{{printf "%.1f" .MonthsRemaining}} months</strong>.
-            </p>
-            {{if lt .MonthsRemaining 3.0}}
-                <p class="warning">⚠️ Your emergency fund will be depleted soon. Consider building it up or reducing emergency expenses.</p>
-            {{end}}
-        {{end}}
+    <!-- Transaction Log -->
+    <div class="transaction-log">
+        <h3>Transaction Log</h3>
+        <table>
+            <thead>
+                <tr><th>Date</th><th>Fund</th><th>Amount</th><th>Type</th></tr>
+            </thead>
+            <tbody>
+                {{range .FundTransactions}}
+                <tr>
+                    <td>{{.Date}}</td>
+                    <td>{{.FundName}}</td>
+                    <td>${{printf "%.2f" .Amount}}</td>
+                    <td>{{.Type}}</td>
+                </tr>
+                {{else}}
+                <tr><td colspan="4">No transactions yet.</td></tr>
+                {{end}}
+            </tbody>
+        </table>
     </div>
 
-    {{if gt .EmergencyGoal 0.0}}
-    <div class="goal-projection-section">
-        <h3>Goal Savings Projection</h3>
-        <p class="projection-text">
-            Your emergency goal is <strong>${{printf "%.2f" .EmergencyGoal}}</strong> and your current balance is <strong>${{printf "%.2f" .EmergencyBalance}}</strong>.
-        </p>
-        <div class="goal-graphic-card">
-            <div class="goal-graphic-header">
-                <span>Goal progress</span>
-                <strong id="goalProgressPercentText">0%</strong>
-            </div>
-            <canvas id="goalProgressChart" width="240" height="240"></canvas>
-        </div>
-        <div class="input-group">
-            <label for="goalProjectionAmount">Add per month</label>
-            <input type="number" id="goalProjectionAmount" min="0" step="0.01" value="0.00" oninput="updateEmergencyGoalPlan()">
-        </div>
-        <p class="projection-text" id="goalProjectionResult">Enter a monthly savings amount to see how many months it will take to reach your goal if you stop withdrawing.</p>
-        {{if gt .EmergencyMonthsTarget 0}}
-            <p class="projection-text note">Your current target timeline is <strong>{{.EmergencyMonthsTarget}}</strong> months.</p>
-        {{end}}
-    </div>
-    {{end}}
-
-    <div class="action-buttons">
-        <button class="btn btn-primary" onclick="showEmergencyDepositForm()">Add to Emergency Fund</button>
-        <button class="btn btn-secondary" onclick="showEmergencyWithdrawalForm()">Record Emergency Withdrawal</button>
-        <button class="btn btn-outline" onclick="showEmergencyGoalForm()">Set Emergency Goal</button>
-    </div>
-
-    <!-- Hidden forms -->
-    <div id="emergencyDepositForm" class="modal-form" style="display:none;">
-        <form method="POST" action="/add-emergency-deposit" onsubmit="syncEmergencyDate('deposit')">
-            <h3>Add Emergency Fund Deposit</h3>
-            <div class="input-group date-input-group">
-                <div class="date-summary" id="depositDateSummary">
-                    <span>Current date: <strong id="depositDateText"></strong></span>
-                    <button type="button" class="edit-date-btn" onclick="toggleEmergencyDate('deposit')">Change date</button>
-                </div>
-                <input type="hidden" name="date" id="depositDateHidden">
-                <input type="date" id="depositDatePicker" class="date-picker hidden" aria-label="Deposit date" onchange="updateEmergencyDateText('deposit')">
-            </div>
-            <div class="input-group">
-                <input type="number" step="0.01" name="amount" placeholder="Amount ($)" required>
-            </div>
-            <button type="submit" class="btn-submit">Add Deposit</button>
-            <button type="button" onclick="hideEmergencyDepositForm()">Cancel</button>
-        </form>
-    </div>
-
-    <div id="emergencyWithdrawalForm" class="modal-form" style="display:none;">
-        <form method="POST" action="/add-emergency-withdrawal" onsubmit="syncEmergencyDate('withdrawal')">
-            <h3>Record Emergency Withdrawal</h3>
-            <div class="input-group date-input-group">
-                <div class="date-summary" id="withdrawalDateSummary">
-                    <span>Current date: <strong id="withdrawalDateText"></strong></span>
-                    <button type="button" class="edit-date-btn" onclick="toggleEmergencyDate('withdrawal')">Change date</button>
-                </div>
-                <input type="hidden" name="date" id="withdrawalDateHidden">
-                <input type="date" id="withdrawalDatePicker" class="date-picker hidden" aria-label="Withdrawal date" onchange="updateEmergencyDateText('withdrawal')">
-            </div>
-            <div class="input-group">
-                <input type="number" step="0.01" name="amount" placeholder="Amount ($)" required>
-            </div>
-            <button type="submit" class="btn-submit">Record Withdrawal</button>
-            <button type="button" onclick="hideEmergencyWithdrawalForm()">Cancel</button>
-        </form>
-    </div>
-
-    <div id="emergencyGoalForm" class="modal-form" style="display:none;">
-        <form method="POST" action="/set-emergency-goal">
-            <h3>Set Emergency Fund Goal</h3>
-            <div class="input-group">
-                <input type="number" step="0.01" name="target_amount" placeholder="Target Amount ($)" required>
-            </div>
-            <div class="input-group">
-                <input type="number" name="months_target" placeholder="Months to save for" required>
-            </div>
-            <button type="submit" class="btn-submit">Set Goal</button>
-            <button type="button" onclick="hideEmergencyGoalForm()">Cancel</button>
-        </form>
+    <!-- Simple Graph Placeholder -->
+    <div class="fund-graph">
+        <h3>Fund Balances Over Time</h3>
+        <canvas id="fundGraph" width="600" height="250"></canvas>
     </div>
 </div>
 
 <style>
 .emergency-fund-section {
     padding: 20px;
+    max-width: 900px;
+    margin: 0 auto;
+}
+.fund-list, .create-fund-form, .transaction-log, .fund-graph {
+    margin-bottom: 32px;
+    background: #23272f;
+    padding: 20px;
+    border-radius: 8px;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+}
+th, td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #444;
+    text-align: left;
+}
+th {
+    background: #2d3748;
+    color: #fbbf24;
+    text-transform: uppercase;
+    font-size: 13px;
+}
+tr:last-child td {
+    border-bottom: none;
+}
+.btn {
+    padding: 6px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    margin-left: 4px;
+}
+.btn-primary {
+    background: #3182ce;
+    color: white;
+}
+.create-fund-form input[type="text"] {
+    padding: 8px;
+    border: 1px solid #4a5568;
+    border-radius: 4px;
+    background: #1a202c;
+    color: #e2e8f0;
+    margin-right: 8px;
+}
+.fund-graph {
+    text-align: center;
 }
 
-.emergency-stats {
-    display: flex;
-    gap: 20px;
+.create-fund-bar {
+    margin-bottom: 18px;
+    text-align: left;
+}
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.4);
+}
+.modal-content {
+    background-color: #23272f;
+    margin: 10% auto;
+    padding: 24px 32px 24px 32px;
+    border: 1px solid #888;
+    width: 320px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    color: #e2e8f0;
+    position: relative;
+}
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    position: absolute;
+    right: 16px;
+    top: 8px;
+}
+
+.btn-outline {
+    background: transparent;
+    color: #3182ce;
+    border: 2px solid #3182ce;
+    margin-left: 8px;
+}
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+// Modal logic for create fund
+document.addEventListener('DOMContentLoaded', function() {
+    // Create Fund Modal
+    var createModal = document.getElementById('createFundModal');
+    var createBtn = document.getElementById('openCreateFundModal');
+    var createSpan = document.getElementById('closeCreateFundModal');
+    createBtn.onclick = function() {
+        createModal.style.display = 'block';
+        setTimeout(function() {
+            var input = createModal.querySelector('input[name="name"]');
+            if (input) input.focus();
+        }, 100);
+    }
+    createSpan.onclick = function() {
+        createModal.style.display = 'none';
+    }
+
+    // Change Goal Modal
+    var goalModal = document.getElementById('goalModal');
+    var closeGoalModal = document.getElementById('closeGoalModal');
+    closeGoalModal.onclick = function() {
+        goalModal.style.display = 'none';
+    }
+    window.onclick = function(event) {
+        if (event.target == createModal) {
+            createModal.style.display = 'none';
+        }
+        if (event.target == goalModal) {
+            goalModal.style.display = 'none';
+        }
+    }
+
+    // Chart.js logic
+    if (window.fundGraphData) {
+        const ctx = document.getElementById('fundGraph').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: window.fundGraphData,
+            options: {
+                responsive: true,
+                plugins: { legend: { display: true } },
+                scales: { x: { title: { display: true, text: 'Date' } }, y: { title: { display: true, text: 'Balance ($)' } } }
+            }
+        });
+    }
+});
+
+// Open Change Goal Modal with fund info
+function openGoalModal(fundId, fundName, goal) {
+    var modal = document.getElementById('goalModal');
+    document.getElementById('goalModalFundId').value = fundId;
+    document.getElementById('goalModalGoal').value = goal;
+    document.getElementById('goalModalTitle').textContent = 'Change Goal for ' + fundName;
+    modal.style.display = 'block';
+    setTimeout(function() {
+        document.getElementById('goalModalGoal').focus();
+    }, 100);
+}
+</script>
+{{end}}
     margin-bottom: 30px;
     flex-wrap: wrap;
 }
@@ -522,4 +647,3 @@ document.addEventListener('DOMContentLoaded', function() {
     updateEmergencyGoalPlan();
 });
 </script>
-{{end}}

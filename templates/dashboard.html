@@ -16,7 +16,7 @@
         }
 
         .active-tab {
-            outline: 3px solid white;
+            outline: 3px solid #94a3b8;
         }
 
         .tab-section {
@@ -30,7 +30,7 @@
         .placeholder-section {
             text-align: center;
             padding: 30px 10px;
-            color: #d1d5db;
+            color: #6b7280;
         }
 
         .action-buttons {
@@ -56,22 +56,22 @@
 <div class="summary-cards">
     <div class="card blue clickable-card active-tab" onclick="showSection('current')">
         <h3>Current Funds</h3>
-        <p>${{.CurrentFunds}}</p>
+        <p>${{printf "%.2f" .CurrentFunds}}</p>
     </div>
 
     <div class="card orange clickable-card" onclick="showSection('emergency')">
-        <h3>Emergency Fund (x months)</h3>
-        <p>$12345 / $23456</p>
+        <h3>Emergency Fund</h3>
+        <p>${{printf "%.2f" .EmergencyBalance}} / ${{printf "%.2f" .EmergencyGoal}}</p>
     </div>
 
     <div class="card green clickable-card" onclick="showSection('income')">
         <h3>Expected Monthly Income</h3>
-        <p>$12345 - $23456</p>
+        <p>${{printf "%.2f" .TotalIncome}}</p>
     </div>
 
     <div class="card red clickable-card" onclick="showSection('expenses')">
-        <h3>Expected Monthly Expenses</h3>
-        <p>$1234 - $2345</p>
+        <h3>Expected Monthly Expense</h3>
+        <p>${{printf "%.2f" .TotalExpense}}</p>
     </div>
 </div>
 
@@ -102,51 +102,9 @@
 </div>
 
 <script>
-let budgetChart;
 let currentFundsChartInstance;
 let incomePieChartInstance;
-
-function calculateBudget() {
-    let salary = parseFloat(document.getElementById("salary")?.value) || 0;
-    let other = parseFloat(document.getElementById("otherIncome")?.value) || 0;
-
-    let rent = parseFloat(document.getElementById("rent")?.value) || 0;
-    let food = parseFloat(document.getElementById("food")?.value) || 0;
-    let transport = parseFloat(document.getElementById("transport")?.value) || 0;
-
-    let income = salary + other;
-    let expenses = rent + food + transport;
-    let net = income - expenses;
-
-    const incomeTotal = document.getElementById("incomeTotal");
-    const expenseTotal = document.getElementById("expenseTotal");
-    const netTotal = document.getElementById("netTotal");
-
-    if (incomeTotal) incomeTotal.innerText = "$" + income;
-    if (expenseTotal) expenseTotal.innerText = "$" + expenses;
-    if (netTotal) netTotal.innerText = "$" + net;
-
-    const chartCanvas = document.getElementById("budgetChart");
-    if (!chartCanvas) return;
-
-    if (budgetChart) {
-        budgetChart.destroy();
-    }
-
-    budgetChart = new Chart(chartCanvas, {
-        type: 'pie',
-        data: {
-            labels: ['Income', 'Expenses'],
-            datasets: [{
-                data: [income, expenses],
-                backgroundColor: ['green', 'red']
-            }]
-        },
-        options: {
-            responsive: true
-        }
-    });
-}
+let expensePieChartInstance;
 
 function renderCurrentFundsChart() {
     const chartCanvas = document.getElementById("currentFundsChart");
@@ -166,8 +124,8 @@ function renderCurrentFundsChart() {
             datasets: [{
                 label: "Current Funds Over Time",
                 data: values,
-                borderColor: "#00ffff",
-                backgroundColor: "rgba(0,255,255,0.12)",
+                borderColor: "#00d9ff",
+                backgroundColor: "rgba(0, 217, 255, 0.12)",
                 borderWidth: 3,
                 fill: true,
                 tension: 0.4,
@@ -186,21 +144,87 @@ function renderCurrentFundsChart() {
             scales: {
                 x: {
                     ticks: {
-                        color: "#ffffff",
+                        color: "#4b5563",
                         maxRotation: 45,
-                        minRotation: 45
+                        minRotation: 45,
+                        font: {
+                            size: 12,
+                            weight: "600"
+                        }
                     },
                     grid: {
-                        color: "rgba(255,255,255,0.08)"
+                        color: "rgba(107, 114, 128, 0.25)"
                     }
                 },
                 y: {
                     beginAtZero: true,
                     ticks: {
-                        color: "#ffffff"
+                        color: "#4b5563",
+                        font: {
+                            size: 12,
+                            weight: "600"
+                        }
                     },
                     grid: {
-                        color: "rgba(255,255,255,0.08)"
+                        color: "rgba(107, 114, 128, 0.25)"
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderExpensePieChart() {
+    const chartCanvas = document.getElementById("expensePieChart");
+    if (!chartCanvas) return;
+
+    if (expensePieChartInstance) {
+        expensePieChartInstance.destroy();
+        expensePieChartInstance = null;
+    }
+
+    const labels = JSON.parse('{{.ExpenseCategoryLabels}}');
+    const values = JSON.parse('{{.ExpenseCategoryTotals}}');
+
+    if (!labels.length || !values.length) {
+        const ctx = chartCanvas.getContext("2d");
+        ctx.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+        ctx.fillStyle = "#6b7280";
+        ctx.font = "16px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("No expense data yet", chartCanvas.width / 2, chartCanvas.height / 2);
+        return;
+    }
+
+    expensePieChartInstance = new Chart(chartCanvas, {
+        type: "pie",
+        data: {
+            labels: labels,
+            datasets: [{
+                data: values,
+                backgroundColor: [
+                    "#ef4444",
+                    "#f97316",
+                    "#eab308",
+                    "#a855f7",
+                    "#ec4899",
+                    "#14b8a6"
+                ],
+                borderColor: "#ffffff",
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    labels: {
+                        color: "#374151",
+                        font: {
+                            size: 13,
+                            weight: "600"
+                        }
                     }
                 }
             }
@@ -235,7 +259,7 @@ function renderIncomePieChart() {
                     "#ef4444",
                     "#14b8a6"
                 ],
-                borderColor: "#111827",
+                borderColor: "#ffffff",
                 borderWidth: 2
             }]
         },
@@ -245,7 +269,11 @@ function renderIncomePieChart() {
             plugins: {
                 legend: {
                     labels: {
-                        color: "#ffffff"
+                        color: "#374151",
+                        font: {
+                            size: 13,
+                            weight: "600"
+                        }
                     }
                 }
             }
@@ -274,20 +302,20 @@ function showSection(section) {
     }
 
     if (section === "income") {
-    document.getElementById("incomeSection").classList.add("active-section");
-    document.querySelector(".green.clickable-card").classList.add("active-tab");
-    renderIncomePieChart();
-}
+        document.getElementById("incomeSection").classList.add("active-section");
+        document.querySelector(".green.clickable-card").classList.add("active-tab");
+        renderIncomePieChart();
+    }
 
     if (section === "expenses") {
         document.getElementById("expensesSection").classList.add("active-section");
         document.querySelector(".red.clickable-card").classList.add("active-tab");
+        renderExpensePieChart();
     }
 }
 
 window.onload = function() {
     renderCurrentFundsChart();
-    renderIncomePieChart();
 };
 </script>
 
