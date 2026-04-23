@@ -1,8 +1,13 @@
 {{define "emergency"}}
 <div class="emergency-fund-section">
-    <h2>Emergency Funds</h2>
+    <h2>Funds</h2>
 
-
+    <!-- Fund Progress Pie Chart Container -->
+<!--
+    <div class="chart-container">
+        <canvas id="fundPieChart"></canvas>
+    </div>
+-->
     <!-- Create Fund Button and Modal -->
     <div class="create-fund-bar">
         <button class="btn btn-primary" id="openCreateFundModal">+ New Fund</button>
@@ -19,7 +24,6 @@
     </div>
 
     <!-- Fund List -->
-    <div class="fund-list">
         <h3>Your Funds</h3>
         <table>
             <thead>
@@ -84,11 +88,7 @@
         </table>
     </div>
 
-    <!-- Simple Graph Placeholder -->
-    <div class="fund-graph">
-        <h3>Fund Balances Over Time</h3>
-        <canvas id="fundGraph" width="600" height="250"></canvas>
-    </div>
+    <!-- Simple Graph Placeholder removed -->
 </div>
 
 <style>
@@ -97,16 +97,27 @@
     max-width: 900px;
     margin: 0 auto;
 }
-.fund-list, .create-fund-form, .transaction-log, .fund-graph {
     margin-bottom: 32px;
-    background: #23272f;
+    background: #fff;
+    color: #23272f;
     padding: 20px;
     border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    border: 2px solid #2d3748;
 }
-table {
+.create-fund-form {
+    margin-bottom: 32px;
+    background: #fff;
+    color: #23272f;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
     width: 100%;
     border-collapse: collapse;
     margin-top: 10px;
+    background: #fff;
+    color: #23272f;
 }
 th, td {
     padding: 8px 12px;
@@ -114,8 +125,8 @@ th, td {
     text-align: left;
 }
 th {
-    background: #2d3748;
-    color: #fbbf24;
+    background: #3182ce !important;
+    color: #fff !important;
     text-transform: uppercase;
     font-size: 13px;
 }
@@ -132,7 +143,7 @@ tr:last-child td {
 }
 .btn-primary {
     background: #3182ce;
-    color: white;
+    color: #fff;
 }
 .create-fund-form input[type="text"] {
     padding: 8px;
@@ -142,8 +153,22 @@ tr:last-child td {
     color: #e2e8f0;
     margin-right: 8px;
 }
+
 .fund-graph {
     text-align: center;
+}
+
+.fund-progress-container {
+    width: 240px;
+    height: 240px;
+    margin: 0 auto 24px auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    border: 2px solid #2d3748;
 }
 
 .create-fund-bar {
@@ -166,16 +191,17 @@ tr:last-child td {
     margin: 10% auto;
     padding: 24px 32px 24px 32px;
     border: 1px solid #888;
-    width: 320px;
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-    color: #e2e8f0;
-    position: relative;
-}
-.close {
-    color: #aaa;
-    float: right;
-    font-size: 28px;
+    th, td {
+        padding: 8px 12px;
+        border-bottom: 1px solid #444;
+        text-align: left;
+    }
+    th {
+        background: #3182ce !important;
+        color: #fff !important;
+        text-transform: uppercase;
+        font-size: 13px;
+    }
     font-weight: bold;
     cursor: pointer;
     position: absolute;
@@ -183,17 +209,23 @@ tr:last-child td {
     top: 8px;
 }
 
-.btn-outline {
-    background: transparent;
+    background: #fff;
     color: #3182ce;
     border: 2px solid #3182ce;
     margin-left: 8px;
+    transition: background 0.2s, color 0.2s;
 }
+.btn-outline:hover {
+    background: #3182ce;
+    color: #fff;
+}
+
 </style>
+
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-// Modal logic for create fund
+// Modal logic for create fund and change goal
 document.addEventListener('DOMContentLoaded', function() {
     // Create Fund Modal
     var createModal = document.getElementById('createFundModal');
@@ -224,23 +256,8 @@ document.addEventListener('DOMContentLoaded', function() {
             goalModal.style.display = 'none';
         }
     }
-
-    // Chart.js logic
-    if (window.fundGraphData) {
-        const ctx = document.getElementById('fundGraph').getContext('2d');
-        new Chart(ctx, {
-            type: 'line',
-            data: window.fundGraphData,
-            options: {
-                responsive: true,
-                plugins: { legend: { display: true } },
-                scales: { x: { title: { display: true, text: 'Date' } }, y: { title: { display: true, text: 'Balance ($)' } } }
-            }
-        });
-    }
 });
 
-// Open Change Goal Modal with fund info
 function openGoalModal(fundId, fundName, goal) {
     var modal = document.getElementById('goalModal');
     document.getElementById('goalModalFundId').value = fundId;

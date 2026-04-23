@@ -23,56 +23,56 @@ type ServerAttachments struct {
 }
 
 func createFund(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
-       return func(w http.ResponseWriter, r *http.Request) {
-	       session, _ := store.Get(r, "session")
-	       user, ok := session.Values["user"].(string)
-	       if !ok || user == "" {
-		       http.Redirect(w, r, "/", http.StatusSeeOther)
-		       return
-	       }
-	       if r.Method == http.MethodPost {
-		       r.ParseForm()
-		       name := r.FormValue("name")
-		       goalStr := r.FormValue("goal")
-		       goal := 0.0
-		       if goalStr != "" {
-			       if g, err := strconv.ParseFloat(goalStr, 64); err == nil {
-				       goal = g
-			       }
-		       }
-		       if name != "" {
-			       _, err := db.Exec("INSERT INTO funds(user, name, balance, goal) VALUES(?, ?, 0, ?)", user, name, goal)
-			       if err != nil {
-				       log.Println("CREATE FUND error:", err)
-			       }
-		       }
-	       }
-	       http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
-       }
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+		if !ok || user == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		if r.Method == http.MethodPost {
+			r.ParseForm()
+			name := r.FormValue("name")
+			goalStr := r.FormValue("goal")
+			goal := 0.0
+			if goalStr != "" {
+				if g, err := strconv.ParseFloat(goalStr, 64); err == nil {
+					goal = g
+				}
+			}
+			if name != "" {
+				_, err := db.Exec("INSERT INTO funds(user, name, balance, goal) VALUES(?, ?, 0, ?)", user, name, goal)
+				if err != nil {
+					log.Println("CREATE FUND error:", err)
+				}
+			}
+		}
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	}
 }
 
 // Handler to update a fund's goal
 func updateFundGoal(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
-       return func(w http.ResponseWriter, r *http.Request) {
-	       session, _ := store.Get(r, "session")
-	       user, ok := session.Values["user"].(string)
-	       if !ok || user == "" {
-		       http.Redirect(w, r, "/", http.StatusSeeOther)
-		       return
-	       }
-	       if r.Method == http.MethodPost {
-		       r.ParseForm()
-		       fundID, _ := strconv.Atoi(r.FormValue("fund_id"))
-		       goal, _ := strconv.ParseFloat(r.FormValue("goal"), 64)
-		       if fundID > 0 {
-			       _, err := db.Exec("UPDATE funds SET goal = ? WHERE id = ? AND user = ?", goal, fundID, user)
-			       if err != nil {
-				       log.Println("UPDATE FUND GOAL error:", err)
-			       }
-		       }
-	       }
-	       http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
-       }
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+		if !ok || user == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		if r.Method == http.MethodPost {
+			r.ParseForm()
+			fundID, _ := strconv.Atoi(r.FormValue("fund_id"))
+			goal, _ := strconv.ParseFloat(r.FormValue("goal"), 64)
+			if fundID > 0 {
+				_, err := db.Exec("UPDATE funds SET goal = ? WHERE id = ? AND user = ?", goal, fundID, user)
+				if err != nil {
+					log.Println("UPDATE FUND GOAL error:", err)
+				}
+			}
+		}
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	}
 }
 
 // Handler to add to a fund (transfer from current funds)
@@ -105,32 +105,32 @@ func addToFund(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 	}
 }
 func NewServer(att ServerAttachments) http.Server {
-       mux := http.NewServeMux()
+	mux := http.NewServeMux()
 
-       mux.HandleFunc("/", loginPage)
-       mux.HandleFunc("/register", registerUser(att.DB))
-       mux.HandleFunc("/login", loginUser(att.DB, att.Store))
-       mux.HandleFunc("/dashboard", auth(dashboard(att.DB, att.Store), att.Store))
-       mux.HandleFunc("/add-income", auth(addIncome(att.DB, att.Store), att.Store))
-       mux.HandleFunc("/add-expense", auth(addExpense(att.DB, att.Store), att.Store))
-       mux.HandleFunc("/add-emergency-deposit", auth(addEmergencyDeposit(att.DB, att.Store), att.Store))
-       mux.HandleFunc("/add-emergency-withdrawal", auth(addEmergencyWithdrawal(att.DB, att.Store), att.Store))
-       mux.HandleFunc("/set-emergency-goal", auth(setEmergencyGoal(att.DB, att.Store), att.Store))
-       // New endpoints for funds
-       mux.HandleFunc("/create-fund", auth(createFund(att.DB, att.Store), att.Store))
-       mux.HandleFunc("/add-to-fund", auth(addToFund(att.DB, att.Store), att.Store))
-       mux.HandleFunc("/update-fund-goal", auth(updateFundGoal(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/", loginPage)
+	mux.HandleFunc("/register", registerUser(att.DB))
+	mux.HandleFunc("/login", loginUser(att.DB, att.Store))
+	mux.HandleFunc("/dashboard", auth(dashboard(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/add-income", auth(addIncome(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/add-expense", auth(addExpense(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/add-emergency-deposit", auth(addEmergencyDeposit(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/add-emergency-withdrawal", auth(addEmergencyWithdrawal(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/set-emergency-goal", auth(setEmergencyGoal(att.DB, att.Store), att.Store))
+	// New endpoints for funds
+	mux.HandleFunc("/create-fund", auth(createFund(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/add-to-fund", auth(addToFund(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/update-fund-goal", auth(updateFundGoal(att.DB, att.Store), att.Store))
 
-       mux.HandleFunc("/logout", logout(att.Store))
-       mux.HandleFunc("/transactions", auth(viewTransactions(att.DB, att.Store), att.Store))
-       mux.HandleFunc("/delete-transaction", auth(deleteTransaction(att.DB, att.Store), att.Store))
-       mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-       mux.HandleFunc("/upload-receipt", auth(uploadReceipt(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/logout", logout(att.Store))
+	mux.HandleFunc("/transactions", auth(viewTransactions(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/delete-transaction", auth(deleteTransaction(att.DB, att.Store), att.Store))
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	mux.HandleFunc("/upload-receipt", auth(uploadReceipt(att.DB, att.Store), att.Store))
 
-       return http.Server{
-	       Addr:    ":8000",
-	       Handler: mux,
-       }
+	return http.Server{
+		Addr:    ":8000",
+		Handler: mux,
+	}
 }
 
 // today returns the current date as YYYY-MM-DD.
@@ -369,144 +369,83 @@ func dashboard(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 		expenseCategoryLabelsJSON, _ := json.Marshal(expenseCategoryLabels)
 		expenseCategoryTotalsJSON, _ := json.Marshal(expenseCategoryTotals)
 
-		// ── Step 4: emergency fund ────────────────────────────────────────────
-		var emergencyDeposits float64
-		var emergencyWithdrawals float64
-		var emergencyGoal float64
-		var emergencyMonths int
-
-		db.QueryRow(
-			"SELECT IFNULL(SUM(amount), 0) FROM emergency_fund WHERE user = ? AND type = 'deposit'", user,
-		).Scan(&emergencyDeposits)
-
-		db.QueryRow(
-			"SELECT IFNULL(SUM(amount), 0) FROM emergency_fund WHERE user = ? AND type = 'withdrawal'", user,
-		).Scan(&emergencyWithdrawals)
-
-		err = db.QueryRow(
-			"SELECT IFNULL(target_amount, 0), IFNULL(months_target, 0) FROM emergency_goals WHERE user = ?", user,
-		).Scan(&emergencyGoal, &emergencyMonths)
-		if err != nil && err != sql.ErrNoRows {
-			log.Println("DASHBOARD emergency goal error:", err)
+		// No legacy fundCategoryLabels/fundCategoryTotals. All fund data is passed as the Funds array for JS rendering.
+		// ── Step 5: fetch funds and fund transactions for new UI ─────────────
+		type Fund struct {
+			ID      int
+			Name    string
+			Balance float64
+			Goal    float64
 		}
-
-		emergencyBalance := emergencyDeposits - emergencyWithdrawals
-
-		var monthlyWithdrawalRate float64
-		rateRows, err := db.Query(`
-			SELECT strftime('%Y-%m', date) AS month, SUM(amount) AS total
-			FROM emergency_fund
-			WHERE user = ? AND type = 'withdrawal'
-			GROUP BY strftime('%Y-%m', date)
-			ORDER BY month DESC
-			LIMIT 3
-		`, user)
-		if err != nil {
-			log.Println("DASHBOARD emergency rate error:", err)
-		} else {
-			var rates []float64
-			for rateRows.Next() {
-				var month string
-				var total float64
-				if scanErr := rateRows.Scan(&month, &total); scanErr == nil {
-					rates = append(rates, total)
+		var funds []Fund
+		fundRows, err := db.Query("SELECT id, name, balance, goal FROM funds WHERE user = ? ORDER BY id ASC", user)
+		if err == nil {
+			for fundRows.Next() {
+				var f Fund
+				if scanErr := fundRows.Scan(&f.ID, &f.Name, &f.Balance, &f.Goal); scanErr == nil {
+					funds = append(funds, f)
 				}
 			}
-			rateRows.Close()
-			if len(rates) > 0 {
-				sum := 0.0
-				for _, v := range rates {
-					sum += v
+			fundRows.Close()
+		}
+
+		type FundTransaction struct {
+			Date     string
+			FundName string
+			Amount   float64
+			Type     string
+		}
+		var fundTransactions []FundTransaction
+		txRows, err := db.Query(`SELECT ft.date, f.name, ft.amount, ft.type FROM fund_transactions ft JOIN funds f ON ft.fund_id = f.id WHERE ft.user = ? ORDER BY ft.date DESC, ft.id DESC LIMIT 50`, user)
+		if err == nil {
+			for txRows.Next() {
+				var t FundTransaction
+				if scanErr := txRows.Scan(&t.Date, &t.FundName, &t.Amount, &t.Type); scanErr == nil {
+					fundTransactions = append(fundTransactions, t)
 				}
-				monthlyWithdrawalRate = sum / float64(len(rates))
 			}
+			txRows.Close()
 		}
 
-		monthsRemaining := -1.0
-		if monthlyWithdrawalRate > 0 {
-			monthsRemaining = emergencyBalance / monthlyWithdrawalRate
+		// ── Step 6: pass all data to template ────────────────────────────────
+		data := map[string]interface{}{
+			"Username":              user,
+			"CurrentFunds":          currentFunds,
+			"TotalIncome":           totalIncome,
+			"TotalExpense":          totalExpense,
+			"ChartLabels":           template.JS(labelsJSON),
+			"ChartBalances":         template.JS(balancesJSON),
+			"IncomeSourceLabels":    template.JS(incomeSourceLabelsJSON),
+			"IncomeSourceTotals":    template.JS(incomeSourceTotalsJSON),
+			"ExpenseCategoryLabels": template.JS(expenseCategoryLabelsJSON),
+			"ExpenseCategoryTotals": template.JS(expenseCategoryTotalsJSON),
+			// New for emergency fund redesign:
+			"Funds":            funds,
+			"FundTransactions": fundTransactions,
 		}
 
-		       // ── Step 5: fetch funds and fund transactions for new UI ─────────────
-			       type Fund struct {
-				       ID      int
-				       Name    string
-				       Balance float64
-				       Goal    float64
-			       }
-			       var funds []Fund
-			       fundRows, err := db.Query("SELECT id, name, balance, goal FROM funds WHERE user = ? ORDER BY id ASC", user)
-			       if err == nil {
-				       for fundRows.Next() {
-					       var f Fund
-					       if scanErr := fundRows.Scan(&f.ID, &f.Name, &f.Balance, &f.Goal); scanErr == nil {
-						       funds = append(funds, f)
-					       }
-				       }
-				       fundRows.Close()
-			       }
+		t := template.Must(template.ParseFiles(
+			"templates/dashboard.html",
+			"templates/dashboard_current.html",
+			"templates/dashboard_emergency.html",
+			"templates/dashboard_income.html",
+			"templates/dashboard_expenses.html",
+		))
 
-		       type FundTransaction struct {
-			       Date     string
-			       FundName string
-			       Amount   float64
-			       Type     string
-		       }
-		       var fundTransactions []FundTransaction
-		       txRows, err := db.Query(`SELECT ft.date, f.name, ft.amount, ft.type FROM fund_transactions ft JOIN funds f ON ft.fund_id = f.id WHERE ft.user = ? ORDER BY ft.date DESC, ft.id DESC LIMIT 50`, user)
-		       if err == nil {
-			       for txRows.Next() {
-				       var t FundTransaction
-				       if scanErr := txRows.Scan(&t.Date, &t.FundName, &t.Amount, &t.Type); scanErr == nil {
-					       fundTransactions = append(fundTransactions, t)
-				       }
-			       }
-			       txRows.Close()
-		       }
-
-		       // ── Step 6: pass all data to template ────────────────────────────────
-		       data := map[string]interface{}{
-			       "Username":              user,
-			       "CurrentFunds":          currentFunds,
-			       "TotalIncome":           totalIncome,
-			       "TotalExpense":          totalExpense,
-			       "ChartLabels":           template.JS(labelsJSON),
-			       "ChartBalances":         template.JS(balancesJSON),
-			       "IncomeSourceLabels":      template.JS(incomeSourceLabelsJSON),
-			       "IncomeSourceTotals":      template.JS(incomeSourceTotalsJSON),
-			       "ExpenseCategoryLabels":   template.JS(expenseCategoryLabelsJSON),
-			       "ExpenseCategoryTotals":   template.JS(expenseCategoryTotalsJSON),
-			       "EmergencyBalance":      emergencyBalance,
-			       "EmergencyGoal":         emergencyGoal,
-			       "EmergencyMonthsTarget": emergencyMonths,
-			       "MonthlyWithdrawalRate": monthlyWithdrawalRate,
-			       "MonthsRemaining":       monthsRemaining,
-			       // New for emergency fund redesign:
-			       "Funds":                 funds,
-			       "FundTransactions":      fundTransactions,
-		       }
-
-		       t := template.Must(template.ParseFiles(
-			       "templates/dashboard.html",
-			       "templates/dashboard_current.html",
-			       "templates/dashboard_emergency.html",
-			       "templates/dashboard_income.html",
-			       "templates/dashboard_expenses.html",
-		       ))
-
-		       var buf bytes.Buffer
-		       if err = t.Execute(&buf, data); err != nil {
-			       log.Println("DASHBOARD template error:", err)
-			       http.Error(w, err.Error(), http.StatusInternalServerError)
-			       return
-		       }
-		       buf.WriteTo(w)
-	       }
+		var buf bytes.Buffer
+		if err = t.Execute(&buf, data); err != nil {
+			log.Println("DASHBOARD template error:", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		buf.WriteTo(w)
 	}
+}
 
 // ── ADD INCOME ─────────────────────────────────────────────────────────────────
 // Slide 12: User fills form (source, date, amount) → POST /add-income
-//           → INSERT into income table → redirect to dashboard.
+//
+//	→ INSERT into income table → redirect to dashboard.
 func addIncome(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		session, _ := store.Get(r, "session")
@@ -550,8 +489,9 @@ func addIncome(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 
 // ── ADD EXPENSE ────────────────────────────────────────────────────────────────
 // Slide 16-18: User enters category, date, amount → POST /add-expense
-//              → INSERT into expense table → redirect to dashboard
-//              → dashboard recalculates currentFunds = SUM(income) - SUM(expense).
+//
+//	→ INSERT into expense table → redirect to dashboard
+//	→ dashboard recalculates currentFunds = SUM(income) - SUM(expense).
 func addExpense(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		session, _ := store.Get(r, "session")
@@ -599,7 +539,8 @@ func addExpense(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 
 // ── UPLOAD RECEIPT ─────────────────────────────────────────────────────────────
 // Slide 23: Upload receipt image → save file → create placeholder expense entry
-//           so it immediately appears in current funds and transactions.
+//
+//	so it immediately appears in current funds and transactions.
 func uploadReceipt(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -664,8 +605,9 @@ func uploadReceipt(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 // ── TRANSACTIONS ───────────────────────────────────────────────────────────────
 // Shows all transactions (income + expense) combined and sorted by date DESC.
 // Filter: ?type=income  →  income only
-//         ?type=expense →  expense only
-//         (none)        →  both combined
+//
+//	?type=expense →  expense only
+//	(none)        →  both combined
 func viewTransactions(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		session, _ := store.Get(r, "session")

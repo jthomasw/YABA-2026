@@ -105,6 +105,9 @@
 let currentFundsChartInstance;
 let incomePieChartInstance;
 let expensePieChartInstance;
+let fundPieChartInstance;
+
+// Fund pie chart is rendered using the Funds array in dashboard_emergency.html. No legacy Go-passed fund pie chart data is used.
 
 function renderCurrentFundsChart() {
     const chartCanvas = document.getElementById("currentFundsChart");
@@ -281,6 +284,66 @@ function renderIncomePieChart() {
     });
 }
 
+function renderFundPieChart() {
+    const chartCanvas = document.getElementById("fundPieChart");
+    if (!chartCanvas) return;
+
+    if (fundPieChartInstance) {
+        fundPieChartInstance.destroy();
+        fundPieChartInstance = null;
+    }
+
+    // Use the same style and logic as other pie charts
+    const labels = JSON.parse('{{.FundCategoryLabels}}');
+    const values = JSON.parse('{{.FundCategoryTotals}}');
+
+    if (!labels.length || !values.length) {
+        const ctx = chartCanvas.getContext("2d");
+        ctx.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+        ctx.fillStyle = "#6b7280";
+        ctx.font = "16px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("No fund data yet", chartCanvas.width / 2, chartCanvas.height / 2);
+        return;
+    }
+
+    fundPieChartInstance = new Chart(chartCanvas, {
+        type: "pie",
+        data: {
+            labels: labels,
+            datasets: [{
+                data: values,
+                backgroundColor: [
+                    "#ef4444",
+                    "#f97316",
+                    "#eab308",
+                    "#a855f7",
+                    "#ec4899",
+                    "#14b8a6"
+                ],
+                borderColor: "#ffffff",
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    labels: {
+                        color: "#374151",
+                        font: {
+                            size: 13,
+                            weight: "600"
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+
 function showSection(section) {
     document.getElementById("currentSection").classList.remove("active-section");
     document.getElementById("emergencySection").classList.remove("active-section");
@@ -296,9 +359,11 @@ function showSection(section) {
         renderCurrentFundsChart();
     }
 
+
     if (section === "emergency") {
         document.getElementById("emergencySection").classList.add("active-section");
         document.querySelector(".orange.clickable-card").classList.add("active-tab");
+        renderFundPieChart();
     }
 
     if (section === "income") {
