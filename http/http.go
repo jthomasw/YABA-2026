@@ -119,7 +119,9 @@ func NewServer(att ServerAttachments) http.Server {
 	// New endpoints for funds
 	mux.HandleFunc("/create-fund", auth(createFund(att.DB, att.Store), att.Store))
 	mux.HandleFunc("/add-to-fund", auth(addToFund(att.DB, att.Store), att.Store))
+
 	mux.HandleFunc("/update-fund-goal", auth(updateFundGoal(att.DB, att.Store), att.Store))
+	mux.HandleFunc("/delete-fund", auth(deleteFund(att.DB, att.Store), att.Store))
 
 	mux.HandleFunc("/logout", logout(att.Store))
 	mux.HandleFunc("/transactions", auth(viewTransactions(att.DB, att.Store), att.Store))
@@ -127,9 +129,60 @@ func NewServer(att ServerAttachments) http.Server {
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 	mux.HandleFunc("/upload-receipt", auth(uploadReceipt(att.DB, att.Store), att.Store))
 
+
 	return http.Server{
 		Addr:    ":8000",
 		Handler: mux,
+	}
+}
+
+
+// Handler to delete a fund, add balance to current funds, log transaction, then delete fund
+func deleteFund(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, _ := store.Get(r, "session")
+		user, ok := session.Values["user"].(string)
+		if !ok || user == "" {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+			return
+		}
+		r.ParseForm()
+		fundID := r.FormValue("fund_id")
+		fundName := r.FormValue("fund_name")
+		fundBalanceStr := r.FormValue("fund_balance")
+		fundBalance, err := strconv.ParseFloat(fundBalanceStr, 64)
+		if err != nil {
+			http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+			return
+		}
+		// Only do anything if fundID is present
+		if fundID == "" {
+			http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+			return
+		}
+
+		// 1. If balance > 0, add to income and log transaction
+		if fundBalance > 0 {
+			// Insert into income table to add back to current funds
+			_, err = db.Exec("INSERT INTO income(user, source, date, amount) VALUES(?, ?, ?, ?)", user, "deleted("+fundName+")", today(), fundBalance)
+			if err != nil {
+				log.Println("Error inserting income for deleted fund:", err)
+			}
+			// Optionally, also log in fund_transactions if you have such a table
+			// _, err = db.Exec("INSERT INTO fund_transactions(user, fund_id, date, amount, type) VALUES(?, ?, ?, ?, ?)", user, fundID, today(), fundBalance, "income")
+		}
+
+		// 2. Delete the fund
+		_, err = db.Exec("DELETE FROM funds WHERE user = ? AND id = ?", user, fundID)
+		if err != nil {
+			log.Println("Error deleting fund:", err)
+		}
+
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 	}
 }
 
@@ -369,7 +422,33 @@ func dashboard(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 		expenseCategoryLabelsJSON, _ := json.Marshal(expenseCategoryLabels)
 		expenseCategoryTotalsJSON, _ := json.Marshal(expenseCategoryTotals)
 
-		// No legacy fundCategoryLabels/fundCategoryTotals. All fund data is passed as the Funds array for JS rendering.
+		// step 4: fund pie chart data for emergency fund redesign
+		fundCategoryLabels := []string{}
+		fundCategoryTotals := []float64{}
+
+		// Find fund with ID 1 (or fallback to first fund)
+		var fundID int = 1
+		var fundBalance, fundGoal float64
+		err = db.QueryRow("SELECT balance, goal FROM funds WHERE user = ? AND id = ?", user, fundID).Scan(&fundBalance, &fundGoal)
+		if err == sql.ErrNoRows {
+			// fallback to first fund
+			err = db.QueryRow("SELECT balance, goal FROM funds WHERE user = ? ORDER BY id ASC LIMIT 1", user).Scan(&fundBalance, &fundGoal)
+		}
+		if err != nil {
+			log.Println("DASHBOARD fund pie chart error:", err)
+		} else {
+			fundCategoryLabels = append(fundCategoryLabels, "Saved", "Remaining")
+			saved := fundBalance
+			remaining := fundGoal - fundBalance
+			if remaining < 0 {
+				remaining = 0
+			}
+			fundCategoryTotals = append(fundCategoryTotals, saved, remaining)
+		}
+		log.Printf("FUND CHART DATA: labels=%v totals=%v", fundCategoryLabels, fundCategoryTotals)
+
+		// fundCategoryLabelsJSON, _ := json.Marshal(fundCategoryLabels)
+		// fundCategoryTotalsJSON, _ := json.Marshal(fundCategoryTotals)
 		// ── Step 5: fetch funds and fund transactions for new UI ─────────────
 		type Fund struct {
 			ID      int

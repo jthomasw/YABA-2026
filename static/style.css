@@ -142,6 +142,7 @@ a {
 
 /* ================= BUTTONS ================= */
 
+
 .btn {
     padding: 12px 20px;
     border-radius: 10px;
@@ -150,6 +151,11 @@ a {
     margin: 10px;
     background: #4A90E2;
     transition: 0.25s ease;
+}
+
+.btn-primary {
+    background: #3182ce !important;
+    color: #fff !important;
 }
 
 .btn:hover {
@@ -313,7 +319,7 @@ tr:nth-child(even) {
     border-radius: 12px;
     border: 1px solid #d1d5db;
     background: #ffffff;
-    color: #2c3e50;
+    color: #ccd1d6;
     font-size: 15px;
     cursor: pointer;
     transition: 0.3s;

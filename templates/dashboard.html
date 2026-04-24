@@ -60,8 +60,7 @@
     </div>
 
     <div class="card orange clickable-card" onclick="showSection('emergency')">
-        <h3>Emergency Fund</h3>
-        <p>${{printf "%.2f" .EmergencyBalance}} / ${{printf "%.2f" .EmergencyGoal}}</p>
+        <h3>Emergency Funds</h3>
     </div>
 
     <div class="card green clickable-card" onclick="showSection('income')">
@@ -107,7 +106,65 @@ let incomePieChartInstance;
 let expensePieChartInstance;
 let fundPieChartInstance;
 
-// Fund pie chart is rendered using the Funds array in dashboard_emergency.html. No legacy Go-passed fund pie chart data is used.
+function renderFundPieChart() {
+    const chartCanvas = document.getElementById("fundPieChart");
+    if (!chartCanvas) return;
+
+    if (fundPieChartInstance) {
+        fundPieChartInstance.destroy();
+        fundPieChartInstance = null;
+    }
+
+
+    // Render funds array as JS, then select fund 1 or fallback
+    const funds = [
+        {{- $first := true -}}
+        {{- range $f := .Funds }}
+            {{- if not $first }},{{ end -}}
+            { id: {{ $f.ID }}, name: '{{ js $f.Name }}', balance: {{ printf "%.2f" $f.Balance }}, goal: {{ printf "%.2f" $f.Goal }} }
+            {{- $first = false -}}
+        {{- end }}
+    ];
+
+    let fund = null;
+    for (let i = 0; i < funds.length; i++) {
+        if (funds[i].id === 1) {
+            fund = funds[i];
+            break;
+        }
+    }
+    if (!fund && funds.length > 0) fund = funds[0];
+    if (!fund) return;
+    const saved = fund.balance;
+    const remaining = Math.max(0, fund.goal - fund.balance);
+
+    fundPieChartInstance = new Chart(chartCanvas, {
+        type: 'doughnut',
+        data: {
+            labels: ['Saved', 'Remaining'],
+            datasets: [{
+                data: [saved, remaining],
+                backgroundColor: ['#38b2ac', '#4a5568'],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            cutout: '75%',
+            responsive: false,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return `${context.label}: $${context.parsed.toFixed(2)}`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
 
 function renderCurrentFundsChart() {
     const chartCanvas = document.getElementById("currentFundsChart");
