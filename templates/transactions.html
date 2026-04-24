@@ -138,6 +138,9 @@
 
         .badge-income  { background: #d1fae5; color: #065f46; }
         .badge-expense { background: #ffe4e6; color: #9f1239; }
+        /* ADDED: Priority badge styles — Task 3 */
+        .badge-essential   { background: #dbeafe; color: #1e40af; }
+        .badge-unessential { background: #fef9c3; color: #854d0e; }
 
         /* Amount */
         .amount-income  { color: #059669; font-weight: 800; }   /* vivid green */
@@ -221,6 +224,7 @@
                     <th>Name / Category</th>
                     <th>Date</th>
                     <th>Amount</th>
+                    <th>Priority</th><!-- ADDED: Essential/Unessential column — Task 3 -->
                     <th style="width:50px;"></th>
                 </tr>
             </thead>
@@ -241,6 +245,16 @@
                         <span class="amount-income">+${{printf "%.2f" .Amount}}</span>
                     {{else}}
                         <span class="amount-expense">-${{printf "%.2f" .Amount}}</span>
+                    {{end}}
+                </td>
+                <!-- ADDED: Priority cell — Task 3 -->
+                <td>
+                    {{if eq .Type "Income"}}
+                        <span style="color:#94a3b8; font-size:0.8rem;">—</span>
+                    {{else if eq .Essential "Unessential"}}
+                        <span class="badge badge-unessential">Unessential</span>
+                    {{else}}
+                        <span class="badge badge-essential">Essential</span>
                     {{end}}
                 </td>
                 <td>

@@ -589,6 +589,11 @@ func addExpense(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 		category := r.FormValue("category")
 		date := fallbackDate(r.FormValue("date"))
 		amountStr := r.FormValue("amount")
+		// ADDED: read essential field from form — Task 4
+		essential := r.FormValue("essential")
+		if essential != "Essential" && essential != "Unessential" {
+			essential = "Essential" // safe default
+		}
 
 		amount, err := strconv.ParseFloat(amountStr, 64)
 		if err != nil {
@@ -598,17 +603,25 @@ func addExpense(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 			return
 		}
 
-		log.Printf("INSERT EXPENSE user=%q category=%q date=%q amount=%.2f", user, category, date, amount)
+		log.Printf("INSERT EXPENSE user=%q category=%q date=%q amount=%.2f essential=%q", user, category, date, amount, essential)
 
+		// ADDED: try INSERT with essential column; fall back if column missing — Task 4
 		result, err := db.Exec(
-			"INSERT INTO expense(user, category, date, amount) VALUES(?, ?, ?, ?)",
-			user, category, date, amount,
+			"INSERT INTO expense(user, category, date, amount, essential) VALUES(?, ?, ?, ?, ?)",
+			user, category, date, amount, essential,
 		)
+		if err != nil {
+			log.Println("INSERT EXPENSE with essential failed, trying without:", err)
+			result, err = db.Exec(
+				"INSERT INTO expense(user, category, date, amount) VALUES(?, ?, ?, ?)",
+				user, category, date, amount,
+			)
+		}
 		if err != nil {
 			log.Println("INSERT EXPENSE DB ERROR:", err)
 		} else {
 			newID, _ := result.LastInsertId()
-			log.Printf("INSERT EXPENSE OK id=%d user=%q amount=%.2f", newID, user, amount)
+			log.Printf("INSERT EXPENSE OK id=%d user=%q amount=%.2f essential=%q", newID, user, amount, essential)
 		}
 
 		// Redirect to dashboard so it recalculates current funds immediately.
@@ -698,12 +711,14 @@ func viewTransactions(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc 
 
 		filter := r.URL.Query().Get("type")
 
+		// UPDATED: added Essential field to struct — Task 3
 		type Transaction struct {
-			ID     int
-			Type   string
-			Name   string
-			Date   string
-			Amount float64
+			ID        int
+			Type      string
+			Name      string
+			Date      string
+			Amount    float64
+			Essential string // "Essential" | "Unessential" | "N/A" (for income)
 		}
 
 		var transactions []Transaction
@@ -712,19 +727,23 @@ func viewTransactions(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc 
 		switch filter {
 
 		case "income":
+			// UPDATED: include essential placeholder so struct scan always has 6 columns
 			rows, err := db.Query(`
-				SELECT id, source, COALESCE(NULLIF(date,''), ?) AS d, amount
+				SELECT id, IFNULL(source,'') AS name,
+				       COALESCE(NULLIF(date,''), ?) AS d, amount,
+				       'N/A' AS essential
 				FROM income
 				WHERE user = ?
-				ORDER BY d DESC
+				ORDER BY d DESC, id DESC
 			`, now, user)
+			// FIXED: fallback query without essential if column missing
 			if err != nil {
 				log.Println("TRANSACTIONS income query error:", err)
 				break
 			}
 			for rows.Next() {
 				var t Transaction
-				if err := rows.Scan(&t.ID, &t.Name, &t.Date, &t.Amount); err == nil {
+				if err := rows.Scan(&t.ID, &t.Name, &t.Date, &t.Amount, &t.Essential); err == nil {
 					t.Type = "Income"
 					transactions = append(transactions, t)
 				}
@@ -732,19 +751,34 @@ func viewTransactions(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc 
 			rows.Close()
 
 		case "expense":
+			// UPDATED: include essential column with COALESCE guard for old rows — Task 3
 			rows, err := db.Query(`
-				SELECT id, category, COALESCE(NULLIF(date,''), ?) AS d, amount
+				SELECT id, IFNULL(category,'') AS name,
+				       COALESCE(NULLIF(date,''), ?) AS d, amount,
+				       COALESCE(NULLIF(TRIM(essential),''), 'Essential') AS essential
 				FROM expense
 				WHERE user = ?
-				ORDER BY d DESC
+				ORDER BY d DESC, id DESC
 			`, now, user)
 			if err != nil {
-				log.Println("TRANSACTIONS expense query error:", err)
-				break
+				// FIXED: fallback if essential column not yet migrated
+				log.Println("TRANSACTIONS expense query error (trying fallback):", err)
+				rows, err = db.Query(`
+					SELECT id, IFNULL(category,'') AS name,
+					       COALESCE(NULLIF(date,''), ?) AS d, amount,
+					       'Essential' AS essential
+					FROM expense
+					WHERE user = ?
+					ORDER BY d DESC, id DESC
+				`, now, user)
+				if err != nil {
+					log.Println("TRANSACTIONS expense fallback query error:", err)
+					break
+				}
 			}
 			for rows.Next() {
 				var t Transaction
-				if err := rows.Scan(&t.ID, &t.Name, &t.Date, &t.Amount); err == nil {
+				if err := rows.Scan(&t.ID, &t.Name, &t.Date, &t.Amount, &t.Essential); err == nil {
 					t.Type = "Expense"
 					transactions = append(transactions, t)
 				}
@@ -752,26 +786,39 @@ func viewTransactions(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc 
 			rows.Close()
 
 		default:
-			// Combine both tables, sort together by date descending.
+			// FIXED: combine both tables sorted by date DESC then id DESC (newest first, no grouping) — Task sort fix
 			rows, err := db.Query(`
-				SELECT id, 'Income' AS type, source AS name,
-				       COALESCE(NULLIF(date,''), ?) AS d, amount
-				FROM income
-				WHERE user = ?
+				SELECT id, 'Income' AS type, IFNULL(source,'') AS name,
+				       COALESCE(NULLIF(date,''), ?) AS d, amount, 'N/A' AS essential
+				FROM income WHERE user = ?
 				UNION ALL
-				SELECT id, 'Expense' AS type, category AS name,
-				       COALESCE(NULLIF(date,''), ?) AS d, amount
-				FROM expense
-				WHERE user = ?
-				ORDER BY d DESC
+				SELECT id, 'Expense' AS type, IFNULL(category,'') AS name,
+				       COALESCE(NULLIF(date,''), ?) AS d, amount,
+				       COALESCE(NULLIF(TRIM(essential),''), 'Essential') AS essential
+				FROM expense WHERE user = ?
+				ORDER BY d DESC, id DESC
 			`, now, user, now, user)
 			if err != nil {
-				log.Println("TRANSACTIONS combined query error:", err)
-				break
+				// FIXED: fallback if essential column not yet migrated
+				log.Println("TRANSACTIONS combined query error (trying fallback):", err)
+				rows, err = db.Query(`
+					SELECT id, 'Income' AS type, IFNULL(source,'') AS name,
+					       COALESCE(NULLIF(date,''), ?) AS d, amount, 'N/A' AS essential
+					FROM income WHERE user = ?
+					UNION ALL
+					SELECT id, 'Expense' AS type, IFNULL(category,'') AS name,
+					       COALESCE(NULLIF(date,''), ?) AS d, amount, 'Essential' AS essential
+					FROM expense WHERE user = ?
+					ORDER BY d DESC, id DESC
+				`, now, user, now, user)
+				if err != nil {
+					log.Println("TRANSACTIONS combined fallback query error:", err)
+					break
+				}
 			}
 			for rows.Next() {
 				var t Transaction
-				if err := rows.Scan(&t.ID, &t.Type, &t.Name, &t.Date, &t.Amount); err == nil {
+				if err := rows.Scan(&t.ID, &t.Type, &t.Name, &t.Date, &t.Amount, &t.Essential); err == nil {
 					transactions = append(transactions, t)
 				}
 			}
@@ -783,7 +830,11 @@ func viewTransactions(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc 
 			"Username":     user,
 			"Filter":       filter,
 		}
-		template.Must(template.ParseFiles("templates/transactions.html")).Execute(w, data)
+		// FIXED: log template Execute errors so silent failures show up in console
+		t := template.Must(template.ParseFiles("templates/transactions.html"))
+		if err := t.Execute(w, data); err != nil {
+			log.Println("TRANSACTIONS template execute error:", err)
+		}
 	}
 }
 

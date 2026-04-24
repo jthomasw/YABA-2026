@@ -4,7 +4,7 @@
     <title>Add Expense</title>
     <link rel="stylesheet" href="/static/style.css">
     <style>
-        /* Specific styles for the upload section */
+        /* Styles for upload section — kept for future use */
         .file-input-wrapper {
             border: 2px dashed #4a5568;
             padding: 20px;
@@ -13,18 +13,35 @@
             cursor: pointer;
             transition: border-color 0.3s;
         }
-        .file-input-wrapper:hover {
-            border-color: #4ade80;
-        }
-        .hidden {
-            display: none;
-        }
+        .file-input-wrapper:hover { border-color: #4ade80; }
+        .hidden { display: none; }
         .upload-info {
             font-size: 0.85rem;
             color: #9ca3af;
             margin-top: 10px;
             line-height: 1.4;
         }
+
+        /* ADDED: style dropdown to match existing inputs */
+        .input-group select {
+            width: 100%;
+            padding: 14px 16px;
+            margin-bottom: 14px;
+            border: none;
+            border-radius: 12px;
+            background: #111827;
+            color: white;
+            font-size: 16px;
+            box-sizing: border-box;
+            appearance: none;
+            cursor: pointer;
+        }
+        .input-group select:focus {
+            outline: none;
+            border: 2px solid #4ade80;
+            background: #0f172a;
+        }
+        .input-group select option { background: #111827; color: white; }
     </style>
 </head>
 <body>
@@ -34,13 +51,17 @@
 
         <h2 id="title">Add Expense</h2>
 
+        <!-- MODIFIED: Removed Upload Receipt button — COMMENTED OUT -->
         <div id="questionStep">
             <p style="color:#ccc; margin-bottom: 20px;">How would you like to add this expense?</p>
             <button class="question-btn" onclick="showManualForm()">Manual Entry</button>
+            <!-- COMMENTED OUT: Upload Receipt button
             <button class="question-btn" onclick="showUploadForm()">Upload Receipt</button>
+            -->
         </div>
 
         <form id="expenseForm" method="POST" action="/add-expense" style="display:none;">
+
             <div class="input-group">
                 <input type="text" name="category" placeholder="What (Food, Rent...)" required>
             </div>
@@ -49,9 +70,11 @@
                 <input type="date" id="manualDate" name="date" required>
             </div>
 
+            <!-- COMMENTED OUT: Where (location) field — Task 2
             <div class="input-group">
                 <input type="text" name="place" placeholder="Where">
             </div>
+            -->
 
             <div class="input-group">
                 <input type="text" name="note" placeholder="Why (optional)">
@@ -61,25 +84,33 @@
                 <input type="number" step="0.01" name="amount" placeholder="Amount ($)" required>
             </div>
 
+            <!-- ADDED: Essential / Unessential dropdown — placed after Amount — Task 4 -->
+            <div class="input-group">
+                <select name="essential">
+                    <option value="Essential">Essential</option>
+                    <option value="Unessential">Unessential</option>
+                </select>
+            </div>
+
             <button type="submit" class="btn-submit">Add Expense</button>
             <button type="button" class="btn-submit" style="background:#4a5568; margin-top:10px;" onclick="resetView()">Cancel</button>
         </form>
 
+        <!-- COMMENTED OUT: Upload Receipt form — Task 1
         <form id="uploadForm" method="POST" action="/upload-receipt" enctype="multipart/form-data" style="display:none;">
             <div class="file-input-wrapper" onclick="document.getElementById('receiptInput').click()">
                 <p id="fileNameDisplay" style="color:#4ade80; margin:0;">Click to select or take a photo</p>
                 <input type="file" id="receiptInput" name="receipt" accept="image/*" class="hidden" onchange="updateFileName(this)" required>
             </div>
-
             <div class="upload-info">
                 <p>• Supported formats: JPG, PNG</p>
                 <p>• Picture will be put into a queue for processing.</p>
                 <p>• You will be notified once processing is complete.</p>
             </div>
-
             <button type="submit" class="btn-submit" style="margin-top:20px;">Upload & Process</button>
             <button type="button" class="btn-submit" style="background:#4a5568; margin-top:10px;" onclick="resetView()">Cancel</button>
         </form>
+        -->
 
         <p style="margin-top:25px; color:#ccc;">
             ← <a href="/dashboard" style="color:#4ade80;">Back to Dashboard</a>
@@ -91,27 +122,31 @@
 <script>
 function showManualForm() {
     document.getElementById("questionStep").style.display = "none";
-    document.getElementById("uploadForm").style.display = "none";
+    // COMMENTED OUT: document.getElementById("uploadForm").style.display = "none";
     document.getElementById("expenseForm").style.display = "block";
     document.getElementById("title").innerText = "Enter Details";
-    // Set default date to today
     document.getElementById("manualDate").valueAsDate = new Date();
 }
 
+// COMMENTED OUT: showUploadForm — Task 1
+/*
 function showUploadForm() {
     document.getElementById("questionStep").style.display = "none";
     document.getElementById("expenseForm").style.display = "none";
     document.getElementById("uploadForm").style.display = "block";
     document.getElementById("title").innerText = "Upload Receipt";
 }
+*/
 
 function resetView() {
     document.getElementById("questionStep").style.display = "block";
     document.getElementById("expenseForm").style.display = "none";
-    document.getElementById("uploadForm").style.display = "none";
+    // COMMENTED OUT: document.getElementById("uploadForm").style.display = "none";
     document.getElementById("title").innerText = "Add Expense";
 }
 
+// COMMENTED OUT: updateFileName — Task 1
+/*
 function updateFileName(input) {
     const display = document.getElementById("fileNameDisplay");
     if (input.files && input.files.length > 0) {
@@ -120,6 +155,7 @@ function updateFileName(input) {
         display.innerText = "Click to select or take a photo";
     }
 }
+*/
 </script>
 
 </body>
