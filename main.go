@@ -138,4 +138,12 @@ func runMigrations(db *sql.DB) {
 	} else {
 		log.Println("migration: added income.source column ✓")
 	}
+
+	// ADDED: expense.essential — stores Essential / Unessential per transaction
+	_, err = db.Exec(`ALTER TABLE expense ADD COLUMN essential TEXT DEFAULT 'Essential'`)
+	if err != nil {
+		log.Println("migration expense.essential (already exists or added):", err)
+	} else {
+		log.Println("migration: added expense.essential column ✓")
+	}
 }
