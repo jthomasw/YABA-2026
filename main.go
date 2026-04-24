@@ -146,4 +146,21 @@ func runMigrations(db *sql.DB) {
 	} else {
 		log.Println("migration: added expense.essential column ✓")
 	}
+
+	// FIXED: sorting by most recent first — created_at stores true insertion time.
+	// DEFAULT '1970-01-01 00:00:00' means old rows (pre-migration) sort to the
+	// bottom; new INSERTs explicitly pass datetime('now') so they sort correctly.
+	_, err = db.Exec(`ALTER TABLE income ADD COLUMN created_at TEXT DEFAULT '1970-01-01 00:00:00'`)
+	if err != nil {
+		log.Println("migration income.created_at (already exists or added):", err)
+	} else {
+		log.Println("migration: added income.created_at column ✓")
+	}
+
+	_, err = db.Exec(`ALTER TABLE expense ADD COLUMN created_at TEXT DEFAULT '1970-01-01 00:00:00'`)
+	if err != nil {
+		log.Println("migration expense.created_at (already exists or added):", err)
+	} else {
+		log.Println("migration: added expense.created_at column ✓")
+	}
 }

@@ -554,10 +554,19 @@ func addIncome(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 
 		log.Printf("INSERT INCOME user=%q source=%q date=%q amount=%.2f", user, source, date, amount)
 
+		// FIXED: sorting by most recent first — explicitly store created_at so
+		// new rows always sort above old pre-migration rows.
 		_, err = db.Exec(
-			"INSERT INTO income(user, source, date, amount) VALUES(?, ?, ?, ?)",
+			"INSERT INTO income(user, source, date, amount, created_at) VALUES(?, ?, ?, ?, datetime('now'))",
 			user, source, date, amount,
 		)
+		if err != nil {
+			// fallback for DB not yet migrated
+			_, err = db.Exec(
+				"INSERT INTO income(user, source, date, amount) VALUES(?, ?, ?, ?)",
+				user, source, date, amount,
+			)
+		}
 		if err != nil {
 			log.Println("INSERT INCOME DB ERROR:", err)
 		}
@@ -605,13 +614,21 @@ func addExpense(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc {
 
 		log.Printf("INSERT EXPENSE user=%q category=%q date=%q amount=%.2f essential=%q", user, category, date, amount, essential)
 
-		// ADDED: try INSERT with essential column; fall back if column missing — Task 4
+		// FIXED: sorting by most recent first — explicitly store created_at.
+		// Try with both essential + created_at, then fall back gracefully.
 		result, err := db.Exec(
-			"INSERT INTO expense(user, category, date, amount, essential) VALUES(?, ?, ?, ?, ?)",
+			"INSERT INTO expense(user, category, date, amount, essential, created_at) VALUES(?, ?, ?, ?, ?, datetime('now'))",
 			user, category, date, amount, essential,
 		)
 		if err != nil {
-			log.Println("INSERT EXPENSE with essential failed, trying without:", err)
+			log.Println("INSERT EXPENSE with essential+created_at failed, trying without created_at:", err)
+			result, err = db.Exec(
+				"INSERT INTO expense(user, category, date, amount, essential) VALUES(?, ?, ?, ?, ?)",
+				user, category, date, amount, essential,
+			)
+		}
+		if err != nil {
+			log.Println("INSERT EXPENSE with essential failed, trying without both:", err)
 			result, err = db.Exec(
 				"INSERT INTO expense(user, category, date, amount) VALUES(?, ?, ?, ?)",
 				user, category, date, amount,
@@ -727,23 +744,37 @@ func viewTransactions(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc 
 		switch filter {
 
 		case "income":
-			// UPDATED: include essential placeholder so struct scan always has 6 columns
+			// FIXED: sorting by most recent first — ORDER BY created_at DESC
+			// Old pre-migration rows have created_at='1970-01-01' so they sink to the bottom.
 			rows, err := db.Query(`
 				SELECT id, IFNULL(source,'') AS name,
 				       COALESCE(NULLIF(date,''), ?) AS d, amount,
-				       'N/A' AS essential
+				       'N/A' AS essential,
+				       created_at AS sort_ts
 				FROM income
 				WHERE user = ?
-				ORDER BY d DESC, id DESC
+				ORDER BY sort_ts DESC, id DESC
 			`, now, user)
-			// FIXED: fallback query without essential if column missing
 			if err != nil {
-				log.Println("TRANSACTIONS income query error:", err)
-				break
+				// fallback: created_at column not yet added
+				log.Println("TRANSACTIONS income query error (trying fallback):", err)
+				rows, err = db.Query(`
+					SELECT id, IFNULL(source,'') AS name,
+					       COALESCE(NULLIF(date,''), ?) AS d, amount,
+					       'N/A' AS essential,
+					       COALESCE(date, ?) AS sort_ts
+					FROM income WHERE user = ?
+					ORDER BY sort_ts DESC, id DESC
+				`, now, now, user)
+				if err != nil {
+					log.Println("TRANSACTIONS income fallback query error:", err)
+					break
+				}
 			}
 			for rows.Next() {
 				var t Transaction
-				if err := rows.Scan(&t.ID, &t.Name, &t.Date, &t.Amount, &t.Essential); err == nil {
+				var sortTS string
+				if err := rows.Scan(&t.ID, &t.Name, &t.Date, &t.Amount, &t.Essential, &sortTS); err == nil {
 					t.Type = "Income"
 					transactions = append(transactions, t)
 				}
@@ -751,26 +782,27 @@ func viewTransactions(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc 
 			rows.Close()
 
 		case "expense":
-			// UPDATED: include essential column with COALESCE guard for old rows — Task 3
+			// FIXED: sorting by most recent first — ORDER BY created_at DESC
 			rows, err := db.Query(`
 				SELECT id, IFNULL(category,'') AS name,
 				       COALESCE(NULLIF(date,''), ?) AS d, amount,
-				       COALESCE(NULLIF(TRIM(essential),''), 'Essential') AS essential
+				       COALESCE(NULLIF(TRIM(essential),''), 'Essential') AS essential,
+				       created_at AS sort_ts
 				FROM expense
 				WHERE user = ?
-				ORDER BY d DESC, id DESC
+				ORDER BY sort_ts DESC, id DESC
 			`, now, user)
 			if err != nil {
-				// FIXED: fallback if essential column not yet migrated
+				// fallback: created_at or essential column not yet added
 				log.Println("TRANSACTIONS expense query error (trying fallback):", err)
 				rows, err = db.Query(`
 					SELECT id, IFNULL(category,'') AS name,
 					       COALESCE(NULLIF(date,''), ?) AS d, amount,
-					       'Essential' AS essential
-					FROM expense
-					WHERE user = ?
-					ORDER BY d DESC, id DESC
-				`, now, user)
+					       'Essential' AS essential,
+					       COALESCE(date, ?) AS sort_ts
+					FROM expense WHERE user = ?
+					ORDER BY sort_ts DESC, id DESC
+				`, now, now, user)
 				if err != nil {
 					log.Println("TRANSACTIONS expense fallback query error:", err)
 					break
@@ -778,7 +810,8 @@ func viewTransactions(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc 
 			}
 			for rows.Next() {
 				var t Transaction
-				if err := rows.Scan(&t.ID, &t.Name, &t.Date, &t.Amount, &t.Essential); err == nil {
+				var sortTS string
+				if err := rows.Scan(&t.ID, &t.Name, &t.Date, &t.Amount, &t.Essential, &sortTS); err == nil {
 					t.Type = "Expense"
 					transactions = append(transactions, t)
 				}
@@ -786,31 +819,38 @@ func viewTransactions(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc 
 			rows.Close()
 
 		default:
-			// FIXED: combine both tables sorted by date DESC then id DESC (newest first, no grouping) — Task sort fix
+			// FIXED: sorting by most recent first — newest added always on top regardless of type
 			rows, err := db.Query(`
 				SELECT id, 'Income' AS type, IFNULL(source,'') AS name,
-				       COALESCE(NULLIF(date,''), ?) AS d, amount, 'N/A' AS essential
+				       COALESCE(NULLIF(date,''), ?) AS d, amount,
+				       'N/A' AS essential,
+				       created_at AS sort_ts
 				FROM income WHERE user = ?
 				UNION ALL
 				SELECT id, 'Expense' AS type, IFNULL(category,'') AS name,
 				       COALESCE(NULLIF(date,''), ?) AS d, amount,
-				       COALESCE(NULLIF(TRIM(essential),''), 'Essential') AS essential
+				       COALESCE(NULLIF(TRIM(essential),''), 'Essential') AS essential,
+				       created_at AS sort_ts
 				FROM expense WHERE user = ?
-				ORDER BY d DESC, id DESC
+				ORDER BY sort_ts DESC, id DESC
 			`, now, user, now, user)
 			if err != nil {
-				// FIXED: fallback if essential column not yet migrated
+				// fallback: created_at or essential column not yet added
 				log.Println("TRANSACTIONS combined query error (trying fallback):", err)
 				rows, err = db.Query(`
 					SELECT id, 'Income' AS type, IFNULL(source,'') AS name,
-					       COALESCE(NULLIF(date,''), ?) AS d, amount, 'N/A' AS essential
+					       COALESCE(NULLIF(date,''), ?) AS d, amount,
+					       'N/A' AS essential,
+					       COALESCE(date, ?) AS sort_ts
 					FROM income WHERE user = ?
 					UNION ALL
 					SELECT id, 'Expense' AS type, IFNULL(category,'') AS name,
-					       COALESCE(NULLIF(date,''), ?) AS d, amount, 'Essential' AS essential
+					       COALESCE(NULLIF(date,''), ?) AS d, amount,
+					       'Essential' AS essential,
+					       COALESCE(date, ?) AS sort_ts
 					FROM expense WHERE user = ?
-					ORDER BY d DESC, id DESC
-				`, now, user, now, user)
+					ORDER BY sort_ts DESC, id DESC
+				`, now, now, user, now, now, user)
 				if err != nil {
 					log.Println("TRANSACTIONS combined fallback query error:", err)
 					break
@@ -818,7 +858,8 @@ func viewTransactions(db *sql.DB, store *sessions.CookieStore) http.HandlerFunc 
 			}
 			for rows.Next() {
 				var t Transaction
-				if err := rows.Scan(&t.ID, &t.Type, &t.Name, &t.Date, &t.Amount, &t.Essential); err == nil {
+				var sortTS string
+				if err := rows.Scan(&t.ID, &t.Type, &t.Name, &t.Date, &t.Amount, &t.Essential, &sortTS); err == nil {
 					transactions = append(transactions, t)
 				}
 			}
