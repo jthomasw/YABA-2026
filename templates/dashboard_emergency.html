@@ -2,16 +2,10 @@
 <div class="emergency-fund-section">
     <h2>Funds</h2>
 
-    <!-- Fund Progress Pie Chart Container (fix)-->
-<!--
-    <div class="chart-container">
-        <canvas id="fundPieChart"></canvas>
-    </div>
--->
-    <!-- Create Fund Button and Modal -->
     <div class="create-fund-bar">
         <button class="btn btn-primary" id="openCreateFundModal">+ New Fund</button>
     </div>
+
     <div id="createFundModal" class="modal">
         <div class="modal-content">
             <span class="close" id="closeCreateFundModal">&times;</span>
@@ -23,55 +17,72 @@
         </div>
     </div>
 
-    <!-- Fund List -->
-        <h3>Your Funds</h3>
-        <table>
-            <thead>
-                <tr><th>ID</th><th>Name</th><th>Balance</th><th>Goal</th><th>Actions</th></tr>
-            </thead>
-            <tbody>
-                {{range .Funds}}
-                <tr>
-                    <td>{{.ID}}</td>
-                    <td>{{.Name}}</td>
-                    <td>${{printf "%.2f" .Balance}}</td>
-                    <td>${{printf "%.2f" .Goal}}</td>
-                    <td>
-                        <form method="POST" action="/add-to-fund" style="display:inline; margin-right:8px;">
-                            <input type="hidden" name="fund_id" value="{{.ID}}">
-                            <input type="number" name="amount" step="0.01" min="0.01" placeholder="Amount" required style="width:90px;">
-                            <button type="submit" class="btn btn-primary">Add</button>
-                        </form>
-                        <button class="btn btn-outline" onclick="openGoalModal({{.ID}}, '{{.Name}}', {{printf "%.2f" .Goal}})">Change Goal</button>
-                    </td>
-                </tr>
-                {{else}}
-                <tr><td colspan="5">No funds yet.</td></tr>
-                {{end}}
-            </tbody>
-        </table>
+    <h3>Your Funds</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Balance</th>
+                <th>Goal</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Funds}}
+            <tr>
+                <td>{{.ID}}</td>
+                <td>{{.Name}}</td>
+                <td>${{printf "%.2f" .Balance}}</td>
+                <td>${{printf "%.2f" .Goal}}</td>
+                <td>
+                    <form method="POST" action="/add-to-fund" style="display:inline; margin-right:8px;">
+                        <input type="hidden" name="fund_id" value="{{.ID}}">
+                        <input type="number" name="amount" step="0.01" min="0.01" placeholder="Amount" required style="width:90px;">
+                        <button type="submit" class="btn btn-primary">Add</button>
+                    </form>
 
-        <!-- Change Goal Modal -->
-        <div id="goalModal" class="modal">
-            <div class="modal-content">
-                <span class="close" id="closeGoalModal">&times;</span>
-                <h3 id="goalModalTitle">Change Fund Goal</h3>
-                <form method="POST" action="/update-fund-goal">
-                    <input type="hidden" name="fund_id" id="goalModalFundId">
-                    <label for="goalModalGoal">Goal Amount ($):</label>
-                    <input type="number" step="0.01" min="0" name="goal" id="goalModalGoal" required>
-                    <button type="submit" class="btn btn-primary" style="margin-top:12px;">Update Goal</button>
-                </form>
-            </div>
+                    <button 
+                        type="button"
+                        class="btn btn-outline goal-btn"
+                        data-id="{{.ID}}"
+                        data-name="{{.Name}}"
+                        data-goal="{{printf "%.2f" .Goal}}">
+                        Change Goal
+                    </button>
+                </td>
+            </tr>
+            {{else}}
+            <tr>
+                <td colspan="5">No funds yet.</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+
+    <div id="goalModal" class="modal">
+        <div class="modal-content">
+            <span class="close" id="closeGoalModal">&times;</span>
+            <h3 id="goalModalTitle">Change Fund Goal</h3>
+            <form method="POST" action="/update-fund-goal">
+                <input type="hidden" name="fund_id" id="goalModalFundId">
+                <label>Goal Amount ($):</label>
+                <input type="number" step="0.01" min="0" name="goal" id="goalModalGoal" required>
+                <button type="submit" class="btn btn-primary" style="margin-top:12px;">Update Goal</button>
+            </form>
         </div>
     </div>
 
-    <!-- Transaction Log -->
     <div class="transaction-log">
         <h3>Transaction Log</h3>
         <table>
             <thead>
-                <tr><th>Date</th><th>Fund</th><th>Amount</th><th>Type</th></tr>
+                <tr>
+                    <th>Date</th>
+                    <th>Fund</th>
+                    <th>Amount</th>
+                    <th>Type</th>
+                </tr>
             </thead>
             <tbody>
                 {{range .FundTransactions}}
@@ -82,13 +93,13 @@
                     <td>{{.Type}}</td>
                 </tr>
                 {{else}}
-                <tr><td colspan="4">No transactions yet.</td></tr>
+                <tr>
+                    <td colspan="4">No transactions yet.</td>
+                </tr>
                 {{end}}
             </tbody>
         </table>
     </div>
-
-    <!-- Simple Graph Placeholder removed -->
 </div>
 
 <style>
@@ -97,570 +108,108 @@
     max-width: 900px;
     margin: 0 auto;
 }
-  
-.create-fund-form {
-    margin-bottom: 32px;
-    background: #fff;
-    color: #23272f;
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-}
-    
-th, td {
-    padding: 8px 12px;
-    border-bottom: 1px solid #444;
-    text-align: left;
-}
-th {
-    background: #3182ce !important;
-    color: #fff !important;
-    text-transform: uppercase;
-    font-size: 13px;
-}
-tr:last-child td {
-    border-bottom: none;
-}
-.btn {
-    padding: 6px 16px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: bold;
-    margin-left: 4px;
-}
-.btn-primary {
-    background: #3182ce;
-    color: #fff;
-}
-.create-fund-form input[type="text"] {
-    padding: 8px;
-    border: 1px solid #4a5568;
-    border-radius: 4px;
-    background: #1a202c;
-    color: #e2e8f0;
-    margin-right: 8px;
-}
-
-.fund-graph {
-    text-align: center;
-}
-
-.fund-progress-container {
-    width: 240px;
-    height: 240px;
-    margin: 0 auto 24px auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #fff;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-    border: 2px solid #2d3748;
-}
 
 .create-fund-bar {
     margin-bottom: 18px;
+}
+
+.emergency-fund-section table {
+    width: 100%;
+}
+
+.emergency-fund-section th,
+.emergency-fund-section td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #d1d5db;
     text-align: left;
 }
 
-/* Modal background overlay */
-.modal {
+.emergency-fund-section th {
+    background: #3182ce;
+    color: #ffffff;
+    text-transform: uppercase;
+    font-size: 13px;
+}
+
+.emergency-fund-section .modal {
     display: none;
     position: fixed;
     z-index: 1000;
-    left: 0;
-    top: 0;
-    width: 100vw;
-    height: 100vh;
+    inset: 0;
     background: rgba(15, 23, 42, 0.55);
-    justify-content: center;
-    align-items: center;
 }
 
-/* Modal box styling */
-.modal-content {
-    background: #fff;
+.emergency-fund-section .modal-content {
+    background: #ffffff;
     color: #2563eb;
-    margin: auto;
-    position: relative;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    padding: 32px 36px;
+    padding: 30px;
     border-radius: 20px;
-    width: 100%;
     max-width: 400px;
+    margin: 10% auto;
     text-align: center;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-    border: 1px solid #e5e7eb;
 }
 
-.modal-content h3, .modal-content label, .modal-content input, .modal-content button {
-    /* color: #2563eb; */
-}
-
-.modal-content input, .modal-content button {
-    border-color: #2563eb;
-}
-
-.close {
+.emergency-fund-section .close {
     float: right;
     font-size: 25px;
     cursor: pointer;
     color: #2563eb;
-    position: absolute;
-    right: 16px;
-    top: 8px;
 }
-
-   
-.btn-outline:hover {
-    background: #3182ce;
-    color: #fff;
-}
-
 </style>
 
-
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-// Modal logic for create fund and change goal
-document.addEventListener('DOMContentLoaded', function() {
-    // Create Fund Modal
-    var createModal = document.getElementById('createFundModal');
-    var createBtn = document.getElementById('openCreateFundModal');
-    var createSpan = document.getElementById('closeCreateFundModal');
-    createBtn.onclick = function() {
-        createModal.style.display = 'block';
-        setTimeout(function() {
-            var input = createModal.querySelector('input[name="name"]');
-            if (input) input.focus();
-        }, 100);
-    }
-    createSpan.onclick = function() {
-        createModal.style.display = 'none';
+document.addEventListener("DOMContentLoaded", function() {
+    const createModal = document.getElementById("createFundModal");
+    const createBtn = document.getElementById("openCreateFundModal");
+    const createSpan = document.getElementById("closeCreateFundModal");
+
+    const goalModal = document.getElementById("goalModal");
+    const closeGoalModal = document.getElementById("closeGoalModal");
+
+    if (createBtn && createModal) {
+        createBtn.addEventListener("click", function() {
+            createModal.style.display = "block";
+        });
     }
 
-    // Change Goal Modal
-    var goalModal = document.getElementById('goalModal');
-    var closeGoalModal = document.getElementById('closeGoalModal');
-    closeGoalModal.onclick = function() {
-        goalModal.style.display = 'none';
+    if (createSpan && createModal) {
+        createSpan.addEventListener("click", function() {
+            createModal.style.display = "none";
+        });
     }
-    window.onclick = function(event) {
-        if (event.target == createModal) {
-            createModal.style.display = 'none';
-        }
-        if (event.target == goalModal) {
-            goalModal.style.display = 'none';
-        }
+
+    if (closeGoalModal && goalModal) {
+        closeGoalModal.addEventListener("click", function() {
+            goalModal.style.display = "none";
+        });
     }
+
+    document.querySelectorAll(".goal-btn").forEach(function(button) {
+        button.addEventListener("click", function() {
+            openGoalModal(
+                button.dataset.id,
+                button.dataset.name,
+                button.dataset.goal
+            );
+        });
+    });
+
+    window.addEventListener("click", function(event) {
+        if (event.target === createModal) {
+            createModal.style.display = "none";
+        }
+
+        if (event.target === goalModal) {
+            goalModal.style.display = "none";
+        }
+    });
 });
 
-function openGoalModal(fundId, fundName, goal) {
-    var modal = document.getElementById('goalModal');
-    document.getElementById('goalModalFundId').value = fundId;
-    document.getElementById('goalModalGoal').value = goal;
-    document.getElementById('goalModalTitle').textContent = 'Change Goal for ' + fundName;
-    modal.style.display = 'block';
-    setTimeout(function() {
-        document.getElementById('goalModalGoal').focus();
-    }, 100);
+function openGoalModal(id, name, goal) {
+    document.getElementById("goalModalFundId").value = id;
+    document.getElementById("goalModalGoal").value = goal;
+    document.getElementById("goalModalTitle").textContent = "Change Goal for " + name;
+    document.getElementById("goalModal").style.display = "block";
 }
 </script>
 {{end}}
-    margin-bottom: 30px;
-    flex-wrap: wrap;
-}
-
-.stat-card {
-    background: #2d3748;
-    padding: 20px;
-    border-radius: 8px;
-    flex: 1;
-    min-width: 200px;
-    text-align: center;
-}
-
-.stat-card h3 {
-    margin: 0 0 10px 0;
-    color: #e2e8f0;
-    font-size: 14px;
-    text-transform: uppercase;
-}
-
-.balance, .goal, .rate {
-    font-size: 24px;
-    font-weight: bold;
-    color: #fbbf24;
-    margin: 0;
-}
-
-.projection-section {
-    background: #1a202c;
-    padding: 20px;
-    border-radius: 8px;
-    margin-bottom: 30px;
-}
-
-.goal-projection-section {
-    background: #1a202c;
-    padding: 20px;
-    border-radius: 8px;
-    margin-bottom: 30px;
-    display: grid;
-    grid-template-columns: 1fr 260px;
-    gap: 24px;
-    align-items: start;
-}
-
-.goal-graphic-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 0;
-    width: 240px;
-    min-width: 240px;
-    max-width: 240px;
-    height: 240px;
-    position: relative;
-}
-
-.goal-graphic-card canvas {
-    width: 100% !important;
-    height: 100% !important;
-}
-
-.goal-graphic-header {
-    width: 100%;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    color: #cbd5e0;
-    font-size: 0.95rem;
-}
-
-.goal-graphic-header strong {
-    color: #f7fafc;
-}
-
-.goal-projection-section label {
-    display: block;
-    margin-bottom: 8px;
-    color: #cbd5e0;
-    font-size: 0.95rem;
-}
-
-.goal-projection-section input {
-    width: 100%;
-    max-width: 240px;
-}
-
-.projection-section h3 {
-    margin-top: 0;
-    color: #e2e8f0;
-}
-
-.projection-text {
-    color: #a0aec0;
-    line-height: 1.6;
-    margin: 10px 0;
-}
-
-.projection-text strong {
-    color: #fbbf24;
-}
-
-.warning {
-    color: #f56565;
-    font-weight: bold;
-}
-
-.action-buttons {
-    display: flex;
-    gap: 15px;
-    flex-wrap: wrap;
-}
-
-.btn {
-    padding: 10px 20px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    font-weight: bold;
-    text-decoration: none;
-    display: inline-block;
-}
-
-.btn-primary {
-    background: #3182ce;
-    color: white;
-}
-
-.btn-secondary {
-    background: #e53e3e;
-    color: white;
-}
-
-.btn-outline {
-    background: transparent;
-    color: #3182ce;
-    border: 2px solid #3182ce;
-}
-
-.modal-form {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background: #2d3748;
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    z-index: 1000;
-    min-width: 300px;
-}
-
-.modal-form h3 {
-    margin-top: 0;
-    color: #e2e8f0;
-}
-
-.modal-form .input-group {
-    margin-bottom: 15px;
-}
-
-.modal-form input {
-    width: 100%;
-    padding: 8px;
-    border: 1px solid #4a5568;
-    border-radius: 4px;
-    background: #1a202c;
-    color: #e2e8f0;
-}
-
-.modal-form .btn-submit {
-    background: #3182ce;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 4px;
-    cursor: pointer;
-    margin-right: 10px;
-}
-
-.modal-form button[type="button"] {
-    background: #4a5568;
-    color: #e2e8f0;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
-.date-input-group {
-    margin-bottom: 15px;
-}
-
-.date-summary {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 8px;
-    color: #cbd5e0;
-    font-size: 0.95rem;
-}
-
-.edit-date-btn {
-    background: transparent;
-    color: #63b3ed;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    font-size: 0.95rem;
-    text-decoration: underline;
-}
-
-.date-picker.hidden {
-    display: none;
-}
-</style>
-
-<script>
-function setTodayEmergencyDates() {
-    const today = new Date().toISOString().slice(0, 10);
-    const depositHidden = document.getElementById('depositDateHidden');
-    const depositPicker = document.getElementById('depositDatePicker');
-    const withdrawalHidden = document.getElementById('withdrawalDateHidden');
-    const withdrawalPicker = document.getElementById('withdrawalDatePicker');
-
-    if (depositHidden) {
-        depositHidden.value = today;
-    }
-    if (depositPicker) {
-        depositPicker.value = today;
-    }
-    if (withdrawalHidden) {
-        withdrawalHidden.value = today;
-    }
-    if (withdrawalPicker) {
-        withdrawalPicker.value = today;
-    }
-
-    const depositDateText = document.getElementById('depositDateText');
-    const withdrawalDateText = document.getElementById('withdrawalDateText');
-    if (depositDateText) {
-        depositDateText.textContent = today;
-    }
-    if (withdrawalDateText) {
-        withdrawalDateText.textContent = today;
-    }
-}
-
-function toggleEmergencyDate(type) {
-    const picker = document.getElementById(type + 'DatePicker');
-    if (!picker) {
-        return;
-    }
-    picker.classList.toggle('hidden');
-}
-
-function updateEmergencyDateText(type) {
-    const picker = document.getElementById(type + 'DatePicker');
-    const text = document.getElementById(type + 'DateText');
-    const hidden = document.getElementById(type + 'DateHidden');
-    if (!text || !hidden) {
-        return;
-    }
-
-    const value = picker && picker.value ? picker.value : hidden.value;
-    text.textContent = value;
-    hidden.value = value;
-}
-
-function syncEmergencyDate(type) {
-    const picker = document.getElementById(type + 'DatePicker');
-    const hidden = document.getElementById(type + 'DateHidden');
-    if (!hidden) {
-        return;
-    }
-
-    if (picker && !picker.classList.contains('hidden') && picker.value) {
-        hidden.value = picker.value;
-    }
-}
-
-function showEmergencyDepositForm() {
-    document.getElementById('emergencyDepositForm').style.display = 'block';
-    setTodayEmergencyDates();
-}
-
-function hideEmergencyDepositForm() {
-    document.getElementById('emergencyDepositForm').style.display = 'none';
-}
-
-function showEmergencyWithdrawalForm() {
-    document.getElementById('emergencyWithdrawalForm').style.display = 'block';
-    setTodayEmergencyDates();
-}
-
-function hideEmergencyWithdrawalForm() {
-    document.getElementById('emergencyWithdrawalForm').style.display = 'none';
-}
-
-let emergencyGoalChart;
-
-function renderEmergencyGoalChart() {
-    const goal = parseFloat('{{printf "%.2f" .EmergencyGoal}}');
-    const balance = parseFloat('{{printf "%.2f" .EmergencyBalance}}');
-    if (!goal || !document.getElementById('goalProgressChart')) {
-        return;
-    }
-
-    const remaining = Math.max(0, goal - balance);
-    const progress = goal > 0 ? Math.min(100, (balance / goal) * 100) : 0;
-    const ctx = document.getElementById('goalProgressChart').getContext('2d');
-
-    if (emergencyGoalChart) {
-        emergencyGoalChart.destroy();
-    }
-
-    emergencyGoalChart = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: ['Saved', 'Remaining'],
-            datasets: [{
-                data: [balance, remaining],
-                backgroundColor: ['#38b2ac', '#4a5568'],
-                borderWidth: 0,
-            }]
-        },
-        options: {
-            cutout: '75%',
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            return `${context.label}: $${context.parsed.toFixed(2)}`;
-                        }
-                    }
-                },
-                legend: {
-                    display: false
-                }
-            }
-        }
-    });
-
-    const percentText = document.getElementById('goalProgressPercentText');
-    if (percentText) {
-        percentText.textContent = `${progress.toFixed(0)}%`;
-    }
-}
-
-function updateEmergencyGoalPlan() {
-    const goal = parseFloat('{{printf "%.2f" .EmergencyGoal}}');
-    const balance = parseFloat('{{printf "%.2f" .EmergencyBalance}}');
-    const remaining = Math.max(0, goal - balance);
-    const amountInput = document.getElementById('goalProjectionAmount');
-    const result = document.getElementById('goalProjectionResult');
-
-    if (!amountInput || !result) {
-        return;
-    }
-
-    const monthlyAddition = parseFloat(amountInput.value);
-    if (remaining <= 0) {
-        result.textContent = 'You have already reached your emergency fund goal.';
-        return;
-    }
-
-    if (!monthlyAddition || monthlyAddition <= 0) {
-        result.textContent = `Remaining to goal: $${remaining.toFixed(2)}. Enter a monthly savings amount to see how many months it will take.`;
-        return;
-    }
-
-    const months = remaining / monthlyAddition;
-    let text = `If you stop withdrawing and add $${monthlyAddition.toFixed(2)} per month, you will reach your goal in ${months.toFixed(1)} months.`;
-
-
-    result.textContent = text;
-}
-
-function showEmergencyGoalForm() {
-    document.getElementById('emergencyGoalForm').style.display = 'block';
-}
-
-function hideEmergencyGoalForm() {
-    document.getElementById('emergencyGoalForm').style.display = 'none';
-}
-
-document.addEventListener('DOMContentLoaded', function() {
-    updateEmergencyGoalPlan();
-});
-</script>
