@@ -1,0 +1,130 @@
+{{define "content"}}
+
+{{/*
+  Sign-in page.
+
+  Laid out the way large consumer products do it: a narrow centred card on a plain
+  field, one thing asked at a time, the primary action full width and unmissable,
+  everything secondary demoted to small text beneath it.
+*/}}
+
+<div class="auth-wrapper">
+  <main class="auth-card">
+
+    <div class="auth-brand">
+      <span class="auth-mark" aria-hidden="true">Y</span>
+      <span class="auth-wordmark">YABA</span>
+    </div>
+
+    {{if .Confirming}}
+    <h1 class="auth-title">Create your account</h1>
+    <p class="auth-sub">
+      <strong>{{.Email}}</strong> doesn't have an account yet.
+      Choose a password to finish.
+    </p>
+
+    {{with .Error}}
+    <p class="auth-error" role="alert">
+      <span class="auth-error-mark" aria-hidden="true">!</span>{{.}}
+    </p>
+    {{end}}
+
+    <form method="POST" action="/auth" novalidate>
+      {{template "csrf" .}}
+      <input type="hidden" name="create" value="yes">
+      <input type="hidden" name="email" value="{{.Email}}">
+
+      {{/*
+        Floating label. The input carries placeholder=" " — a single space, not
+        empty — because :placeholder-shown is the only way to detect "this field
+        is empty" in CSS alone, and it needs a placeholder to be showing. The
+        <label> stays a real label throughout, so screen readers and password
+        managers see a properly labelled field; only its position is decorative.
+      */}}
+      <div class="float-field">
+        <input id="new-password" name="password" type="password" placeholder=" "
+               autocomplete="new-password" required minlength="8" maxlength="72"
+               autofocus aria-describedby="new-password-hint">
+        <label for="new-password">Password</label>
+        <button type="button" class="reveal" data-reveal="new-password"
+                aria-label="Show password" aria-pressed="false">
+          {{template "icon" "eye"}}
+        </button>
+      </div>
+      <p class="auth-hint" id="new-password-hint">Use at least 8 characters.</p>
+
+      <div class="float-field">
+        <input id="confirm" name="confirm" type="password" placeholder=" "
+               autocomplete="new-password" required minlength="8" maxlength="72">
+        <label for="confirm">Confirm password</label>
+        <button type="button" class="reveal" data-reveal="confirm"
+                aria-label="Show password" aria-pressed="false">
+          {{template "icon" "eye"}}
+        </button>
+      </div>
+
+      <button type="submit" class="btn-auth">Create account</button>
+    </form>
+
+    <p class="auth-alt"><a href="/">Use a different email</a></p>
+
+    {{else}}
+    <h1 class="auth-title">Sign in</h1>
+    <p class="auth-sub">Track what comes in, plan what goes out.</p>
+
+    {{with .Error}}
+    <p class="auth-error" role="alert">
+      <span class="auth-error-mark" aria-hidden="true">!</span>{{.}}
+    </p>
+    {{end}}
+
+    {{/* One form serves both signing in and signing up: an address with no
+         account is offered one on the next step. The button says "Login" because
+         that is what the user came here to do; the signup path is a branch off
+         it rather than a separate thing to advertise on the button. */}}
+    <form method="POST" action="/auth" novalidate>
+      {{template "csrf" .}}
+
+      <div class="float-field">
+        <input id="email" name="email" type="email" placeholder=" "
+               autocomplete="username email" value="{{.Email}}"
+               required autofocus inputmode="email" spellcheck="false">
+        <label for="email">Email address</label>
+      </div>
+
+      <div class="float-field">
+        <input id="password" name="password" type="password" placeholder=" "
+               autocomplete="current-password" required>
+        <label for="password">Password</label>
+        <button type="button" class="reveal" data-reveal="password"
+                aria-label="Show password" aria-pressed="false">
+          {{template "icon" "eye"}}
+        </button>
+      </div>
+
+      <p class="auth-forgot"><a href="/forgot">Forgot password?</a></p>
+
+      <button type="submit" class="btn-auth">Login</button>
+    </form>
+
+    <div class="auth-divider"><span>New to YABA?</span></div>
+
+    {{/* "Create an account" leads to the same form: signing up here is those same
+         two fields, and an unknown address is offered an account automatically.
+         A separate page would be a second form doing the identical thing. */}}
+    <a class="btn-auth btn-auth-secondary" href="/?new=1">Create an account</a>
+
+    {{if .NewAccount}}
+    <p class="auth-hint auth-hint-centre">
+      Enter your email and choose a password — the account is set up on the next step.
+    </p>
+    {{end}}
+    {{end}}
+
+  </main>
+
+  <p class="auth-foot"><a href="/about">What is YABA?</a></p>
+</div>
+
+<script src="{{asset "auth.js"}}" defer></script>
+{{end}}

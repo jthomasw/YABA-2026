@@ -1,0 +1,725 @@
+{{/*
+  Help copy, one topic per tab. The key matches the panel id minus the "panel-"
+  prefix, which is how ui.js picks the right one from the selected tab.
+*/}}
+{{define "helptopics"}}
+<div class="help-topic" data-topic="current" hidden>
+  <h3>Current Funds</h3>
+  <p class="help-lead">
+    What you actually have left to spend, and how it has moved over time.
+  </p>
+  <ul class="help-list">
+    <li>{{template "icon" "check-circle"}}
+      <span>The figure is <strong>income − expenses − money moved into savings</strong>.
+      It is worked out from your transactions every time the page loads, so it is
+      never a stale number.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>The chart plots your balance day by day. The dashed line is a trend
+      fitted through it — a quick read on whether you are drifting up or down over
+      the period, rather than reacting to one big week.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Moving money to a savings fund lowers this figure but not your net
+      worth: it is a transfer, not spending, so it stays out of your expense
+      totals.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Use <strong>Add Income</strong> and <strong>Add Expense</strong> below
+      to change it, and <strong>Transactions</strong> to see or correct anything
+      already recorded.</span></li>
+  </ul>
+</div>
+
+<div class="help-topic" data-topic="emergency" hidden>
+  <h3>Emergency Fund</h3>
+  <p class="help-lead">
+    Your savings, and whether they would actually carry you through a bad month.
+  </p>
+  <ul class="help-list">
+    <li>{{template "icon" "check-circle"}}
+      <span>The target is <strong>three months of the expenses you marked
+      essential</strong>. Mark them on the <em>Expected Monthly Expenses</em> tab —
+      the target sizes itself from your real bills rather than a round number.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span><strong>Covers</strong> is how many months of essentials the balance
+      would pay for. <strong>Will last</strong> is different: it projects from the
+      rate you have actually been taking money out.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span><strong>Add</strong> moves cash in, <strong>Take out</strong> moves it
+      back. Neither counts as income or spending, so your monthly figures stay
+      honest.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>You can keep several funds — a holiday, a car — each with its own
+      target and a projection of when you will reach it at your current rate.</span></li>
+  </ul>
+</div>
+
+<div class="help-topic" data-topic="income" hidden>
+  <h3>Monthly Income</h3>
+  <p class="help-lead">
+    What you earn, where it comes from, and what to expect next month.
+  </p>
+  <ul class="help-list">
+    <li>{{template "icon" "check-circle"}}
+      <span>The doughnut groups income by the <strong>source</strong> you type in,
+      so keep the wording consistent — "Salary" every month rather than "salary"
+      then "pay".</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Once there are three months of history you get an expected
+      <strong>range</strong> rather than one average, because a single figure is
+      misleading if your income varies.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Adding income automatically funds your recurring expenses, top of the
+      priority list first. Check the result on the
+      <em>Expected Monthly Expenses</em> tab.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Record one with <strong>Add Income</strong> below.</span></li>
+  </ul>
+</div>
+
+<div class="help-topic" data-topic="expenses" hidden>
+  <h3>Monthly Expenses</h3>
+  <p class="help-lead">
+    What you spent, on what, and whether your bills are covered.
+  </p>
+  <ul class="help-list">
+    <li>{{template "icon" "check-circle"}}
+      <span>The doughnut groups spending by the <strong>category</strong> you enter
+      — add $500 of Food and Food becomes a slice. Split a shop trip into items and
+      each one counts under its own category.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>The <strong>essential / non-essential</strong> split under the total is
+      the needs-versus-wants view, and it is what sizes your emergency fund
+      target.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Open <strong>Recurring monthly expenses</strong> to list bills like
+      rent and rank them. Income fills that list from the top down, so you find out
+      you are short <em>before</em> a payment is due — and which bill is at
+      risk.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>A bill that varies, like electricity, learns its own cost from the
+      payments you record against it. Link one on the Add Expense form.</span></li>
+  </ul>
+</div>
+{{end}}
+
+{{define "content"}}
+
+<div class="page-head">
+  <h1>Dashboard</h1>
+
+  <form method="GET" action="/dashboard" class="period-form">
+    <input type="hidden" name="tab" value="{{.Tab}}">
+    <label for="month">Period</label>
+    <select id="month" name="month" onchange="this.form.submit()">
+      <option value="" {{if eq .Month ""}}selected{{end}}>All time</option>
+      {{range .Months}}
+      <option value="{{.}}" {{if eq . $.Month}}selected{{end}}>{{monthName .}}</option>
+      {{end}}
+    </select>
+    <noscript><button type="submit" class="btn btn-quiet">Apply</button></noscript>
+  </form>
+</div>
+
+<div class="tabs" data-tabs data-default="{{.Tab}}">
+
+  {{/*
+    The mockup's four colour-coded cards. They ARE the tabs: selecting one
+    changes the single panel below, and `Current Funds` is the default.
+
+    Real <button role="tab"> elements, so they are reachable by keyboard and
+    announced properly — the old dashboard used <div onclick=...>, which is
+    invisible to a screen reader.
+  */}}
+  <div class="cards tablist" role="tablist" aria-label="Dashboard sections">
+
+    <button type="button" role="tab" class="tab-card tab-current"
+            id="tab-current" aria-controls="panel-current" aria-selected="true">
+      <span class="tab-icon">{{template "icon" "wallet"}}</span>
+      <span class="tab-label">Current Funds</span>
+      <span class="tab-value {{if negative .Cash}}is-negative{{end}}">{{money .Cash}}</span>
+    </button>
+
+    {{/* "(x months)" in the mockup is the cover figure, so it is filled in. */}}
+    <button type="button" role="tab" class="tab-card tab-emergency"
+            id="tab-emergency" aria-controls="panel-emergency" aria-selected="false" tabindex="-1">
+      <span class="tab-icon">{{template "icon" "shield"}}</span>
+      <span class="tab-label">
+        Emergency Fund
+        {{if .Runway.EssentialMonthly}}({{pct .Runway.CoverMonths}} months){{end}}
+      </span>
+      <span class="tab-value">
+        {{money .Runway.Balance}}{{if .Runway.Target}} / {{money .Runway.Target}}{{end}}
+      </span>
+
+      {{/* Every fund, not only the emergency one, as "saved / target".
+           The headline above is the emergency fund alone, because that is what
+           the runway and the months-of-cover figure are about. But this tab owns
+           all savings, and a fund you are actively filling was invisible here
+           until you opened the panel — so each one gets a line of its own.
+
+           Funds with no target show their balance and say so, rather than
+           printing "/ $0.00", which reads as a goal of nothing. */}}
+      {{if .Funds}}
+      <span class="tab-funds">
+        {{range .Funds}}
+        <span class="tab-fund">
+          <span class="tab-fund-name">{{.Name}}</span>
+          <span class="tab-fund-figure">
+            {{money .Balance}}{{if .Goal}} / {{money .Goal}}{{else}} saved{{end}}
+          </span>
+        </span>
+        {{end}}
+      </span>
+      {{end}}
+    </button>
+
+    <button type="button" role="tab" class="tab-card tab-income"
+            id="tab-income" aria-controls="panel-income" aria-selected="false" tabindex="-1">
+      <span class="tab-icon">{{template "icon" "trending-up"}}</span>
+      <span class="tab-label">Income · {{.MonthLabel}}</span>
+      {{/* What was actually earned, not a forecast. The projected range is the
+           sub-line: a figure the user has just entered must be the one they
+           see. */}}
+      <span class="tab-value is-positive">{{money .IncomeTotal}}</span>
+      {{if .IncomeRange.Reliable}}
+      <span class="tab-sub">Expect {{money .IncomeRange.Low}}–{{money .IncomeRange.High}}/mo</span>
+      {{end}}
+    </button>
+
+    <button type="button" role="tab" class="tab-card tab-expenses"
+            id="tab-expenses" aria-controls="panel-expenses" aria-selected="false" tabindex="-1">
+      <span class="tab-icon">{{template "icon" "receipt"}}</span>
+      <span class="tab-label">Expenses · {{.MonthLabel}}</span>
+      <span class="tab-value is-negative">{{money .SpendTotal}}</span>
+      {{if .Buckets}}
+      <span class="tab-sub">{{money .Allocation.Required}}/mo recurring</span>
+      {{end}}
+    </button>
+  </div>
+
+  <!-- ══ CURRENT FUNDS ══════════════════════════════════════════════════════ -->
+  <section role="tabpanel" id="panel-current" aria-labelledby="tab-current" tabindex="0">
+    <div class="panel-frame">
+      {{if .Charts.BalanceLabels}}
+      <div class="chart-box chart-box-tall">
+        <canvas id="chart-balance"
+                data-labels="{{jsonAttr .Charts.BalanceLabels}}"
+                data-values="{{jsonAttr .Charts.BalanceValues}}"
+                data-trend="{{jsonAttr .Charts.TrendValues}}"
+                role="img"
+                aria-label="Current funds over time, with a trend line"></canvas>
+      </div>
+      {{/* The trend the mockup asks for, also in words: a canvas is opaque to
+           assistive technology. */}}
+      <p class="projection {{if .Trend.OK}}{{if .Trend.Rising}}is-ontrack{{else}}is-behind{{end}}{{end}}">
+        {{.Trend.Note}}
+      </p>
+      {{else}}
+      <div class="panel-centre">
+        <p>This will show a line chart of your current funds over time.</p>
+        <p class="stat-note">Add some income and expenses to get started.</p>
+        {{if .Role.CanEditEntries}}
+        <a class="btn btn-primary" href="/income">Add your first income</a>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+
+    {{template "actionbar" .}}
+  </section>
+
+  <!-- ══ EMERGENCY FUND ═════════════════════════════════════════════════════ -->
+  {{/*
+    This tab owns every savings fund, not only the emergency one. Money set aside
+    IS the emergency fund from the user's point of view, so a separate Savings
+    page was two names for one idea.
+  */}}
+  <section role="tabpanel" id="panel-emergency" aria-labelledby="tab-emergency" tabindex="0" hidden>
+    <div class="panel-frame">
+
+      <div class="panel-total">
+        <span class="panel-total-label">Emergency fund</span>
+        <span class="panel-total-value">{{money .Runway.Balance}}</span>
+        {{if .Runway.Target}}
+        <span class="panel-total-sub">
+          of a {{money .Runway.Target}} target ({{.Runway.TargetMonths}} months of essentials)
+        </span>
+        {{end}}
+      </div>
+
+      {{with .Runway.Warning}}
+      <p class="insight insight-alert" role="alert">{{.}}</p>
+      {{end}}
+
+      {{if .Runway.Target}}
+      <div class="progress progress-wide" role="progressbar"
+           aria-valuenow="{{pctInt .Runway.TargetProgress}}" aria-valuemin="0" aria-valuemax="100"
+           aria-label="Progress towards the emergency fund target">
+        <div class="progress-bar {{if .Runway.Adequate}}is-complete{{end}}"
+             style="width: {{pct .Runway.TargetProgress}}%"></div>
+      </div>
+      {{end}}
+
+      <dl class="figure-row">
+        <div>
+          <dt>Covers</dt>
+          <dd>{{if .Runway.EssentialMonthly}}{{pct .Runway.CoverMonths}} months{{else}}—{{end}}</dd>
+        </div>
+        <div>
+          <dt>Essentials</dt>
+          <dd>{{money .Runway.EssentialMonthly}}/mo</dd>
+        </div>
+        <div>
+          <dt>Withdrawing</dt>
+          <dd>{{if .Runway.Depleting}}{{money .Runway.BurnRate}}/mo{{else}}—{{end}}</dd>
+        </div>
+        <div>
+          <dt>Will last</dt>
+          <dd>{{if .Runway.Depleting}}{{pct .Runway.Months}} months{{else}}—{{end}}</dd>
+        </div>
+      </dl>
+
+      {{/* The projection the wireframe asks for: how long the fund lasts at the
+           rate money is actually being taken out of it. */}}
+      <p class="projection">{{.Runway.Note}}</p>
+
+      <p class="stat-note">
+        The target is {{.Runway.TargetMonths}} months of the recurring expenses you
+        marked <strong>essential</strong>. Change which ones count on the
+        <a href="?tab=expenses">Expected Monthly Expenses</a> tab.
+      </p>
+
+      <!-- ── every fund ────────────────────────────────────────────────────── -->
+      <h3 class="panel-subhead">
+        Your funds — {{money .Totals.Saved}} set aside, {{money .Totals.Cash}} available to move
+      </h3>
+
+      {{if .Funds}}
+      <div class="fund-grid">
+        {{range .Funds}}
+        <div class="card fund {{if .IsEmergency}}fund-emergency{{end}}">
+          <div class="fund-head">
+            <h4>
+              {{.Name}}
+              {{if .IsEmergency}}<span class="tag tag-essential">emergency</span>{{end}}
+            </h4>
+            <p class="fund-balance">{{money .Balance}}</p>
+          </div>
+
+          {{if .HasGoal}}
+          <div class="progress" role="progressbar"
+               aria-valuenow="{{pctInt .Progress}}" aria-valuemin="0" aria-valuemax="100"
+               aria-label="Progress towards {{money .Goal}}">
+            <div class="progress-bar {{if .Complete}}is-complete{{end}}"
+                 style="width: {{pct .Progress}}%"></div>
+          </div>
+          <p class="stat-note">
+            {{pctInt .Progress}}% of {{money .Goal}} · {{money .Remaining}} to go
+          </p>
+          {{end}}
+
+          <p class="projection">{{.Projection.Note}}</p>
+
+          {{/* Moving money in or out of a fund is the owner's alone -- see
+               store.Role.CanMoveFunds for why this is stricter than editing an
+               expense. An editor still sees the balance and the target. */}}
+          {{if $.Role.CanMoveFunds}}
+          <div class="fund-actions">
+            <form method="POST" action="/funds/{{.ID}}/deposit" class="inline-form">
+              {{template "csrf" $}}
+              <label class="visually-hidden" for="dep-{{.ID}}">Add to {{.Name}}</label>
+              <input id="dep-{{.ID}}" name="amount" type="number" step="0.01" min="0.01"
+                     inputmode="decimal" placeholder="0.00" required>
+              <button type="submit" class="btn btn-small btn-income">Add</button>
+            </form>
+
+            {{/* The old app had no withdrawal path at all: the only way to get
+                 money out was to delete the whole fund, which is where the
+                 money-minting exploit lived. */}}
+            <form method="POST" action="/funds/{{.ID}}/withdraw" class="inline-form">
+              {{template "csrf" $}}
+              <label class="visually-hidden" for="wd-{{.ID}}">Take out of {{.Name}}</label>
+              <input id="wd-{{.ID}}" name="amount" type="number" step="0.01" min="0.01"
+                     inputmode="decimal" placeholder="0.00" required>
+              <button type="submit" class="btn btn-small">Take out</button>
+            </form>
+          </div>
+          {{else if $.Shared}}
+          <p class="stat-note">Only the owner can move money in or out of this fund.</p>
+          {{end}}
+
+          {{if $.Role.CanEditEntries}}
+          <details class="fund-settings">
+            <summary>Edit target</summary>
+            <form method="POST" action="/funds/{{.ID}}/goal" class="row-form">
+              {{template "csrf" $}}
+              <div class="field">
+                <label for="fname-{{.ID}}">Name</label>
+                <input id="fname-{{.ID}}" name="name" type="text" value="{{.Name}}" maxlength="40">
+              </div>
+              <div class="field">
+                <label for="fgoal-{{.ID}}">Target</label>
+                <input id="fgoal-{{.ID}}" name="goal" type="number" step="0.01" min="0"
+                       inputmode="decimal" value="{{amount .Goal}}">
+              </div>
+              <div class="field">
+                <label for="fmon-{{.ID}}">Within (months)</label>
+                <input id="fmon-{{.ID}}" name="target_months" type="number" min="0" max="600"
+                       value="{{.TargetMonths}}">
+              </div>
+              <button type="submit" class="btn btn-small btn-primary">Save</button>
+            </form>
+
+            {{/* No close button on the emergency fund: this tab needs it to exist,
+                 and closing it would only cause it to be recreated.
+
+                 Closing returns the balance to cash, so it is a money movement
+                 and belongs to the owner rather than to any editor. */}}
+            {{if and (not .IsEmergency) $.Role.CanMoveFunds}}
+            <form method="POST" action="/funds/{{.ID}}/close" class="inline-form danger-form"
+                  data-confirm="Close &quot;{{.Name}}&quot;? Any remaining {{money .Balance}} returns to available cash.">
+              {{template "csrf" $}}
+              <button type="submit" class="btn btn-small btn-danger">Close fund</button>
+            </form>
+            {{end}}
+          </details>
+          {{end}}
+        </div>
+        {{end}}
+      </div>
+      {{end}}
+
+      {{if .Role.CanEditEntries}}
+      <details class="fund-add">
+        <summary>New savings fund</summary>
+        <form method="POST" action="/funds" class="row-form">
+          {{template "csrf" .}}
+          <div class="field">
+            <label for="new-fund-name">Name</label>
+            <input id="new-fund-name" name="name" type="text" required maxlength="40"
+                   placeholder="Holiday">
+          </div>
+          <div class="field">
+            <label for="new-fund-goal">Target amount</label>
+            <input id="new-fund-goal" name="goal" type="number" step="0.01" min="0"
+                   inputmode="decimal" placeholder="Optional">
+          </div>
+          <div class="field">
+            <label for="new-fund-months">Within (months)</label>
+            <input id="new-fund-months" name="target_months" type="number" min="0" max="600"
+                   placeholder="Optional">
+          </div>
+          <button type="submit" class="btn btn-primary">Create fund</button>
+        </form>
+      </details>
+      {{end}}
+    </div>
+
+    {{template "actionbar" .}}
+  </section>
+
+  <!-- ══ EXPECTED MONTHLY INCOME ════════════════════════════════════════════ -->
+  <section role="tabpanel" id="panel-income" aria-labelledby="tab-income" tabindex="0" hidden>
+    <div class="panel-frame">
+
+      <div class="panel-total">
+        <span class="panel-total-label">Total income · {{.MonthLabel}}</span>
+        <span class="panel-total-value is-positive">{{money .IncomeTotal}}</span>
+        {{if .IncomeRange.Reliable}}
+        <span class="panel-total-sub">
+          Expect {{money .IncomeRange.Low}}–{{money .IncomeRange.High}} a month
+        </span>
+        {{end}}
+      </div>
+
+      {{if .Charts.MonthLabels}}
+      <div class="panel-charts">
+        <div class="panel-chart">
+          <h3>Income by source</h3>
+          {{if .Charts.IncomeLabels}}
+          <div class="chart-box">
+            <canvas id="chart-income"
+                    data-labels="{{jsonAttr .Charts.IncomeLabels}}"
+                    data-values="{{jsonAttr .Charts.IncomeValues}}"
+                    data-palette="income"
+                    role="img" aria-label="Income by source"></canvas>
+          </div>
+          {{else}}
+          <div class="empty-state">
+            <span class="empty-icon">{{template "icon" "chart"}}</span>
+            <p class="empty-title">No income data yet</p>
+          </div>
+          {{end}}
+        </div>
+
+        <div class="panel-chart">
+          <h3>Change over time</h3>
+          {{/* "It should show a chart visualising the change in income over
+               time." */}}
+          <div class="chart-box">
+            <canvas id="chart-monthly"
+                    data-labels="{{jsonAttr .Charts.MonthLabels}}"
+                    data-income="{{jsonAttr .Charts.MonthIncome}}"
+                    data-expense="{{jsonAttr .Charts.MonthExpense}}"
+                    role="img"
+                    aria-label="Income compared with spending, by month"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <p class="projection">{{.IncomeRange.Note}}</p>
+
+      {{if .IncomeBySource}}
+      {{/* The same figures in text: a canvas is opaque to assistive technology,
+           and exact amounts are easier to read from a table. */}}
+      <div class="table-scroll">
+        <table class="table table-compact">
+          <thead>
+            <tr><th scope="col">Source</th><th scope="col" class="num">Total</th></tr>
+          </thead>
+          <tbody>
+            {{range .IncomeBySource}}
+            <tr>
+              <th scope="row">{{if .Label}}{{.Label}}{{else}}Unlabelled{{end}}</th>
+              <td class="num">{{money .Total}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{end}}
+      {{else}}
+      <div class="panel-centre">
+        <p>This will show how your income changes over time.</p>
+        <p class="stat-note">
+          Once there are a few months of income, an expected range appears here too.
+        </p>
+        {{if .Role.CanEditEntries}}
+        <a class="btn btn-primary" href="/transactions/new?type=income">Add Income</a>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+
+    {{template "actionbar" .}}
+  </section>
+
+  <!-- ══ MONTHLY EXPENSES ═══════════════════════════════════════════════════ -->
+  <section role="tabpanel" id="panel-expenses" aria-labelledby="tab-expenses" tabindex="0" hidden>
+    <div class="panel-frame">
+
+      {{/* The headline figure, matching the income tab: what was actually spent
+           in the selected period. */}}
+      <div class="panel-total">
+        <span class="panel-total-label">Total expenses · {{.MonthLabel}}</span>
+        <span class="panel-total-value is-negative">{{money .SpendTotal}}</span>
+        {{if .Essential}}
+        <span class="panel-total-sub">
+          {{money .Essential}} essential · {{money .NonEssent}} non-essential
+        </span>
+        {{end}}
+      </div>
+
+      <div class="panel-chart">
+        <h3>Where it went</h3>
+        {{if .Charts.SpendLabels}}
+        <div class="chart-box">
+          <canvas id="chart-spend"
+                  data-labels="{{jsonAttr .Charts.SpendLabels}}"
+                  data-values="{{jsonAttr .Charts.SpendValues}}"
+                  data-palette="expense"
+                  role="img" aria-label="Spending by category"></canvas>
+        </div>
+
+        {{/* The same figures in text: a canvas is opaque to assistive
+             technology, and exact amounts are easier to read from a table. */}}
+        <div class="table-scroll">
+          <table class="table table-compact">
+            <thead>
+              <tr><th scope="col">Category</th><th scope="col" class="num">Total</th></tr>
+            </thead>
+            <tbody>
+              {{range .SpendByCategory}}
+              <tr>
+                <th scope="row">{{if .Label}}{{.Label}}{{else}}Unlabelled{{end}}</th>
+                <td class="num">{{money .Total}}</td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+        {{else}}
+        <div class="empty-state">
+          <span class="empty-icon">{{template "icon" "chart"}}</span>
+          <p class="empty-title">No expense data yet</p>
+          <p class="stat-note">Add an expense and this chart will fill in.</p>
+        </div>
+        {{end}}
+      </div>
+
+      {{/*
+        The recurring-expense planner, and the form for adding to it, are both
+        inside this collapsed section. They are a planning tool; the question this
+        tab opens on is "what did I spend", so the form no longer sits out on the
+        tab competing with the chart.
+      */}}
+      <details class="bucket-planner">
+        <summary>
+          {{if .Buckets}}Recurring monthly expenses ({{len .Buckets}})
+          {{else}}Set up recurring monthly expenses{{end}}
+        </summary>
+
+        {{if .Buckets}}
+        <div class="alloc-summary">
+          <span>Required <strong>{{money .Allocation.Required}}</strong></span>
+          <span>Funded <strong class="is-positive">{{money .Allocation.Allocated}}</strong></span>
+          <span>Short <strong {{if .Allocation.Shortfall}}class="is-negative"{{end}}>{{money .Allocation.Shortfall}}</strong></span>
+          <span>Uncommitted <strong>{{money .Allocation.Unassigned}}</strong></span>
+        </div>
+
+        {{/* Ranked by which must be paid first: income fills the list from the
+             top down until everything is covered or the money runs out. */}}
+        <ol class="bucket-list">
+          {{range $i, $b := .Buckets}}
+          <li class="bucket bucket-{{$b.Status}}">
+            {{/* A viewer sees the ranking but cannot change it, so the arrows go
+                 and the number stays -- the priority order is information, not
+                 just a control. */}}
+            <div class="bucket-rank">
+              {{if $.Role.CanEditEntries}}
+              <form method="POST" action="/buckets/{{$b.ID}}/up" class="inline-form">
+                {{template "csrf" $}}
+                <button type="submit" class="btn btn-tiny" {{if eq $i 0}}disabled{{end}}
+                        aria-label="Move {{$b.Name}} up">↑</button>
+              </form>
+              {{end}}
+              <span class="rank-number" aria-hidden="true">{{add $i 1}}</span>
+              {{if $.Role.CanEditEntries}}
+              <form method="POST" action="/buckets/{{$b.ID}}/down" class="inline-form">
+                {{template "csrf" $}}
+                <button type="submit" class="btn btn-tiny"
+                        {{if eq (add $i 1) (len $.Buckets)}}disabled{{end}}
+                        aria-label="Move {{$b.Name}} down">↓</button>
+              </form>
+              {{end}}
+            </div>
+
+            <div class="bucket-body">
+              <div class="bucket-head">
+                <h3>
+                  {{$b.Name}}
+                  <span class="tag">{{$b.CostKind.Label}}</span>
+                  {{if $b.Essential}}<span class="tag tag-essential">essential</span>{{end}}
+                </h3>
+                <p>
+                  {{money $b.Allocated}} of {{money $b.Due}}
+                  {{if $b.Funded}}
+                  <span class="is-positive">funded</span>
+                  {{else}}
+                  <strong class="is-negative">{{money $b.Shortfall}} short</strong>
+                  {{end}}
+                </p>
+              </div>
+
+              <div class="progress" role="progressbar"
+                   aria-valuenow="{{pctInt $b.Progress}}" aria-valuemin="0" aria-valuemax="100"
+                   aria-label="{{$b.Name}} funding">
+                <div class="progress-bar" style="width: {{pct $b.Progress}}%"></div>
+              </div>
+
+              <p class="stat-note">
+                {{if eq $b.CostKind "variable"}}
+                  {{if $b.Spent}}{{money $b.Spent}} paid so far this month.
+                  {{else}}Estimated at {{money $b.Estimate}} from previous months.{{end}}
+                  {{if ne $b.Low $b.High}} Usually {{money $b.Low}}–{{money $b.High}}.{{end}}
+                {{else}}
+                  Fixed at {{money $b.Fixed}} a month.
+                  {{if $b.Spent}} {{money $b.Spent}} paid so far.{{end}}
+                {{end}}
+              </p>
+
+              {{if $.Role.CanEditEntries}}
+              <details class="bucket-settings">
+                <summary>Edit</summary>
+                <form method="POST" action="/buckets/{{$b.ID}}/edit" class="row-form">
+                  {{template "csrf" $}}
+                  <div class="field">
+                    <label for="bname-{{$b.ID}}">Name</label>
+                    <input id="bname-{{$b.ID}}" name="name" type="text" value="{{$b.Name}}" required maxlength="40">
+                  </div>
+                  <div class="field">
+                    <label for="bkind-{{$b.ID}}">Cost</label>
+                    <select id="bkind-{{$b.ID}}" name="cost_kind">
+                      <option value="fixed" {{if eq $b.CostKind "fixed"}}selected{{end}}>Fixed each month</option>
+                      <option value="variable" {{if eq $b.CostKind "variable"}}selected{{end}}>Varies each month</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="bamt-{{$b.ID}}">Amount</label>
+                    <input id="bamt-{{$b.ID}}" name="amount" type="number" step="0.01" min="0"
+                           inputmode="decimal" value="{{amount $b.Fixed}}">
+                    <p class="hint">Ignored for a varying cost.</p>
+                  </div>
+                  <div class="field">
+                    <label class="radio">
+                      <input type="checkbox" name="essential" value="yes" {{if $b.Essential}}checked{{end}}>
+                      Essential
+                    </label>
+                  </div>
+                  <button type="submit" class="btn btn-small btn-primary">Save</button>
+                </form>
+
+                <form method="POST" action="/buckets/{{$b.ID}}/archive" class="inline-form danger-form"
+                      data-confirm="Remove &quot;{{$b.Name}}&quot;? Its history is kept.">
+                  {{template "csrf" $}}
+                  <button type="submit" class="btn btn-small btn-danger">Remove</button>
+                </form>
+              </details>
+              {{end}}
+            </div>
+          </li>
+          {{end}}
+        </ol>
+
+        <p class="projection">{{.ExpenseRange.Note}}</p>
+
+        {{if .Role.CanEditEntries}}
+        <form method="POST" action="/buckets/reallocate" class="inline-form">
+          {{template "csrf" .}}
+          <input type="hidden" name="month" value="{{if .Month}}{{.Month}}{{else}}{{.ThisMonth}}{{end}}">
+          <button type="submit" class="btn btn-small btn-quiet">Recalculate funding</button>
+        </form>
+        {{end}}
+        {{else}}
+        <p class="stat-note">
+          Rent, a car payment, a utility bill — list the ones that recur and rank
+          them by which must be paid first. Income then fills the list from the top
+          down until everything is covered or the money runs out.
+        </p>
+        {{end}}
+
+        {{if .Role.CanEditEntries}}
+        <div class="bucket-add-inner">
+          <h3>Add a recurring expense</h3>
+          {{template "bucketform" .}}
+        </div>
+        {{end}}
+      </details>
+    </div>
+
+    {{template "actionbar" .}}
+  </section>
+</div>
+
+{{/*
+  Chart.js is pinned to an exact version rather than a bare "chart.js" URL, which
+  resolved to whatever the latest release happened to be.
+
+  TODO(kushith): add integrity="sha384-..." here. It needs the real hash of this
+  exact file, computed from the downloaded asset — an invented value would block
+  the script and silently kill every chart. Get it from https://www.srihash.org/
+  or vendor the file into /static.
+*/}}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+        crossorigin="anonymous"></script>
+<script src="{{asset "dashboard.js"}}" defer></script>
+{{end}}

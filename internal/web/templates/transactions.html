@@ -1,0 +1,194 @@
+{{define "helptopics"}}
+<div class="help-topic" data-topic="_">
+  <h3>Transactions</h3>
+  <p class="help-lead">Everything you have recorded, and the place to correct it.</p>
+  <ul class="help-list">
+    <li>{{template "icon" "check-circle"}}
+      <span>Filter by type, month, or search the description. The filters carry
+      through to <strong>Export CSV</strong>, so what you download is exactly what
+      is on screen.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span><strong>Edit</strong> a typo rather than deleting and retyping — an
+      edit keeps the entry in its original place in your history.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Rows tagged <em>To savings</em> or <em>From savings</em> are transfers
+      between your own pots. They cannot be edited here, because that would put a
+      fund's balance out of step with the cash that filled it — use Add or Take out
+      on the <a href="/dashboard?tab=emergency">Emergency Fund</a> tab
+      instead.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Anything you change here immediately updates the dashboard totals and
+      recalculates which bills are funded.</span></li>
+  </ul>
+</div>
+{{end}}
+
+{{define "content"}}
+
+<div class="page-head">
+  <h1>Transactions</h1>
+  {{/* A viewer gets no Add buttons. The condition is store.Role.CanEditEntries,
+       the same method the canEdit middleware calls, so the button and the route
+       can never disagree about who may use it. */}}
+  <div class="panel-actions">
+    {{if .Role.CanEditEntries}}
+    <a class="btn btn-primary" href="/transactions/new?type=income">Add Income</a>
+    {{end}}
+    <a class="btn btn-quiet" href="/dashboard">Dashboard</a>
+    {{if .Role.CanEditEntries}}
+    <a class="btn btn-primary" href="/import">Add Expense</a>
+    {{end}}
+  </div>
+</div>
+
+<form method="GET" action="/transactions" class="card filter-form">
+  <div class="field">
+    <label for="type">Type</label>
+    <select id="type" name="type">
+      {{range .Kinds}}
+      <option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>
+      {{end}}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="month">Month</label>
+    <select id="month" name="month">
+      <option value="" {{if eq .Filter.Month ""}}selected{{end}}>All time</option>
+      {{range .Months}}
+      <option value="{{.}}" {{if eq . $.Filter.Month}}selected{{end}}>{{monthName .}}</option>
+      {{end}}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="q">Search description</label>
+    <input id="q" name="q" type="search" value="{{.SearchText}}" placeholder="e.g. Food">
+  </div>
+
+  <div class="filter-actions">
+    <button type="submit" class="btn btn-primary">Filter</button>
+    <a class="btn btn-quiet" href="/transactions">Clear</a>
+  </div>
+</form>
+
+<div class="card">
+  <div class="list-head">
+    <p class="stat-note" role="status">
+      {{if .Total}}
+      Showing {{.From}}–{{.To}} of {{.Total}}
+      {{else}}
+      No matching transactions
+      {{end}}
+    </p>
+    {{if .Total}}
+    <!-- Export honours the active filters, so "this month's expenses" exports
+         exactly what is on screen. -->
+    <a class="btn btn-small btn-quiet"
+       href="/transactions/export.csv?type={{.Filter.Kind}}&month={{.Filter.Month}}&q={{.SearchText}}">
+      Export CSV
+    </a>
+    {{end}}
+  </div>
+
+  {{if .Transactions}}
+  <div class="table-scroll">
+    <table class="table table-transactions">
+      <caption class="visually-hidden">Your transactions, newest first</caption>
+      <thead>
+        <tr>
+          <th scope="col">Date</th>
+          <th scope="col">Type</th>
+          <th scope="col">Description</th>
+          <th scope="col" class="num">Amount</th>
+          <th scope="col">Essential</th>
+          <th scope="col"><span class="visually-hidden">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Transactions}}
+        <tr>
+          <!-- data-label drives the stacked mobile layout in CSS, so the table
+               becomes a readable list on a narrow screen instead of scrolling
+               sideways. -->
+          <td data-label="Date">{{dateName .OccurredOn}}</td>
+          <td data-label="Type"><span class="tag tag-{{.Kind}}">{{.Kind.Label}}</span></td>
+          <td data-label="Description">
+            {{if .Label}}{{.Label}}{{else}}<span class="stat-note">Unlabelled</span>{{end}}
+            {{if .BucketName}}<span class="tag tag-bucket">{{.BucketName}}</span>{{end}}
+            {{if .Split}}<span class="tag">{{.LineItemCount}} items</span>{{end}}
+            {{if .ReceiptPath}}
+            <a class="receipt-link" href="/transactions/{{.ID}}/receipt">receipt</a>
+            {{end}}
+
+            {{/* The optional Ws, shown only when they were filled in, so an
+                 entry typed in a hurry does not render three empty lines.
+
+                 "Added by" joins them only in a shared budget, and is not a
+                 column of its own: a column would be a header and a blank cell
+                 on every row for the many people using YABA alone. */}}
+            {{if or .HasDetail (and $.Shared .AddedBy)}}
+            <div class="tx-detail">
+              {{if .Payee}}<span><strong>Who:</strong> {{.Payee}}</span>{{end}}
+              {{if .Place}}<span><strong>Where:</strong> {{.Place}}</span>{{end}}
+              {{if .Note}}<span><strong>Why:</strong> {{.Note}}</span>{{end}}
+              {{if and $.Shared .AddedBy}}
+              <span class="tx-author"><strong>Added by:</strong> {{.AddedBy}}</span>
+              {{end}}
+            </div>
+            {{end}}
+          </td>
+          <td data-label="Amount" class="num {{if negative .SignedAmount}}is-negative{{else}}is-positive{{end}}">
+            {{signed .SignedAmount}}
+          </td>
+          <td data-label="Essential">{{.EssentialText}}</td>
+          <td class="row-actions">
+            {{if .Kind.IsTransfer}}
+            <!-- Transfers have no edit or delete: changing one would leave the
+                 fund balance it feeds out of step with the cash side. -->
+            <span class="stat-note">Savings transfer</span>
+            {{else if not $.Role.CanEditEntries}}
+            <span class="stat-note">View only</span>
+            {{else}}
+            <a class="btn btn-small btn-quiet" href="/transactions/{{.ID}}/edit">Edit</a>
+            <!-- POST, not a link. The old route was
+                 GET /delete-transaction?id=N, which any prefetch or embedded
+                 image could fire. -->
+            <form method="POST" action="/transactions/{{.ID}}/delete"
+                  class="inline-form danger-form"
+                  data-confirm="Delete this {{.Kind.Label}} of {{money .Amount}}?">
+              {{template "csrf" $}}
+              <input type="hidden" name="back" value="/transactions?page={{$.Page}}">
+              <button type="submit" class="btn btn-small btn-danger">Delete</button>
+            </form>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  {{if gt .TotalPages 1}}
+  <nav class="pagination" aria-label="Pages">
+    {{if .PrevQuery}}
+    <a class="btn btn-small btn-quiet" href="/transactions?{{.PrevQuery}}" rel="prev">Previous</a>
+    {{else}}
+    <span class="btn btn-small btn-disabled" aria-disabled="true">Previous</span>
+    {{end}}
+
+    <span class="page-count">Page {{.Page}} of {{.TotalPages}}</span>
+
+    {{if .NextQuery}}
+    <a class="btn btn-small btn-quiet" href="/transactions?{{.NextQuery}}" rel="next">Next</a>
+    {{else}}
+    <span class="btn btn-small btn-disabled" aria-disabled="true">Next</span>
+    {{end}}
+  </nav>
+  {{end}}
+
+  {{else}}
+  {{template "empty" "Nothing matches these filters. Try clearing them, or add your first entry."}}
+  {{end}}
+</div>
+{{end}}

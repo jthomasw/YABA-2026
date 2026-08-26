@@ -1,0 +1,57 @@
+{{define "content"}}
+<div class="form-wrapper">
+  <div class="card form-card">
+
+    {{if .Invalid}}
+    <h1>That link no longer works</h1>
+    <p class="callout callout-warn">
+      Reset links last one hour and can only be used once. This one has expired,
+      has already been used, or was not complete when it was copied.
+    </p>
+    <p>Ask for a new one and it will arrive in a moment.</p>
+    <div class="form-actions">
+      <a class="btn btn-primary" href="/forgot">Send a new link</a>
+      <a class="btn btn-quiet" href="/">Back to sign in</a>
+    </div>
+
+    {{else}}
+    <h1>Choose a new password</h1>
+    <p class="stat-note">Setting a new password for <strong>{{.Email}}</strong>.</p>
+
+    {{if .Error}}
+    <p class="field-error" role="alert">{{.Error}}</p>
+    {{end}}
+
+    <form method="POST" action="/reset" novalidate>
+      {{template "csrf" .}}
+      {{/* The token travels in the form as well as the URL, so submitting does
+           not depend on the query string surviving the round trip. */}}
+      <input type="hidden" name="token" value="{{.Token}}">
+
+      <div class="field">
+        <label for="password">New password</label>
+        <input id="password" name="password" type="password"
+               autocomplete="new-password" minlength="8" required autofocus>
+        <p class="hint">At least 8 characters.</p>
+      </div>
+
+      <div class="field">
+        <label for="confirm">Type it again</label>
+        <input id="confirm" name="confirm" type="password"
+               autocomplete="new-password" minlength="8" required>
+      </div>
+
+      <p class="callout callout-info">
+        Every device signed in to this account will be signed out, including this
+        one. You will need to sign in again with the new password.
+      </p>
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Save new password</button>
+        <a class="btn btn-quiet" href="/">Cancel</a>
+      </div>
+    </form>
+    {{end}}
+  </div>
+</div>
+{{end}}

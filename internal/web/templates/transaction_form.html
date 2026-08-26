@@ -1,0 +1,245 @@
+{{define "helptopics"}}
+<div class="help-topic" data-topic="_">
+  <h3>Edit an entry</h3>
+  <p class="help-lead">Change something already recorded, without losing its place.</p>
+  <ul class="help-list">
+    <li>{{template "icon" "check-circle"}}
+      <span>Editing keeps the entry where it is in your history, which
+      deleting-and-retyping would not.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Changing the amount or the date recalculates your totals and which
+      recurring bills are funded for that month.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Back to the list under
+      <a href="/transactions">Transactions</a>.</span></li>
+  </ul>
+</div>
+{{end}}
+
+{{define "content"}}
+
+<div class="form-wrapper form-wrapper-wide">
+  <div class="card form-card">
+    <h1>{{if .Editing}}Edit entry{{else if eq .Kind "income"}}Add Income{{else}}Add Expense{{end}}</h1>
+
+    {{with .Error}}
+    <p class="field-error" role="alert">{{.}}</p>
+    {{end}}
+
+    <form method="POST" action="{{.Action}}" enctype="multipart/form-data" novalidate>
+      {{/* One-time token: a double click, a slow tap repeated, or the back
+           button followed by Save would otherwise record this money twice.
+           Spent on the first successful submit. */}}
+      {{if .FormToken}}<input type="hidden" name="form_token" value="{{.FormToken}}">{{end}}
+      {{template "csrf" .}}
+
+      <fieldset class="field">
+        <legend>Type</legend>
+        <div class="radio-row">
+          <label class="radio">
+            <input type="radio" name="kind" value="expense" {{if ne .Kind "income"}}checked{{end}}
+                   data-toggle-expense>
+            Expense
+          </label>
+          <label class="radio">
+            <input type="radio" name="kind" value="income" {{if eq .Kind "income"}}checked{{end}}
+                   data-toggle-income>
+            Income
+          </label>
+        </div>
+      </fieldset>
+
+      {{/*
+        The wireframe's Add Income form is Source / Date / Amount. Its Add Expense
+        form is the five Ws: Who / What / When / Where / Why / Amount. Both are
+        served here, with the expense-only fields hidden when Income is selected —
+        the alternative, two nearly identical templates, is how the old codebase
+        ended up with an edit path that silently dropped fields.
+      */}}
+
+      <div class="field" data-expense-only {{if eq .Kind "income"}}hidden{{end}}>
+        <label for="payee">Who?</label>
+        <input id="payee" name="payee" type="text" maxlength="60" value="{{.Payee}}"
+               placeholder="Tesco, landlord, dentist…">
+        <p class="hint">Who was paid. Optional.</p>
+      </div>
+
+      <div class="field">
+        <label for="label" data-label-expense="What?" data-label-income="Source">
+          {{if eq .Kind "income"}}Source{{else}}What?{{end}}
+        </label>
+        <input id="label" name="label" type="text" required maxlength="60"
+               value="{{.Label}}" list="category-options"
+               placeholder="{{if eq .Kind "income"}}Salary{{else}}Food{{end}}">
+        <datalist id="category-options">
+          {{range .Categories}}<option value="{{.}}"></option>{{end}}
+        </datalist>
+        <p class="hint" data-hint-expense="The category this belongs to."
+           data-hint-income="Where the money came from.">
+          {{if eq .Kind "income"}}Where the money came from.{{else}}The category this belongs to.{{end}}
+        </p>
+      </div>
+
+      <div class="field">
+        <label for="date">{{if eq .Kind "income"}}Date{{else}}When?{{end}}</label>
+        <input id="date" name="date" type="date" required value="{{.OccurredOn}}" max="2200-12-31">
+      </div>
+
+      <div class="field" data-expense-only {{if eq .Kind "income"}}hidden{{end}}>
+        <label for="place">Where?</label>
+        <input id="place" name="place" type="text" maxlength="60" value="{{.Place}}"
+               placeholder="High Street, online…">
+        <p class="hint">Optional.</p>
+      </div>
+
+      <div class="field" data-expense-only {{if eq .Kind "income"}}hidden{{end}}>
+        <label for="note">Why?</label>
+        <textarea id="note" name="note" rows="2" maxlength="500"
+                  placeholder="Weekly shop">{{.Note}}</textarea>
+        <p class="hint">Optional. Useful when you look back in six months.</p>
+      </div>
+
+      <div class="field">
+        <label for="amount">Amount</label>
+        <input id="amount" name="amount" type="number" step="0.01" min="0.01"
+               inputmode="decimal" required value="{{.Amount}}" placeholder="0.00">
+        <p class="hint">Up to two decimal places.</p>
+      </div>
+
+      <div class="field" data-expense-only {{if eq .Kind "income"}}hidden{{end}}>
+        <label for="bucket_id">Pays towards</label>
+        <select id="bucket_id" name="bucket_id">
+          <option value="">Nothing recurring</option>
+          {{range .Buckets}}
+          <option value="{{.ID}}" {{if eq .ID $.BucketID}}selected{{end}}>
+            {{.Name}} ({{.CostKind.Label}})
+          </option>
+          {{end}}
+        </select>
+        {{/* Attributing an expense to a bucket is how a variable bill such as
+             electricity learns what it actually costs. */}}
+        <p class="hint">
+          Link this to a recurring monthly expense so YABA learns what it costs.
+        </p>
+      </div>
+
+      <fieldset class="field" data-expense-only {{if eq .Kind "income"}}hidden{{end}}>
+        <legend>Is this essential?</legend>
+        <div class="radio-row">
+          <label class="radio">
+            <input type="radio" name="essential" value="yes" {{if .Essential}}checked{{end}}>
+            Essential
+          </label>
+          <label class="radio">
+            <input type="radio" name="essential" value="no" {{if not .Essential}}checked{{end}}>
+            Non-essential
+          </label>
+        </div>
+      </fieldset>
+
+      {{/*
+        "A transaction could be 1 or more items, perhaps some method of getting a
+        breakdown on what categories the individual line items in the transaction
+        belong to?" — collapsed by default, because most entries are one item.
+      */}}
+      <details class="field line-items" data-expense-only {{if eq .Kind "income"}}hidden{{end}}
+               {{if .Items}}open{{end}}>
+        <summary>Break this into items{{if .Items}} ({{len .Items}}){{end}}</summary>
+
+        <p class="hint">
+          For a shop trip that covers several categories. The items must add up to
+          the total above, so the category breakdown and your spending total agree.
+        </p>
+
+        <div data-item-rows>
+          {{range .Items}}
+          <div class="item-row">
+            <label class="visually-hidden" for="item-desc-{{.Position}}">Item description</label>
+            <input id="item-desc-{{.Position}}" name="item_description" type="text"
+                   maxlength="60" value="{{.Description}}" placeholder="Description">
+
+            <label class="visually-hidden" for="item-cat-{{.Position}}">Item category</label>
+            <input id="item-cat-{{.Position}}" name="item_category" type="text"
+                   maxlength="60" value="{{.Category}}" placeholder="Category"
+                   list="category-options">
+
+            <label class="visually-hidden" for="item-amt-{{.Position}}">Item amount</label>
+            <input id="item-amt-{{.Position}}" name="item_amount" type="number"
+                   step="0.01" min="0.01" inputmode="decimal"
+                   value="{{amount .Amount}}" placeholder="0.00">
+          </div>
+          {{end}}
+        </div>
+
+        {{/* One blank row is always present so the feature works without
+             JavaScript; the button adds more when it is available. */}}
+        <div class="item-row" data-item-template>
+          <label class="visually-hidden" for="item-desc-new">Item description</label>
+          <input id="item-desc-new" name="item_description" type="text" maxlength="60" placeholder="Description">
+          <label class="visually-hidden" for="item-cat-new">Item category</label>
+          <input id="item-cat-new" name="item_category" type="text" maxlength="60" placeholder="Category" list="category-options">
+          <label class="visually-hidden" for="item-amt-new">Item amount</label>
+          <input id="item-amt-new" name="item_amount" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="0.00">
+        </div>
+
+        <p class="item-tools">
+          <button type="button" class="btn btn-small btn-quiet" data-add-item>Add another item</button>
+          <span class="stat-note" data-item-total></span>
+        </p>
+      </details>
+
+      {{if .Version}}
+      {{/* The version this form was built from. Submitted back so the save can be
+           refused if somebody else edited the row while this page was open --
+           without it, the second save silently discarded the first. */}}
+      <input type="hidden" name="version" value="{{.Version}}">
+      {{end}}
+
+      {{if .ReceiptMissing}}
+      <p class="callout callout-warn" role="status">
+        That receipt has already been used, or it belongs to a different budget.
+        You can still enter this expense by hand.
+      </p>
+      {{end}}
+
+      {{if not .Editing}}
+      {{if .ReceiptJobID}}
+      <div class="field" data-expense-only {{if eq .Kind "income"}}hidden{{end}}>
+        <input type="hidden" name="receipt_job" value="{{.ReceiptJobID}}">
+        <p class="callout callout-info" role="status">
+          <strong>{{.ReceiptName}}</strong> is uploaded and will be attached to
+          this expense. Fill in the amount and anything else you want to record.
+        </p>
+        <label for="receipt">Attach a different file instead (optional)</label>
+        <input id="receipt" name="receipt" type="file"
+               accept="image/jpeg,image/png,image/webp,image/gif,application/pdf">
+        <p class="hint">
+          Choosing a file here replaces the one above; the uploaded receipt stays
+          available for another expense.
+        </p>
+      </div>
+      {{else}}
+      <div class="field" data-expense-only {{if eq .Kind "income"}}hidden{{end}}>
+        <label for="receipt">Receipt (optional)</label>
+        <input id="receipt" name="receipt" type="file"
+               accept="image/jpeg,image/png,image/webp,image/gif,application/pdf">
+        <p class="hint">
+          Attached to this expense. To upload one without typing it in, use
+          <a href="/import">Add Expense → Receipt Picture</a> instead.
+        </p>
+      </div>
+      {{end}}
+      {{end}}
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">
+          {{if .Editing}}Save changes{{else}}Submit{{end}}
+        </button>
+        <a class="btn btn-quiet" href="{{if .Editing}}/transactions{{else}}/dashboard{{end}}">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="{{asset "form.js"}}" defer></script>
+{{end}}

@@ -1,0 +1,9 @@
+{{/*
+  Every mutating form includes this. Defining it once means a new form cannot
+  quietly omit the token: the reviewer's eye catches a missing
+  {{template "csrf" .}} far more easily than a missing 40-character literal.
+
+  The value is escaped by html/template as an attribute, and the token itself is
+  URL-safe base64, so it never needs quoting of its own.
+*/}}
+{{define "csrf"}}<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">{{end}}

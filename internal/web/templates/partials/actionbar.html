@@ -1,0 +1,41 @@
+{{/*
+  The three buttons the wireframe pins below every dashboard state:
+  Add Income · View Transactions · Add Expense.
+
+  Defined once and included in each panel, rather than copied four times, so they
+  cannot drift apart between tabs.
+
+  "Add Expense" goes to /expense, which opens with the Manual-or-Upload chooser
+  before showing any form. "Add Income" goes straight to /income, because income
+  has only one entry route.
+*/}}
+{{define "actionbar"}}
+<div class="actionbar">
+  {{/* Green for money in, red for money out, neutral for the list. The colour
+       alone tells you which direction each button moves money.
+
+       A viewer keeps only View Transactions. Both Add buttons lead to pages the
+       canEdit middleware would refuse them, and offering a form that cannot be
+       submitted is worse than not offering it. */}}
+  {{if .Role.CanEditEntries}}
+  <a class="btn btn-income" href="/income">
+    {{template "icon" "plus"}} Add Income
+  </a>
+  {{end}}
+  <a class="btn btn-quiet" href="/transactions">
+    {{template "icon" "list"}} View Transactions
+  </a>
+  {{if .Role.CanEditEntries}}
+  <a class="btn btn-expense" href="/expense">
+    {{template "icon" "minus"}} Add Expense
+  </a>
+  {{end}}
+</div>
+
+{{if .PendingReceipts}}
+<p class="stat-note pending-note" role="status">
+  {{.PendingReceipts}} receipt{{if ne .PendingReceipts 1}}s{{end}} still being
+  processed in the background. You'll be told when they're ready.
+</p>
+{{end}}
+{{end}}

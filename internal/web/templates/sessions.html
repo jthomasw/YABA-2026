@@ -1,0 +1,108 @@
+{{define "helptopics"}}
+<div class="help-topic" data-topic="_">
+  <h3>Active devices</h3>
+  <p class="help-lead">Every place you are currently signed in, and how to end any of them.</p>
+  <ul class="help-list">
+    <li>{{template "icon" "check-circle"}}
+      <span>Each row is one login. Signing one out takes effect on that device's
+      very next click — it does not wait for anything to expire.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Use this if you left yourself logged in somewhere, or see a device
+      you do not recognise.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span><strong>Sign out everywhere else</strong> ends every login except the
+      one you are reading this on.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Logins end on their own after 30 days, or after 14 days without
+      being used.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Changing your password signs out every device, including this
+      one.</span></li>
+  </ul>
+</div>
+{{end}}
+
+{{define "content"}}
+
+<div class="page-head">
+  <h1><span class="head-icon head-session">{{template "icon" "shield"}}</span> Active devices</h1>
+  <span class="head-actions">
+    {{/* The two things you come here to do live together: see where you are
+         signed in, and change the password that lets you in. */}}
+    <a class="btn btn-quiet" href="/password">Change password</a>
+    <a class="btn btn-quiet" href="/dashboard">Back to dashboard</a>
+  </span>
+</div>
+
+<div class="entry-single">
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Where you are signed in</h2>
+      {{/* Hidden when there is nothing to revoke, so the destructive control
+           only appears when it would actually do something. */}}
+      {{if .Others}}
+      <form method="POST" action="/sessions/revoke-others" class="inline-form danger-form"
+            data-confirm="Sign out {{.Others}} other device{{if ne .Others 1}}s{{end}}? You will stay logged in here.">
+        {{template "csrf" .}}
+        <button type="submit" class="btn btn-small btn-danger">
+          Sign out everywhere else
+        </button>
+      </form>
+      {{end}}
+    </div>
+
+    <p class="hint">
+      Each login below is a row in the database, not just a cookie in a browser.
+      That is what lets one be cancelled without disturbing the others.
+    </p>
+
+    <div class="table-scroll">
+      <table class="table">
+        <caption class="visually-hidden">Your active logins</caption>
+        <thead>
+          <tr>
+            <th scope="col">Device</th>
+            <th scope="col">Last active</th>
+            <th scope="col">Signed in</th>
+            <th scope="col"><span class="visually-hidden">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Sessions}}
+          <tr {{if .Current}}class="is-current-session"{{end}}>
+            <td data-label="Device">
+              <strong>{{if .UserAgent}}{{.UserAgent}}{{else}}Unknown browser{{end}}</strong>
+              {{if .Current}}<span class="tag tag-current">This device</span>{{end}}
+            </td>
+            <td data-label="Last active">{{.LastSeenAt}}</td>
+            <td data-label="Signed in">{{.CreatedAt}}</td>
+            <td class="row-actions">
+              {{if .Current}}
+              {{/* Revoking your own session is a logout, and the nav already has
+                   that button with its confirmation dialog. */}}
+              <span class="stat-note">In use now</span>
+              {{else}}
+              <form method="POST" action="/sessions/revoke" class="inline-form danger-form"
+                    data-confirm="Sign this device out?">
+                {{template "csrf" $}}
+                <input type="hidden" name="session_id" value="{{.ID}}">
+                <button type="submit" class="btn btn-small btn-danger">Sign out</button>
+              </form>
+              {{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {{/* The "How long a login lasts" card used to sit here, explaining the 30-day
+       ceiling, the 14-day idle cutoff and password-change revocation. The rules
+       still apply exactly as before — they are enforced in store.SessionUser,
+       not by anything on this page. Only the explanation was removed; the help
+       panel above still covers what this page is for. */}}
+
+</div>
+{{end}}

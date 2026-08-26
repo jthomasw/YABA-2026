@@ -1,0 +1,10 @@
+{{/*
+  Empty states. A brand-new account previously saw zeroed cards and blank chart
+  canvases with no indication that anything was missing or what to do about it.
+  Every list and chart on the dashboard now falls back to one of these.
+
+  Call as: {{template "empty" "Nothing here yet."}}
+*/}}
+{{define "empty"}}<p class="empty">{{.}}</p>{{end}}
+
+{{define "emptyChart"}}<div class="chart-empty"><p>{{.}}</p></div>{{end}}

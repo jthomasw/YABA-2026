@@ -1,0 +1,2353 @@
+/* ============================================================================
+   YABA stylesheet
+
+   One file, one theme: light. There is deliberately no
+   prefers-color-scheme: dark override — the app is light regardless of what the
+   operating system asks for, because a budgeting app shown in a demo or on a
+   projector should look the same on every machine.
+
+   Everything is still written against custom properties, so reintroducing a dark
+   theme later means adding one @media block, not editing every rule.
+
+   Colour is semantic, not decorative:
+     blue  = brand, navigation, neutral action
+     green = money in
+     red   = money out
+   That means green never appears on a button that is not about income, and a
+   figure's colour alone tells you which direction the money went.
+   ========================================================================= */
+
+:root {
+  /* Surfaces */
+  --bg:            #f5f7fb;
+  --surface:       #ffffff;
+  --surface-2:     #f8fafc;
+  --surface-3:     #eef2f7;
+  --border:        #e2e8f0;
+  --border-strong: #cbd5e1;
+
+  /* Text */
+  --text:          #0f172a;
+  --text-muted:    #64748b;
+
+  /* Brand */
+  --brand:         #2563eb;
+  --brand-dark:    #1d4ed8;
+  --brand-soft:    #eff5ff;
+  --brand-contrast:#ffffff;
+
+  /* Money in / money out */
+  --income:        #128a4d;
+  --income-dark:   #0f7442;
+  --income-soft:   #e8f8ef;
+  --expense:       #c62d2d;
+  --expense-dark:  #a92323;
+  --expense-soft:  #fdeded;
+
+  /* Status */
+  --positive:      var(--income);
+  --negative:      var(--expense);
+  --warn:          #b45309;
+  --warn-bg:       #fffaeb;
+  --alert-bg:      var(--expense-soft);
+  --good-bg:       var(--income-soft);
+  --info-bg:       var(--brand-soft);
+
+  /* The four dashboard cards. A tinted face, a stronger edge, and an ink colour
+     for the figure, so each card is identifiable at a glance without shouting. */
+  --card-current-bg:     #eaf2ff;
+  --card-current-edge:   #93b8ea;
+  --card-current-ink:    #17457e;
+
+  --card-emergency-bg:   #fff6e8;
+  --card-emergency-edge: #e6b979;
+  --card-emergency-ink:  #8a5109;
+
+  --card-income-bg:      #e8f8ef;
+  --card-income-edge:    #82ca9f;
+  --card-income-ink:     #0d5f36;
+
+  --card-expenses-bg:    #fdeded;
+  --card-expenses-edge:  #e79b9b;
+  --card-expenses-ink:   #8f2020;
+
+  /* Shape and depth */
+  --radius:        14px;
+  --radius-sm:     8px;
+  --radius-panel:  22px;
+  --shadow-sm:     0 1px 2px rgba(15, 23, 42, .06);
+  --shadow:        0 1px 3px rgba(15, 23, 42, .08), 0 8px 24px -12px rgba(15, 23, 42, .14);
+  --shadow-lg:     0 12px 32px -8px rgba(15, 23, 42, .22);
+
+  --gap:           1rem;
+  --maxw:          1180px;
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* Without this, a machine set to dark mode renders the native date picker,
+     select arrows, scrollbars and autofill in dark colours inside our light
+     page -- which is exactly the mismatch that was showing. */
+  color-scheme: light;
+}
+
+
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  /* Unitless line-height so it scales with each element's own font size. */
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-text-size-adjust: 100%;
+}
+
+h1, h2, h3 { line-height: 1.25; margin: 0 0 .5rem; }
+h1 { font-size: 1.6rem; }
+h2 { font-size: 1.1rem; }
+h3 { font-size: 1rem; }
+
+a { color: var(--brand); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* A single visible focus style for every interactive element. The old CSS
+   removed outlines in places and never replaced them, which makes keyboard
+   navigation impossible to follow. */
+:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Screen-reader-only text that stays in the accessibility tree. Using
+   display:none would remove it from that tree as well, defeating the point. */
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--surface);
+  padding: .75rem 1rem;
+  z-index: 100;
+}
+.skip-link:focus { left: .5rem; top: .5rem; }
+
+/* ── top bar ─────────────────────────────────────────────────────────────── */
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap);
+  padding: .75rem 1.25rem;
+  background: var(--surface);
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+.logo {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: var(--brand);
+}
+.logo:hover { text-decoration: none; opacity: .85; }
+
+.mainnav { display: flex; gap: .25rem; margin-right: auto; }
+.mainnav a {
+  padding: .4rem .7rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.mainnav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
+.mainnav a[aria-current="page"] { background: var(--surface-2); color: var(--brand); }
+
+.user-actions { display: flex; align-items: center; gap: .6rem; }
+.welcome { color: var(--text-muted); font-size: .9rem; }
+
+/* ── layout ──────────────────────────────────────────────────────────────── */
+
+.container {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+
+.footer {
+  max-width: var(--maxw);
+  margin: 2rem auto 1rem;
+  padding: 0 1.25rem;
+  color: var(--text-muted);
+  font-size: .85rem;
+}
+
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  margin-bottom: 1rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1rem 1.1rem;
+  margin-bottom: var(--gap);
+}
+
+/* auto-fit means the columns collapse on their own as the viewport narrows,
+   with no breakpoint to maintain. */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: var(--gap);
+  margin-bottom: var(--gap);
+}
+.cards .card { margin-bottom: 0; }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--gap);
+}
+
+.fund-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--gap);
+}
+
+/* ── stats ───────────────────────────────────────────────────────────────── */
+
+.stat h2 {
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.stat-value {
+  margin: .25rem 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  /* Tabular figures keep columns of money vertically aligned. */
+  font-variant-numeric: tabular-nums;
+}
+.stat-note { margin: 0; font-size: .85rem; color: var(--text-muted); }
+
+.is-positive { color: var(--positive); }
+.is-negative { color: var(--negative); }
+
+/* ── insights ────────────────────────────────────────────────────────────── */
+
+.insight-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+.insight {
+  padding: .6rem .8rem;
+  border-radius: var(--radius-sm);
+  border-left: 4px solid var(--border);
+  background: var(--info-bg);
+  font-size: .92rem;
+}
+.insight-alert { background: var(--alert-bg); border-left-color: var(--negative); }
+.insight-warn  { background: var(--warn-bg);  border-left-color: var(--warn); }
+.insight-good  { background: var(--good-bg);  border-left-color: var(--positive); }
+.insight-info  { background: var(--info-bg);  border-left-color: var(--text-muted); }
+
+/* ── tabs ────────────────────────────────────────────────────────────────── */
+
+.tablist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .25rem;
+  margin-bottom: var(--gap);
+  border-bottom: 1px solid var(--border);
+}
+
+.tablist [role="tab"]:not(.tab-card) {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: .6rem .9rem;
+  font: inherit;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  /* Reserve the bold weight's width up front so the label does not shift the
+     row when a tab becomes selected. */
+  min-width: max-content;
+}
+.tablist [role="tab"]:not(.tab-card):hover { color: var(--text); }
+.tablist [role="tab"]:not(.tab-card)[aria-selected="true"] {
+  color: var(--brand);
+  border-bottom-color: var(--brand);
+  font-weight: 600;
+}
+
+/* [hidden] needs an explicit rule because display:grid/flex on the same
+   element would otherwise win over the attribute's default styling. */
+[hidden] { display: none !important; }
+
+.panel-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: var(--gap); }
+
+/* ── buttons ─────────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .4rem;
+  padding: .5rem .9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  /* 44px is the minimum comfortable touch target. */
+  min-height: 40px;
+}
+.btn:hover { background: var(--surface-2); text-decoration: none; }
+
+.btn-primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--brand-contrast);
+}
+.btn-primary:hover { background: var(--brand-dark); border-color: var(--brand-dark); }
+
+.btn-quiet { background: var(--surface-2); }
+
+/* Semantic actions. Green only ever means money in, red only money out, so the
+   colour of a button is information rather than decoration. */
+.btn-income {
+  background: var(--income);
+  border-color: var(--income);
+  color: #fff;
+}
+.btn-income:hover { background: var(--income-dark); border-color: var(--income-dark); }
+
+.btn-expense {
+  background: var(--expense);
+  border-color: var(--expense);
+  color: #fff;
+}
+.btn-expense:hover { background: var(--expense-dark); border-color: var(--expense-dark); }
+
+.btn-lg { padding: .7rem 1.3rem; font-size: 1rem; min-height: 46px; }
+
+/* Icons inside buttons and headings inherit the text colour and sit on the
+   baseline without needing per-icon tweaks. */
+.icon {
+  width: 1.05em;
+  height: 1.05em;
+  flex: 0 0 auto;
+  vertical-align: -.15em;
+}
+
+.btn-danger { color: var(--negative); border-color: var(--negative); background: var(--alert-bg); }
+.btn-danger:hover { filter: brightness(1.2); }
+
+.btn-small { padding: .3rem .6rem; font-size: .85rem; min-height: 32px; }
+.btn-block { width: 100%; }
+.btn-disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── forms ───────────────────────────────────────────────────────────────── */
+
+.form-wrapper {
+  display: flex;
+  justify-content: center;
+  padding: 2rem 0;
+}
+.form-card { width: 100%; max-width: 24rem; }
+.form-wrapper-wide .form-card { max-width: 34rem; }
+
+.field { margin-bottom: .9rem; border: 0; padding: 0; }
+
+/* Every input has a real <label>. The old forms used placeholders alone, which
+   vanish once typing starts and are not reliably read as labels. */
+.field > label,
+.field > legend {
+  display: block;
+  margin-bottom: .3rem;
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.field input[type="text"],
+.field input[type="password"],
+.field input[type="number"],
+.field input[type="date"],
+.field input[type="search"],
+.field input[type="file"],
+.field select {
+  width: 100%;
+  padding: .55rem .65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  /* 16px minimum stops iOS Safari zooming in when the field is focused. */
+  font-size: 16px;
+  font-family: inherit;
+}
+
+.field input:focus, .field select:focus { border-color: var(--brand); }
+
+.hint { margin: .3rem 0 0; font-size: .8rem; color: var(--text-muted); }
+
+.field-error {
+  margin: 0 0 .9rem;
+  padding: .6rem .8rem;
+  border-radius: var(--radius-sm);
+  background: var(--alert-bg);
+  border-left: 4px solid var(--negative);
+  color: var(--negative);
+  font-size: .9rem;
+}
+
+.radio-row { display: flex; flex-wrap: wrap; gap: 1rem; }
+.radio { display: inline-flex; align-items: center; gap: .4rem; font-weight: 400; }
+.radio input { width: auto; }
+
+.form-actions { display: flex; gap: .5rem; margin-top: 1rem; }
+.form-alt { margin: 1rem 0 0; font-size: .9rem; color: var(--text-muted); }
+
+.inline-form { display: inline-flex; gap: .3rem; align-items: center; margin: 0; }
+.inline-form input[type="number"] { width: 7rem; }
+
+.row-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+  align-items: flex-end;
+}
+.row-form .field { margin-bottom: 0; flex: 1 1 10rem; }
+.row-form .btn { flex: 0 0 auto; }
+
+.filter-form { display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-end; }
+.filter-form .field { margin-bottom: 0; flex: 1 1 12rem; }
+.filter-actions { display: flex; gap: .5rem; }
+
+.period-form { display: flex; align-items: center; gap: .5rem; }
+.period-form label { font-size: .85rem; font-weight: 600; }
+.period-form select {
+  padding: .45rem .6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 16px;
+  font-family: inherit;
+}
+
+/* ── flash ───────────────────────────────────────────────────────────────── */
+
+.flash {
+  padding: .75rem 1rem;
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--gap);
+  border-left: 4px solid;
+  font-size: .95rem;
+}
+.flash-success { background: var(--good-bg);  border-left-color: var(--positive); color: var(--positive); }
+.flash-error   { background: var(--alert-bg); border-left-color: var(--negative); color: var(--negative); }
+
+/* ── tables ──────────────────────────────────────────────────────────────── */
+
+.table-scroll { overflow-x: auto; }
+
+.table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+.table caption { text-align: left; }
+.table th, .table td {
+  padding: .55rem .6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.table thead th {
+  font-size: .78rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-muted);
+}
+.table tbody tr:hover { background: var(--surface-2); }
+.table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.list-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  margin-bottom: .5rem;
+}
+
+.row-actions { display: flex; gap: .3rem; justify-content: flex-end; white-space: nowrap; }
+
+.tag {
+  display: inline-block;
+  padding: .15rem .5rem;
+  border-radius: 999px;
+  font-size: .78rem;
+  font-weight: 600;
+  background: var(--info-bg);
+  color: var(--text-muted);
+}
+.tag-income          { background: var(--good-bg);  color: var(--positive); }
+.tag-expense         { background: var(--alert-bg); color: var(--negative); }
+.tag-fund_deposit    { background: var(--info-bg); color: var(--brand); }
+.tag-fund_withdrawal { background: var(--info-bg); color: var(--brand); }
+
+.receipt-link { font-size: .8rem; margin-left: .4rem; }
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .75rem;
+  margin-top: var(--gap);
+}
+.page-count { font-size: .9rem; color: var(--text-muted); }
+
+/* ── charts ──────────────────────────────────────────────────────────────── */
+
+/* A fixed-height box with position:relative is what lets Chart.js size itself
+   responsively without growing on every redraw. */
+.chart-box { position: relative; height: 260px; }
+.chart-box canvas { max-width: 100%; }
+
+.chart-empty,
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  padding: 1rem;
+  margin: 0;
+  text-align: center;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  font-size: .92rem;
+}
+
+/* ── progress bars ───────────────────────────────────────────────────────── */
+
+.progress {
+  height: 10px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  margin: .5rem 0 .3rem;
+}
+.progress-bar {
+  height: 100%;
+  background: var(--brand);
+  border-radius: 999px;
+  transition: width .3s ease;
+}
+.progress-bar.is-complete { background: var(--positive); }
+
+.budget-over  .progress-bar { background: var(--negative); }
+.budget-warn  .progress-bar { background: var(--warn); }
+
+/* ── funds ───────────────────────────────────────────────────────────────── */
+
+.fund-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .5rem;
+}
+.fund-balance {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.projection {
+  margin: .5rem 0;
+  font-size: .87rem;
+  color: var(--text-muted);
+}
+.projection.is-ontrack { color: var(--positive); }
+.projection.is-behind  { color: var(--warn); }
+
+.fund-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .6rem 0; }
+
+.fund-settings summary {
+  cursor: pointer;
+  font-size: .87rem;
+  color: var(--brand);
+  padding: .3rem 0;
+}
+.fund-settings .row-form { margin: .6rem 0; }
+.danger-form { margin-top: .6rem; }
+
+/* ── budgets ─────────────────────────────────────────────────────────────── */
+
+.budget-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; }
+.budget { padding: .8rem; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.budget-over { border-color: var(--negative); background: var(--alert-bg); }
+.budget-warn { border-color: var(--warn); background: var(--warn-bg); }
+.budget-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .5rem;
+}
+.budget-head p { margin: 0; font-size: .9rem; font-variant-numeric: tabular-nums; }
+
+/* ── narrow screens ──────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .container { padding: 1rem .75rem; }
+  h1 { font-size: 1.35rem; }
+  .stat-value { font-size: 1.5rem; }
+
+  .topbar { padding: .6rem .75rem; }
+  .mainnav { order: 3; width: 100%; }
+  .user-actions { margin-left: auto; }
+
+  /* The transactions table becomes a stack of labelled rows rather than
+     something to scroll sideways. Each cell's label comes from the
+     data-label attribute set in the template. */
+  .table-transactions thead { display: none; }
+  .table-transactions tr {
+    display: block;
+    padding: .6rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .table-transactions td {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    border: 0;
+    padding: .2rem .1rem;
+    text-align: right;
+  }
+  .table-transactions td::before {
+    content: attr(data-label);
+    font-size: .78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--text-muted);
+    text-align: left;
+  }
+  .table-transactions td.row-actions { justify-content: flex-end; padding-top: .5rem; }
+  .table-transactions td.row-actions::before { content: ""; }
+
+  .row-form, .filter-form { flex-direction: column; align-items: stretch; }
+  .row-form .btn, .filter-actions .btn { width: 100%; }
+  .inline-form { width: 100%; }
+  .inline-form input[type="number"] { flex: 1; width: auto; }
+}
+
+/* ── dark mode ───────────────────────────────────────────────────────────── */
+
+/* Only the custom properties change. Every rule above is written against them,
+   which is the whole reason this is short. */
+
+
+/* Respect a user's request for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* Printing a statement should not waste ink on chrome and controls. */
+@media print {
+  .topbar, .footer, .panel-actions, .filter-form, .pagination,
+  .row-actions, .tablist, .period-form, .skip-link { display: none !important; }
+  .card { box-shadow: none; border-color: #ccc; break-inside: avoid; }
+  [hidden] { display: block !important; }
+  body { background: #fff; }
+}
+
+/* ============================================================================
+   Wireframe components
+   Added for the landing page, the four dashboard tabs, the recurring-expense
+   priority list, the import chooser, line items and toasts.
+   ========================================================================= */
+
+/* ── landing page ────────────────────────────────────────────────────────── */
+
+.landing { text-align: center; }
+.landing .field, .landing .radio-row { text-align: left; }
+.landing-title { font-size: 1.5rem; margin-bottom: .25rem; }
+.landing-sub { margin: 0 0 1.25rem; }
+.landing-hint { margin-top: 1rem; text-align: center; }
+
+/* The "create an account?" step of the combined login/signup form. */
+.confirm-box {
+  text-align: left;
+  padding: .8rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: var(--radius-sm);
+  background: var(--info-bg);
+  border-left: 4px solid var(--brand);
+}
+.confirm-box p { margin: 0 0 .35rem; font-size: .92rem; }
+.confirm-box p:last-child { margin-bottom: 0; }
+
+/* ── prose pages (About, Forgot) ─────────────────────────────────────────── */
+
+.prose {
+  max-width: 44rem;
+  margin: 0 auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.5rem;
+}
+.prose h2 { margin-top: 1.5rem; }
+.prose p, .prose li { max-width: 38rem; }
+.prose code {
+  background: var(--surface-2);
+  padding: .1rem .35rem;
+  border-radius: 4px;
+  font-size: .9em;
+}
+.prose-actions { margin-top: 1.75rem; }
+
+/* ── the four dashboard cards, which are also the tabs ──────────────────── */
+
+/* Fixed four-across on wide screens, matching the mockup, collapsing to two and
+   then one rather than reflowing unpredictably with auto-fit. */
+.cards.tablist {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .75rem;
+  border-bottom: 0;
+  margin-bottom: 1.25rem;
+}
+@media (max-width: 900px) { .cards.tablist { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .cards.tablist { grid-template-columns: 1fr; } }
+
+.tab-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .3rem;
+  min-height: 7rem;
+  padding: 1rem 1.05rem;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow .18s ease, transform .18s ease, border-color .18s ease;
+}
+.tab-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+
+/* The icon sits in a tinted circle in the corner, which is what gives the card
+   its identity before the label is even read. */
+.tab-icon {
+  position: absolute;
+  top: .85rem;
+  right: .85rem;
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .55);
+}
+.tab-icon svg { width: 1.05rem; height: 1.05rem; }
+
+
+.tab-card .tab-label {
+  font-size: .74rem;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  /* Leave room for the icon so a long label never runs under it. */
+  padding-right: 2.4rem;
+}
+.tab-card .tab-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+  line-height: 1.15;
+}
+.tab-card .tab-range { font-size: 1.05rem; }
+.tab-card .tab-sub {
+  font-size: .74rem;
+  color: var(--text-muted);
+}
+
+/* ── every fund, on the Emergency Fund card ──────────────────────────────────
+   One line per fund: name on the left, "saved / target" on the right. The card
+   is a flex column, so each line is its own flex row and the figures line up
+   down the right edge whatever the names are.
+
+   The card grows with the number of funds rather than scrolling or truncating.
+   Four funds is a tall card; forty would be absurd — but a household with forty
+   savings pots has a different problem, and inventing a "+36 more" affordance
+   for a case nobody has is how interfaces get complicated for no one. */
+.tab-card .tab-funds {
+  display: flex;
+  flex-direction: column;
+  gap: .12rem;
+  width: 100%;
+  margin-top: .15rem;
+  padding-top: .3rem;
+  border-top: 1px solid var(--border);
+}
+.tab-card .tab-fund {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .5rem;
+  font-size: .74rem;
+  line-height: 1.35;
+}
+.tab-fund-name {
+  color: var(--text-muted);
+  /* A long fund name shortens rather than pushing the figure off the card. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tab-fund-figure {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+/* One rule per card, so each keeps its identity whether or not it is selected —
+   the mockup shows all four coloured at once. */
+.tab-current   { background: var(--card-current-bg);   border-color: var(--card-current-edge); }
+.tab-current   .tab-value { color: var(--card-current-ink); }
+.tab-emergency { background: var(--card-emergency-bg); border-color: var(--card-emergency-edge); }
+.tab-emergency .tab-value { color: var(--card-emergency-ink); }
+.tab-income    { background: var(--card-income-bg);    border-color: var(--card-income-edge); }
+.tab-income    .tab-value { color: var(--card-income-ink); }
+.tab-expenses  { background: var(--card-expenses-bg);  border-color: var(--card-expenses-edge); }
+.tab-expenses  .tab-value { color: var(--card-expenses-ink); }
+
+/* The selected card keeps its own colour and gains a ring plus a top bar, so
+   the colour coding survives selection instead of being replaced by it. */
+.tab-card[aria-selected="true"] {
+  box-shadow: 0 0 0 2px var(--brand), var(--shadow);
+  transform: translateY(-2px);
+}
+.tab-card[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 1rem; right: 1rem; bottom: .55rem;
+  height: 3px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: .5;
+}
+.tab-current[aria-selected="true"]::after   { color: var(--card-current-ink); }
+.tab-emergency[aria-selected="true"]::after { color: var(--card-emergency-ink); }
+.tab-income[aria-selected="true"]::after    { color: var(--card-income-ink); }
+.tab-expenses[aria-selected="true"]::after  { color: var(--card-expenses-ink); }
+
+/* ── the big rounded panel ───────────────────────────────────────────────── */
+
+/* The mockup draws one large, generously rounded, thinly outlined panel per tab.
+   min-height keeps it that shape even when the content inside is short, so the
+   layout does not jump between tabs. */
+.panel-frame {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  padding: 1.5rem;
+  min-height: 20rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: var(--surface-2);
+}
+
+.panel-frame > h2 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Content that should sit in the middle of an otherwise empty panel. */
+.panel-centre {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .75rem;
+  text-align: center;
+}
+
+.panel-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  max-height: 30rem;
+}
+
+@media (max-width: 640px) {
+  .panel-frame { border-radius: var(--radius); padding: 1rem; min-height: 0; }
+}
+
+/* ── the three pinned action buttons ─────────────────────────────────────── */
+
+.actionbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2rem;
+  margin: 1.5rem 0 .5rem;
+}
+.actionbar .btn {
+  min-width: 11rem;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 500;
+}
+.actionbar .btn:hover { background: var(--surface-2); border-color: var(--brand); }
+.pending-note { text-align: center; }
+
+/* ── expected monthly income range ───────────────────────────────────────── */
+
+.range-display {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: .75rem;
+  flex-wrap: wrap;
+  padding: 1rem 0 .5rem;
+}
+.range-low, .range-high {
+  font-size: 1.6rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.range-sep { color: var(--text-muted); font-size: .9rem; }
+
+/* ── recurring expense priority list ─────────────────────────────────────── */
+
+.bucket-list {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: .75rem;
+  /* counter-reset is not used: the visible rank comes from the template so it
+     stays correct when the list is filtered or reordered server-side. */
+}
+
+.bucket {
+  display: flex;
+  gap: .75rem;
+  padding: .8rem;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.bucket-funded   { border-left-color: var(--positive); }
+.bucket-partial  { border-left-color: var(--warn); background: var(--warn-bg); }
+.bucket-unfunded { border-left-color: var(--negative); background: var(--alert-bg); }
+.bucket-empty    { border-left-color: var(--border); }
+
+.bucket-rank {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .15rem;
+  flex: 0 0 2.5rem;
+}
+.rank-number {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.btn-tiny {
+  padding: 0 .4rem;
+  min-height: 22px;
+  line-height: 1.2;
+  font-size: .85rem;
+  border-radius: 4px;
+}
+.btn-tiny:disabled { opacity: .35; cursor: not-allowed; }
+
+.bucket-body { flex: 1 1 auto; min-width: 0; }
+.bucket-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .5rem;
+}
+.bucket-head h3 { margin: 0; display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.bucket-head p  { margin: 0; font-size: .9rem; font-variant-numeric: tabular-nums; }
+
+.bucket-settings summary {
+  cursor: pointer;
+  font-size: .85rem;
+  color: var(--brand);
+  padding: .3rem 0;
+}
+
+.tag-essential { background: var(--alert-bg); color: var(--negative); }
+.tag-bucket    { background: var(--info-bg); color: var(--brand); }
+
+/* ── import chooser ──────────────────────────────────────────────────────── */
+
+.import-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--gap);
+  margin-top: .75rem;
+}
+
+.import-option {
+  display: flex;
+  flex-direction: column;
+  gap: .3rem;
+  padding: 1rem;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.import-option:hover { background: var(--surface); border-color: var(--brand); text-decoration: none; }
+.import-option.is-disabled { opacity: .55; cursor: not-allowed; }
+.import-option-name { font-weight: 600; }
+.import-option-desc { font-size: .87rem; color: var(--text-muted); }
+
+.callout {
+  padding: .8rem 1rem;
+  border-radius: var(--radius-sm);
+  background: var(--info-bg);
+  border-left: 4px solid var(--brand);
+  margin: 1rem 0;
+}
+.callout p { margin: 0 0 .4rem; font-size: .92rem; }
+.callout p:last-child { margin-bottom: 0; }
+
+/* The two variants used on the entry form. callout-info restates the base so a
+   `class="callout callout-info"` element does not depend on rule order. */
+.callout-info { background: var(--info-bg); border-left-color: var(--brand); }
+.callout-warn { background: var(--alert-bg); border-left-color: var(--negative); }
+
+/* An invitation past its 24 hours. Shown, not hidden: the owner needs to know it
+   lapsed and needs the button that sends it again. */
+.tag-expired { background: var(--alert-bg); color: var(--negative); }
+
+/* Two or more buttons on the right of a page heading. */
+.head-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+
+/* ── receipts uploaded but not yet entered ───────────────────────────────────
+   Shown on Add Expense so a stored receipt is reachable without its
+   notification, which may have been dismissed or cleared on another device. */
+.waiting-receipts { list-style: none; margin: .75rem 0 0; padding: 0; }
+.waiting-receipts li {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  flex-wrap: wrap;
+  padding: .6rem 0;
+  border-top: 1px solid var(--border);
+}
+.waiting-receipts li:first-child { border-top: 0; }
+.waiting-name { font-weight: 600; word-break: break-word; }
+
+/* ── audit log ───────────────────────────────────────────────────────────────
+   Who changed what. Dense on purpose: it is scanned, not read. */
+.activity { list-style: none; margin: .75rem 0 0; padding: 0; }
+.activity li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem .55rem;
+  align-items: baseline;
+  padding: .45rem 0;
+  border-top: 1px solid var(--border);
+  font-size: .92rem;
+}
+.activity li:first-child { border-top: 0; }
+.activity-who { font-weight: 600; }
+.activity-what { color: var(--text-muted); }
+.activity-detail { word-break: break-word; }
+.activity-when { margin-left: auto; white-space: nowrap; }
+@media (max-width: 520px) {
+  .activity-when { margin-left: 0; width: 100%; }
+}
+/* The actions go to the right on a wide screen and wrap underneath on a narrow
+   one, rather than being pushed off the edge. Grouped in one element so the two
+   buttons travel together instead of separating as the row narrows. */
+.waiting-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  margin-left: auto;
+}
+@media (max-width: 520px) {
+  .waiting-actions { margin-left: 0; }
+  /* .inline-form is 100% wide on narrow screens, which would stretch Discard
+     across the row and away from Enter details. */
+  .waiting-actions .inline-form { width: auto; }
+}
+
+.tag-job-queued     { background: var(--info-bg);  color: var(--text-muted); }
+.tag-job-processing { background: var(--info-bg);   color: var(--brand); }
+.tag-job-done       { background: var(--good-bg);  color: var(--positive); }
+.tag-job-failed     { background: var(--alert-bg); color: var(--negative); }
+
+/* ── line items ──────────────────────────────────────────────────────────── */
+
+.line-items summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: .9rem;
+  color: var(--brand);
+  padding: .35rem 0;
+}
+
+.item-row {
+  display: grid;
+  grid-template-columns: 2fr 1.5fr 1fr;
+  gap: .5rem;
+  margin-bottom: .5rem;
+}
+.item-row input {
+  width: 100%;
+  padding: .45rem .55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 16px;
+  font-family: inherit;
+}
+.item-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .75rem;
+  margin: .5rem 0 0;
+}
+
+/* A field that does not apply is dimmed rather than removed, so the form does
+   not jump when the cost kind changes. */
+.is-muted { opacity: .5; }
+
+.field textarea {
+  width: 100%;
+  padding: .55rem .65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 16px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+/* ── transaction detail ──────────────────────────────────────────────────── */
+
+.tx-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .25rem 1rem;
+  margin-top: .3rem;
+  font-size: .82rem;
+  color: var(--text-muted);
+}
+
+/* ── toasts ──────────────────────────────────────────────────────────────── */
+
+.toasts {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  /* The container must not intercept clicks on the page behind it; individual
+     toasts turn pointer events back on. */
+  pointer-events: none;
+  max-width: min(24rem, calc(100vw - 2rem));
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: .6rem;
+  padding: .7rem .8rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--brand);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+  font-size: .92rem;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity .25s ease, transform .25s ease;
+}
+.toast.is-leaving { opacity: 0; transform: translateY(.5rem); }
+
+.toast-success { border-left-color: var(--positive); }
+.toast-error   { border-left-color: var(--negative); }
+.toast-info    { border-left-color: var(--brand); }
+
+.toast-text { flex: 1 1 auto; }
+.toast-link { flex: 0 0 auto; font-weight: 600; }
+.toast-close {
+  flex: 0 0 auto;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 .1rem;
+}
+.toast-close:hover { color: var(--text); }
+
+/* ── narrow screens ──────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .actionbar { gap: .5rem; flex-direction: column; }
+  .actionbar .btn { width: 100%; min-width: 0; }
+
+  .item-row { grid-template-columns: 1fr; }
+
+  .bucket { flex-direction: column; }
+  .bucket-rank { flex-direction: row; justify-content: flex-start; }
+
+  .toasts { left: 1rem; right: 1rem; max-width: none; }
+
+  .range-low, .range-high { font-size: 1.3rem; }
+}
+
+
+
+@media print {
+  .toasts, .actionbar, .bucket-rank, .import-options { display: none !important; }
+}
+
+/* ── sign-in page ────────────────────────────────────────────────────────── */
+
+/* The chrome is hidden on this page (there is no nav to show a signed-out user),
+   so the card is centred in the viewport rather than in the content column. */
+.auth-wrapper {
+  min-height: calc(100vh - 8rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem 1rem;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 27rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .04), 0 20px 40px -20px rgba(15, 23, 42, .18);
+  padding: 2.5rem 2.5rem 2rem;
+}
+@media (max-width: 480px) {
+  .auth-card { padding: 1.75rem 1.25rem 1.5rem; border-radius: 12px; }
+}
+
+/* Brand lockup: a rounded tile with the initial, then the wordmark. Cheap to
+   render, and it stops the card opening with a bare heading. */
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin-bottom: 1.75rem;
+}
+.auth-mark {
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 9px;
+  background: var(--brand);
+  color: #fff;
+  font-weight: 800;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+.auth-wordmark {
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: .06em;
+  color: var(--text);
+}
+
+.auth-title {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  margin: 0 0 .4rem;
+}
+.auth-sub {
+  margin: 0 0 1.75rem;
+  color: var(--text-muted);
+  font-size: .94rem;
+  line-height: 1.45;
+}
+
+/* An error banner rather than red text, so a failed attempt is impossible to
+   miss above a form the user is about to retype. */
+.auth-error {
+  display: flex;
+  align-items: flex-start;
+  gap: .55rem;
+  margin: 0 0 1.25rem;
+  padding: .7rem .85rem;
+  border-radius: 10px;
+  background: var(--expense-soft);
+  border: 1px solid #f3c7c7;
+  color: #8f2020;
+  font-size: .9rem;
+  line-height: 1.4;
+}
+.auth-error-mark {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: .05rem;
+  border-radius: 50%;
+  background: var(--expense);
+  color: #fff;
+  font-size: .78rem;
+  font-weight: 800;
+}
+
+/* ── floating-label field ────────────────────────────────────────────────── */
+
+.float-field {
+  position: relative;
+  margin-bottom: 1rem;
+}
+
+.float-field input {
+  width: 100%;
+  height: 3.5rem;
+  padding: 1.35rem .9rem .5rem;
+  padding-right: 3rem;
+  font-size: 1rem;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.float-field label {
+  position: absolute;
+  left: .95rem;
+  top: 1.05rem;
+  color: var(--text-muted);
+  font-size: 1rem;
+  pointer-events: none;
+  transition: transform .15s ease, font-size .15s ease, color .15s ease;
+  transform-origin: left top;
+}
+
+/* Raised: the field has focus, or it has a value. Transform rather than top and
+   font-size alone, so the movement is a single composited animation. */
+.float-field input:focus + label,
+.float-field input:not(:placeholder-shown) + label {
+  transform: translateY(-.62rem) scale(.78);
+  font-weight: 600;
+}
+.float-field input:focus + label { color: var(--brand); }
+
+.float-field input:focus {
+  outline: none;
+  border-color: var(--brand);
+  /* A 2px ring drawn with a shadow rather than a thicker border, so the text
+     inside does not shift by a pixel when the field gains focus. */
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .18);
+}
+
+/* An invalid field is only marked once it has content, so an untouched empty
+   form is not covered in red before the user has typed anything. */
+.float-field input:not(:placeholder-shown):invalid {
+  border-color: var(--expense);
+}
+
+.reveal {
+  position: absolute;
+  right: .55rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.reveal:hover { color: var(--text); background: var(--surface-3); }
+.reveal .icon { width: 1.2rem; height: 1.2rem; }
+
+.auth-hint {
+  margin: -.5rem 0 1rem;
+  font-size: .82rem;
+  color: var(--text-muted);
+}
+.auth-hint-centre { text-align: center; margin-top: 1rem; }
+
+.auth-forgot { margin: .1rem 0 1.4rem; }
+.auth-forgot a { font-size: .9rem; font-weight: 600; }
+
+/* ── actions ─────────────────────────────────────────────────────────────── */
+
+.btn-auth {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 3rem;
+  padding: 0 1rem;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  border: 1px solid var(--brand);
+  border-radius: 10px;
+  background: var(--brand);
+  color: #fff;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background .15s ease, border-color .15s ease;
+}
+.btn-auth:hover {
+  background: var(--brand-dark);
+  border-color: var(--brand-dark);
+  text-decoration: none;
+}
+.btn-auth:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.btn-auth-secondary {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--brand);
+}
+.btn-auth-secondary:hover {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+}
+
+/* A rule with the label sitting in a gap in it. */
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: .8rem;
+  margin: 1.5rem 0 1rem;
+  color: var(--text-muted);
+  font-size: .84rem;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border);
+}
+
+.auth-alt {
+  margin: 1.5rem 0 0;
+  text-align: center;
+  font-size: .92rem;
+  color: var(--text-muted);
+}
+.auth-alt a { font-weight: 600; }
+
+.auth-foot { margin: 1.5rem 0 0; font-size: .88rem; }
+.auth-foot a { color: var(--text-muted); }
+.auth-foot a:hover { color: var(--brand); }
+
+/* ── figures shown as a range, as the mockup does for income and expenses ── */
+
+.tab-card .tab-range {
+  font-size: .95rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+/* ── emergency fund figures ──────────────────────────────────────────────── */
+
+.runway-note {
+  margin: 0;
+  font-size: 1.05rem;
+  max-width: 42rem;
+  color: var(--text);
+}
+
+/* A definition list rather than a table: these are four labelled figures, not
+   rows and columns, and dl is what that means semantically. */
+.figure-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 1rem;
+  margin: .5rem 0 0;
+  width: 100%;
+  max-width: 46rem;
+}
+.figure-row > div { text-align: center; }
+.figure-row dt {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.figure-row dd {
+  margin: .2rem 0 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-wide { width: 100%; max-width: 46rem; }
+
+/* ── expected monthly expenses panel ─────────────────────────────────────── */
+
+.alloc-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: .5rem 1.75rem;
+  font-size: .88rem;
+  color: var(--text-muted);
+  padding-bottom: .25rem;
+  border-bottom: 1px solid var(--border);
+}
+.alloc-summary strong { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* The bucket list scrolls inside the panel, as the mockup's "scroll list"
+   annotation asks, instead of growing the page indefinitely. */
+.bucket-list.panel-scroll { margin: 0; padding-right: .25rem; }
+
+.bucket-add summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: .9rem;
+  color: var(--brand);
+  padding: .35rem 0;
+}
+.bucket-add-open { border-top: 1px solid var(--border); padding-top: 1rem; }
+
+.chart-box-tall { height: 320px; }
+@media (max-width: 640px) { .chart-box-tall { height: 240px; } }
+
+/* The emergency fund is highlighted in the savings grid, since the dashboard
+   tab refers to it specifically. */
+.fund-emergency { border-color: var(--card-emergency-edge); }
+
+/* ============================================================================
+   Entry pages (/income and /expense)
+   ========================================================================= */
+
+/* Form on the left, the page's own chart and recent list on the right. Collapses
+   to one column before the form gets too narrow to use. */
+.entry-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+@media (max-width: 980px) { .entry-grid { grid-template-columns: 1fr; } }
+
+.entry-side { display: flex; flex-direction: column; gap: var(--gap); }
+
+.cards-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 420px) { .cards-2 { grid-template-columns: 1fr; } }
+
+/* A coloured top edge is enough to tell the two pages apart at a glance without
+   tinting the whole form and hurting contrast on the inputs. */
+.card-accent-income  { border-top: 3px solid var(--income); }
+.card-accent-expense { border-top: 3px solid var(--expense); }
+
+.stat-income { border-left: 3px solid var(--income); }
+.stat-expense { border-left: 3px solid var(--expense); }
+
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .5rem;
+}
+
+/* Page heading with a tinted icon badge. */
+.page-head h1 { display: flex; align-items: center; gap: .6rem; }
+.head-icon {
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 10px;
+  flex: 0 0 auto;
+}
+.head-icon .icon { width: 1.2rem; height: 1.2rem; }
+.head-income  { background: var(--income-soft);  color: var(--income); }
+.head-expense { background: var(--expense-soft); color: var(--expense); }
+
+/* Two fields side by side where they are naturally short. */
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: .9rem;
+}
+.field-row .field { margin-bottom: 0; }
+
+/* A currency prefix inside the input's border, so the field reads as money
+   without the placeholder having to say so. */
+.input-money { position: relative; display: block; }
+.input-prefix {
+  position: absolute;
+  left: .7rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-weight: 600;
+  pointer-events: none;
+}
+.input-money input { padding-left: 1.8rem !important; }
+
+/* ── Manual or Upload chooser ────────────────────────────────────────────── */
+
+.choice-row {
+  display: flex;
+  align-items: stretch;
+  gap: 1rem;
+  margin-top: .75rem;
+}
+@media (max-width: 620px) { .choice-row { flex-direction: column; } }
+
+.choice {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .3rem;
+  padding: 1.1rem;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.choice:hover {
+  border-color: var(--brand);
+  box-shadow: var(--shadow);
+  transform: translateY(-2px);
+  text-decoration: none;
+}
+.choice-icon {
+  display: grid;
+  place-items: center;
+  width: 2.3rem;
+  height: 2.3rem;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  margin-bottom: .2rem;
+}
+.choice-icon .icon { width: 1.2rem; height: 1.2rem; }
+.choice-name { font-weight: 700; font-size: 1.02rem; }
+.choice-desc { font-size: .86rem; color: var(--text-muted); }
+
+/* The "or" between the two options, as the brief's sketch shows. */
+.choice-or {
+  align-self: center;
+  color: var(--text-muted);
+  font-size: .85rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+/* ── compact lists and empty states ─────────────────────────────────────── */
+
+.mini-list { list-style: none; margin: 0; padding: 0; }
+.mini-list li {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .55rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.mini-list li:last-child { border-bottom: 0; }
+.mini-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.mini-date { font-size: .78rem; color: var(--text-muted); }
+.mini-amount { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mini-edit {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+.mini-edit:hover { background: var(--surface-3); color: var(--brand); }
+.mini-more { margin: .6rem 0 0; font-size: .88rem; }
+
+/* An honest empty state, rather than a chart drawn from invented numbers. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .35rem;
+  padding: 2rem 1rem;
+  text-align: center;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.empty-icon {
+  display: grid;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  margin-bottom: .2rem;
+}
+.empty-icon .icon { width: 1.3rem; height: 1.3rem; }
+.empty-title { margin: 0; font-weight: 600; }
+.empty-state .stat-note { margin: 0; }
+
+.table-compact th, .table-compact td { padding: .4rem .5rem; font-size: .88rem; }
+
+/* ── refinements to the shared chrome ───────────────────────────────────── */
+
+/* Sticky top bar: on a page as tall as Reports, losing the navigation to a
+   scroll is a real annoyance. */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  box-shadow: var(--shadow-sm);
+}
+
+.card { transition: box-shadow .15s ease; }
+
+/* Inputs get a visible focus ring that is not just the browser default, since
+   the default is nearly invisible against a tinted card. */
+.field input:focus-visible,
+.field select:focus-visible,
+.field textarea:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+  border-color: var(--brand);
+}
+
+/* An invalid field is marked once the browser knows it is invalid, rather than
+   immediately on an untouched empty form. */
+.field input:not(:placeholder-shown):invalid {
+  border-color: var(--expense);
+}
+
+/* The stat cards on the entry pages use spans rather than <h2>/<p>, because they
+   are labelled figures inside a card, not headings. These rules were lost when
+   the tab-card block replaced the old clickable-card block. */
+.stat-label {
+  display: block;
+  font-size: .74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-muted);
+}
+span.stat-value { display: block; margin: .2rem 0 0; }
+span.stat-note  { display: block; }
+
+/* ── entry pages, form only ──────────────────────────────────────────────── */
+
+/* The charts moved to the dashboard tabs, so these pages are a single centred
+   column rather than a two-column grid. */
+.entry-single {
+  max-width: 38rem;
+  margin: 0 auto;
+}
+.entry-foot {
+  margin: 1rem 0 0;
+  text-align: center;
+  font-size: .9rem;
+  color: var(--text-muted);
+}
+
+/* ── two charts side by side inside a dashboard panel ───────────────────── */
+
+.panel-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 1.25rem;
+  align-items: start;
+}
+.panel-chart { min-width: 0; }
+.panel-chart h3 {
+  font-size: .8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-muted);
+  text-align: center;
+  margin-bottom: .5rem;
+}
+.panel-subhead {
+  font-size: .8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-muted);
+  margin: .5rem 0 0;
+}
+
+/* The sign-in, about and forgot pages are shown to a signed-out visitor, who has
+   no navigation to display. The bar would be an empty strip, and the card
+   carries its own brand lockup. */
+body.is-auth .topbar { display: none; }
+body.is-auth .footer { display: none; }
+body.is-auth .container { padding-top: 0; }
+
+/* The recurring-expense planner, collapsed under the spending chart. It is a
+   planning tool; the question the tab opens on is "what did I spend". */
+.bucket-planner {
+  border-top: 1px solid var(--border);
+  padding-top: .85rem;
+  margin-top: .5rem;
+}
+.bucket-planner > summary {
+  cursor: pointer;
+  font-size: .82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--brand);
+  padding: .3rem 0;
+}
+.bucket-planner[open] > summary { margin-bottom: .75rem; }
+
+/* ── the headline figure at the top of a dashboard panel ─────────────────── */
+
+/* Both the income and expense tabs open with the actual total for the period, so
+   the first thing read is the number the user just changed. */
+.panel-total {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .15rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+}
+.panel-total-label {
+  font-size: .78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-muted);
+}
+.panel-total-value {
+  font-size: 2.1rem;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.panel-total-sub { font-size: .85rem; color: var(--text-muted); }
+@media (max-width: 640px) { .panel-total-value { font-size: 1.7rem; } }
+
+/* The add form, now inside the collapsed planner rather than out on the tab. */
+.bucket-add-inner {
+  border-top: 1px solid var(--border);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+.bucket-add-inner h3 {
+  font-size: .82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-muted);
+  margin-bottom: .6rem;
+}
+
+/* The "new savings fund" form, collapsed under the fund grid on the Emergency
+   Fund tab so the balances are what the tab opens on. */
+.fund-add {
+  border-top: 1px solid var(--border);
+  margin-top: 1rem;
+  padding-top: .75rem;
+}
+.fund-add > summary {
+  cursor: pointer;
+  font-size: .82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--brand);
+  padding: .3rem 0;
+}
+.fund-add[open] > summary { margin-bottom: .75rem; }
+
+/* Funds are nested inside a panel here, so their heading is an h4. */
+.fund-head h4 { margin: 0; display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+
+/* ============================================================================
+   Dialogs and contextual help
+   ========================================================================= */
+
+/* Both use the native <dialog>, so Escape, focus trapping and the backdrop come
+   from the browser instead of being re-implemented — and, crucially, the page
+   behind is made inert rather than merely covered. */
+dialog::backdrop {
+  background: rgba(15, 23, 42, .45);
+  backdrop-filter: blur(2px);
+}
+
+.modal,
+.help-panel {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 24px 60px -20px rgba(15, 23, 42, .35);
+  padding: 1.5rem;
+  max-width: min(30rem, calc(100vw - 2rem));
+  width: 100%;
+}
+.modal[open],
+.help-panel[open] { animation: modal-in .16s ease-out; }
+
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(.5rem) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Positioned relative to the panel, so it sits in the corner of the card rather
+   than the corner of the viewport. */
+.modal, .help-panel { position: relative; }
+
+.modal-close {
+  position: absolute;
+  top: .75rem;
+  right: .75rem;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.modal-close:hover { background: var(--surface-3); color: var(--text); }
+.modal-close .icon { width: 1.1rem; height: 1.1rem; }
+
+/* ── confirmation modal ──────────────────────────────────────────────────── */
+
+.modal-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding-right: 2rem; /* clear of the close button */
+}
+
+.modal-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 12px;
+}
+.modal-icon .icon { width: 1.5rem; height: 1.5rem; }
+.modal-icon-danger { background: var(--expense-soft); color: var(--expense); }
+
+.modal-title {
+  margin: 0 0 .3rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -.01em;
+}
+.modal-text { margin: 0; color: var(--text-muted); line-height: 1.45; }
+
+.modal-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: .75rem;
+  margin-top: 1.5rem;
+}
+.modal-actions .btn { min-height: 46px; font-size: 1rem; font-weight: 600; }
+
+.modal-cancel { background: var(--surface); border-color: var(--border-strong); }
+.modal-cancel:hover { background: var(--surface-2); }
+
+/* Solid red for the destructive confirm, so the two buttons cannot be confused
+   at a glance — unlike .btn-danger, which is an outline used for small inline
+   delete links. */
+.btn-danger-solid {
+  background: var(--expense);
+  border-color: var(--expense);
+  color: #fff;
+}
+.btn-danger-solid:hover { background: var(--expense-dark); border-color: var(--expense-dark); }
+
+@media (max-width: 420px) {
+  .modal-actions { grid-template-columns: 1fr; }
+}
+
+/* ── the floating help button ────────────────────────────────────────────── */
+
+.help-fab {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border: 0;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 6px 18px -4px rgba(37, 99, 235, .55);
+  transition: transform .15s ease, background .15s ease;
+}
+.help-fab:hover { background: var(--brand-dark); transform: translateY(-2px); }
+.help-fab .icon { width: 1.4rem; height: 1.4rem; }
+
+/* Clear of the toast stack, which occupies the same corner. This deliberately
+   overrides the bottom set in the toast block above — the help button did not
+   exist when that was written, and toasts must sit above it, not under it. */
+.toasts { bottom: 5.25rem; }
+
+@media (max-width: 640px) {
+  .help-fab { bottom: 1rem; right: 1rem; width: 2.75rem; height: 2.75rem; }
+  .toasts { bottom: 4.5rem; }
+}
+
+/* ── the help panel ──────────────────────────────────────────────────────── */
+
+.help-panel { max-width: min(34rem, calc(100vw - 2rem)); }
+
+.help-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: .35rem;
+  padding-right: 2rem;
+}
+.help-title { margin: 0; font-size: 1.15rem; font-weight: 700; }
+
+/* The topic's own <h3> duplicates the panel title, which the script copies up
+   into the header — so it is kept for that purpose but not shown twice. */
+.help-topic h3 {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.help-lead {
+  margin: 0 0 1rem;
+  color: var(--text-muted);
+  font-size: .95rem;
+  line-height: 1.5;
+}
+
+.help-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .8rem; }
+.help-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: .6rem;
+  font-size: .92rem;
+  line-height: 1.5;
+}
+.help-list .icon {
+  flex: 0 0 auto;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: .12rem;
+  color: var(--brand);
+}
+.help-list strong { font-weight: 600; }
+.help-list em { font-style: normal; font-weight: 600; color: var(--text); }
+
+/* Help is chrome, not content: it should not appear in a printout, and the
+   signed-out pages have no page to explain. */
+@media print { .help-fab, dialog { display: none !important; } }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Shared budgeting
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── the top bar: budget picker and sharing link ─────────────────────────── */
+
+/* The picker is deliberately quiet. It is a context switch, not an action, so it
+   reads as a label until hovered rather than competing with Log out. */
+.hh-switch { display: flex; align-items: center; gap: .4rem; }
+.hh-switch select {
+  max-width: 11rem;
+  padding: .3rem 1.6rem .3rem .55rem;
+  font-size: .85rem;
+  font-weight: 500;
+  color: var(--text);
+  background-color: var(--surface-2);
+  border-color: var(--border);
+  border-radius: var(--radius-sm);
+}
+.hh-switch select:hover { background-color: var(--surface-3); }
+
+.hh-link {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .34rem .5rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.hh-link:hover, .hh-link:focus-visible { background: var(--surface-3); color: var(--text); }
+.hh-link.is-current { background: var(--brand-soft); color: var(--brand); }
+.hh-link .icon { width: 1.15rem; height: 1.15rem; }
+
+/* Shown only for a role that cannot manage members, so its presence itself
+   carries the message "you have limited access here". */
+.role-badge {
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  padding: .12rem .34rem;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+}
+
+/* ── the pending-invitation banner ───────────────────────────────────────── */
+
+/* This stands in for an invitation email, so it is allowed to be prominent --
+   but it is still an offer rather than a warning, hence brand blue and not the
+   alert red used for genuine problems. */
+.invite-banner {
+  display: flex;
+  align-items: center;
+  gap: .9rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  padding: .85rem 1rem;
+  border: 1px solid var(--card-current-edge);
+  border-left: 4px solid var(--brand);
+  border-radius: var(--radius);
+  background: var(--brand-soft);
+  box-shadow: var(--shadow-sm);
+}
+.invite-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--brand);
+}
+.invite-icon .icon { width: 1.2rem; height: 1.2rem; }
+.invite-text {
+  flex: 1 1 16rem;
+  margin: 0;
+  font-size: .92rem;
+  line-height: 1.5;
+  color: var(--card-current-ink);
+}
+.invite-text .stat-note { display: block; }
+.invite-actions { display: flex; gap: .45rem; flex: 0 0 auto; }
+
+/* A standing reminder that the numbers on screen are not your own budget. Quiet
+   but always present: the mistake it prevents -- filing a personal expense
+   against a shared budget -- is easy to make and tedious to unpick. */
+.hh-context {
+  margin: -.25rem 0 1rem;
+  padding: .45rem .75rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: .85rem;
+}
+.hh-context strong { color: var(--text); font-weight: 600; }
+
+/* ── the sharing page ───────────────────────────────────────────────────── */
+
+.head-share { background: var(--brand-soft); color: var(--brand); }
+
+.tag-role { font-weight: 700; }
+.tag-role-owner  { background: var(--brand-soft); color: var(--brand); }
+.tag-role-editor { background: var(--good-bg);    color: var(--positive); }
+.tag-role-viewer { background: var(--surface-3);  color: var(--text-muted); }
+
+.sub-head {
+  margin: 1.5rem 0 .6rem;
+  font-size: .95rem;
+  font-weight: 600;
+}
+
+.invite-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+.invite-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  flex-wrap: wrap;
+  padding: .6rem .75rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: .9rem;
+}
+.invite-row .stat-note { display: block; }
+
+/* Destructive settings, fenced off. The border is the whole point: it separates
+   "leave" and "delete" from the ordinary forms above so neither is reached by
+   accident while scrolling. */
+.card-danger { border-color: var(--expense-soft); }
+.card-danger > h2 { color: var(--expense-dark); }
+
+.danger-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: .85rem 0;
+  border-top: 1px solid var(--border);
+}
+.danger-row h3 { margin: 0 0 .2rem; font-size: .95rem; }
+.danger-row .hint { margin: 0; max-width: 34rem; }
+.danger-row form { margin-top: 0; }
+
+/* ── attribution ────────────────────────────────────────────────────────── */
+
+/* "Added by" sits with the other optional detail on a row, so it inherits
+   .tx-detail's styling and needs only to stand slightly apart from it. */
+.tx-author { color: var(--brand); }
+
+/* ── the 403 page ───────────────────────────────────────────────────────── */
+
+.notice-card { text-align: center; padding: 2.25rem 1.75rem; }
+.notice-icon {
+  display: grid;
+  place-items: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  margin: 0 auto 1rem;
+  border-radius: 50%;
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.notice-icon .icon { width: 1.75rem; height: 1.75rem; }
+.notice-card h1 { margin: 0 0 .5rem; font-size: 1.35rem; }
+.notice-lead {
+  margin: 0 auto .75rem;
+  max-width: 30rem;
+  color: var(--text);
+  line-height: 1.55;
+}
+.notice-card .hint { margin: 0 auto 1.25rem; max-width: 30rem; }
+.notice-card .form-actions { justify-content: center; }
+
+/* On a narrow screen the banner's buttons need the full width rather than being
+   squeezed beside the text. */
+@media (max-width: 560px) {
+  .invite-banner { align-items: flex-start; }
+  .invite-actions { width: 100%; }
+  .invite-actions form, .invite-actions .btn { flex: 1 1 auto; }
+  .hh-switch select { max-width: 7.5rem; }
+  .danger-row { align-items: flex-start; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Active devices
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.head-session { background: var(--brand-soft); color: var(--brand); }
+
+/* The row you are reading the page from. Tinted rather than badged alone, so it
+   is findable at a glance in a list of near-identical browser strings. */
+.is-current-session { background: var(--brand-soft); }
+.is-current-session td { border-color: var(--card-current-edge); }
+
+.tag-current {
+  background: var(--brand);
+  color: var(--brand-contrast);
+  font-weight: 700;
+}
+
+/* A browser's self-description is long and low-value; let it wrap small rather
+   than push the action column off a narrow screen. */
+.table-transactions .tx-agent,
+.is-current-session strong,
+.table td strong { overflow-wrap: anywhere; }

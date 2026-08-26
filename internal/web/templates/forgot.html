@@ -1,0 +1,64 @@
+{{define "content"}}
+<div class="form-wrapper">
+  <div class="card form-card">
+    <h1>Forgot password</h1>
+
+    {{if .Sent}}
+    {{/*
+      Shown whether or not the address is registered. The wording therefore has
+      to be true in both cases -- "if that address has an account" rather than
+      "we have emailed you" -- because a page that confirmed the account exists
+      would turn this form into a way of testing addresses.
+    */}}
+    <p class="callout callout-info">
+      If <strong>{{.Email}}</strong> has an account, a reset link is on its way.
+      It works once and expires in an hour.
+    </p>
+
+    {{if not .MailEnabled}}
+    <p class="callout callout-warn">
+      Email is not configured on this server, so nothing was actually sent — the
+      link was written to the server log instead. Whoever runs this installation
+      can read it from there, or set <code>YABA_SMTP_HOST</code> and restart.
+    </p>
+    {{end}}
+
+    <p>Nothing arrived after a few minutes? Check the spam folder, then try again.</p>
+
+    <p class="form-alt"><a href="/">Back to sign in</a></p>
+
+    {{else}}
+
+    <p class="stat-note">
+      Enter the email address you sign in with and we will send you a link to
+      choose a new password.
+    </p>
+
+    {{if .Error}}
+    <p class="field-error" role="alert">{{.Error}}</p>
+    {{end}}
+
+    <form method="POST" action="/forgot" novalidate>
+      {{template "csrf" .}}
+
+      <div class="field">
+        <label for="email">Email address</label>
+        <input id="email" name="email" type="email" inputmode="email"
+               autocomplete="email" autocapitalize="none" spellcheck="false"
+               value="{{.Email}}" required autofocus>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Send me a link</button>
+        <a class="btn btn-quiet" href="/">Cancel</a>
+      </div>
+    </form>
+
+    <p class="stat-note">
+      If you run this server yourself, <code>yaba passwd</code> sets a password
+      directly and needs no email at all.
+    </p>
+    {{end}}
+  </div>
+</div>
+{{end}}

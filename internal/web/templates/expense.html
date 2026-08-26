@@ -1,0 +1,288 @@
+{{define "helptopics"}}
+<div class="help-topic" data-topic="_">
+  <h3>Add Expense</h3>
+  <p class="help-lead">Record money going out, by typing it in or from a receipt.</p>
+  <ul class="help-list">
+    <li>{{template "icon" "check-circle"}}
+      <span><strong>Manual</strong> is fastest for one item. <strong>Upload</strong>
+      takes a photo or PDF of a receipt, queues it, and tells you when it is
+      ready — you do not have to wait on the page.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span><strong>What?</strong> is the category and drives the spending chart.
+      Who, Where and Why are optional — useful when you look back in six
+      months.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span><strong>Essential or not</strong> is the needs-versus-wants call. Your
+      essential spending is what sizes your emergency fund target, so it is worth
+      getting right.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>One shop trip covering several categories? Use <em>Break this into
+      items</em> and each line counts under its own category.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>See the breakdown on the <a href="/dashboard?tab=expenses">Monthly
+      Expenses</a> tab, or the full list under
+      <a href="/transactions?type=expense">Transactions</a>.</span></li>
+  </ul>
+</div>
+{{end}}
+
+{{define "content"}}
+
+{{/*
+  Add Expense — the chooser, then the form. Nothing else.
+
+  No chart and no recent list: those belong on the dashboard's Expected Monthly
+  Expenses tab. Nothing on this page mentions income.
+*/}}
+
+<div class="page-head">
+  <h1><span class="head-icon head-expense">{{template "icon" "minus"}}</span> Add Expense</h1>
+  <a class="btn btn-quiet" href="/dashboard">Back to dashboard</a>
+</div>
+
+<div class="entry-single">
+
+  {{if eq .Step "choose"}}
+  {{if .Waiting}}
+  <!-- ── receipts already uploaded and still waiting for their details ───────── -->
+  <div class="card">
+    <h2>Waiting for details</h2>
+    <p class="stat-note">
+      {{if eq (len .Waiting) 1}}One receipt has{{else}}{{len .Waiting}} receipts have{{end}}
+      been uploaded to this budget but not entered yet. Amounts aren't read off
+      the image, so each one needs its figure typed in.
+    </p>
+    <ul class="waiting-receipts">
+      {{range .Waiting}}
+      <li>
+        <span class="waiting-name">{{.OriginalName}}</span>
+        <span class="stat-note">uploaded {{.CreatedAt}}</span>
+        <span class="waiting-actions">
+          <a class="btn btn-small btn-primary"
+             href="/transactions/new?type=expense&amp;receipt={{.ID}}">Enter details</a>
+          {{/* A duplicate or a mis-picked file needs a way out that is not
+               "invent an expense for it". POST, so no prefetch or crawler can
+               reach it, and confirmed because the file goes with the row. */}}
+          <form method="POST" action="/receipts/{{.ID}}/discard" class="inline-form"
+                onsubmit="return confirm('Discard {{.OriginalName}}? The uploaded file is deleted.')">
+            {{template "csrf" $}}
+            <button type="submit" class="btn btn-small btn-quiet">Discard</button>
+          </form>
+        </span>
+      </li>
+      {{end}}
+    </ul>
+  </div>
+  {{end}}
+
+  <!-- ── step 1: how? ───────────────────────────────────────────────────────── -->
+  <div class="card card-accent-expense">
+    <h2>How would you like to add it?</h2>
+
+    <div class="choice-row">
+      <a class="choice" href="/expense?step=manual">
+        <span class="choice-icon">{{template "icon" "pencil"}}</span>
+        <span class="choice-name">Manual</span>
+        <span class="choice-desc">Type in the details yourself. Fastest for a single item.</span>
+      </a>
+
+      <span class="choice-or" aria-hidden="true">or</span>
+
+      <button type="button" class="choice" data-open-receipt aria-controls="receipt-panel"
+              aria-expanded="false">
+        <span class="choice-icon">{{template "icon" "upload"}}</span>
+        <span class="choice-name">Upload</span>
+        <span class="choice-desc">Attach a photo or PDF of a receipt and we'll queue it.</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── the upload panel, revealed by the Upload choice ────────────────────── -->
+  <div class="card" id="receipt-panel" hidden>
+    <h2>Upload a receipt</h2>
+
+    <form method="POST" action="/import/receipt" enctype="multipart/form-data">
+      {{template "csrf" .}}
+
+      <div class="field">
+        <label for="receipt">Receipt file</label>
+        {{/* capture="environment" asks a phone for its rear camera; the same
+             input is an ordinary file picker on a desktop browser. One input
+             covers both, with no device sniffing. */}}
+        <input id="receipt" name="receipt" type="file" required
+               accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+               capture="environment">
+        <p class="hint">JPEG, PNG, WebP, GIF or PDF.</p>
+      </div>
+
+      <div class="callout">
+        <p><strong>You don't have to wait.</strong> The file is queued and
+           processed in the background — carry on using YABA and a notification
+           appears when it's ready.</p>
+        <p class="stat-note">
+          The amount is not read off the image: the receipt is stored and
+          attached, and waits on this page for you to type the figure. Either way
+          you'll be told, including next time you sign in if something failed
+          while you were away.
+        </p>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">
+          {{template "icon" "upload"}} Upload and queue
+        </button>
+        <button type="button" class="btn btn-quiet" data-close-receipt>Cancel</button>
+      </div>
+    </form>
+  </div>
+
+  {{else}}
+  <!-- ── step 2: the manual form ────────────────────────────────────────────── -->
+  <div class="card card-accent-expense">
+    <div class="card-head">
+      <h2>Enter details</h2>
+      <a class="btn btn-small btn-quiet" href="/expense">← Choose a different method</a>
+    </div>
+
+    {{with .Error}}
+    <p class="field-error" role="alert">{{.}}</p>
+    {{end}}
+
+    <form method="POST" action="/expense" enctype="multipart/form-data" novalidate>
+      {{/* One-time token: a double click, a slow tap repeated, or the back
+           button followed by Save would otherwise record this money twice.
+           Spent on the first successful submit. */}}
+      {{if .FormToken}}<input type="hidden" name="form_token" value="{{.FormToken}}">{{end}}
+      {{template "csrf" .}}
+
+      <div class="field">
+        <label for="label">What?</label>
+        <input id="label" name="label" type="text" required maxlength="60"
+               value="{{.Label}}" list="category-options"
+               placeholder="Food, Rent, Fuel…" autofocus>
+        <datalist id="category-options">
+          {{range .Categories}}<option value="{{.}}"></option>{{end}}
+        </datalist>
+        <p class="hint">The category. This is what the chart groups by.</p>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="date">When?</label>
+          <input id="date" name="date" type="date" required value="{{.OccurredOn}}" max="2200-12-31">
+        </div>
+        <div class="field">
+          <label for="amount">Amount</label>
+          <div class="input-money">
+            <span class="input-prefix" aria-hidden="true">$</span>
+            <input id="amount" name="amount" type="number" step="0.01" min="0.01"
+                   inputmode="decimal" required value="{{.Amount}}" placeholder="0.00">
+          </div>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="payee">Who?</label>
+          <input id="payee" name="payee" type="text" maxlength="60" value="{{.Payee}}"
+                 placeholder="Walmart, landlord…">
+          <p class="hint">Optional.</p>
+        </div>
+        <div class="field">
+          <label for="place">Where?</label>
+          <input id="place" name="place" type="text" maxlength="60" value="{{.Place}}"
+                 placeholder="High Street, online…">
+          <p class="hint">Optional.</p>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="note">Why?</label>
+        <textarea id="note" name="note" rows="2" maxlength="500"
+                  placeholder="Weekly shop">{{.Note}}</textarea>
+        <p class="hint">Optional. Useful when you look back in six months.</p>
+      </div>
+
+      {{/* Needs vs wants — the distinction the presentation calls out as YABA's
+           differentiator, and what sizes the emergency fund target. */}}
+      <fieldset class="field">
+        <legend>Is this essential?</legend>
+        <div class="radio-row">
+          <label class="radio">
+            <input type="radio" name="essential" value="yes" {{if .Essential}}checked{{end}}>
+            Essential — a need
+          </label>
+          <label class="radio">
+            <input type="radio" name="essential" value="no" {{if not .Essential}}checked{{end}}>
+            Non-essential — a want
+          </label>
+        </div>
+      </fieldset>
+
+      {{if .Buckets}}
+      <div class="field">
+        <label for="bucket_id">Pays towards</label>
+        <select id="bucket_id" name="bucket_id">
+          <option value="">Nothing recurring</option>
+          {{range .Buckets}}
+          <option value="{{.ID}}" {{if eq .ID $.BucketID}}selected{{end}}>
+            {{.Name}} ({{.CostKind.Label}})
+          </option>
+          {{end}}
+        </select>
+        <p class="hint">
+          Link this to a recurring monthly expense so YABA learns what it costs.
+        </p>
+      </div>
+      {{end}}
+
+      <details class="field line-items">
+        <summary>Break this into items</summary>
+        <p class="hint">
+          For a shop trip covering several categories. The items must add up to
+          the amount above, so the breakdown and your spending total agree.
+        </p>
+
+        <div data-item-rows></div>
+
+        <div class="item-row" data-item-template>
+          <label class="visually-hidden" for="item-desc-new">Item description</label>
+          <input id="item-desc-new" name="item_description" type="text" maxlength="60" placeholder="Description">
+          <label class="visually-hidden" for="item-cat-new">Item category</label>
+          <input id="item-cat-new" name="item_category" type="text" maxlength="60" placeholder="Category" list="category-options">
+          <label class="visually-hidden" for="item-amt-new">Item amount</label>
+          <input id="item-amt-new" name="item_amount" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="0.00">
+        </div>
+
+        <p class="item-tools">
+          <button type="button" class="btn btn-small btn-quiet" data-add-item>Add another item</button>
+          <span class="stat-note" data-item-total></span>
+        </p>
+      </details>
+
+      <div class="field">
+        <label for="receipt-inline">Receipt (optional)</label>
+        <input id="receipt-inline" name="receipt" type="file"
+               accept="image/jpeg,image/png,image/webp,image/gif,application/pdf">
+        <p class="hint">Attached to this expense.</p>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn-expense btn-lg">
+          {{template "icon" "minus"}} Save Expense
+        </button>
+        <a class="btn btn-quiet" href="/dashboard">Cancel</a>
+      </div>
+    </form>
+  </div>
+  {{end}}
+
+  <p class="entry-foot">
+    Your spending breakdown lives on the
+    <a href="/dashboard?tab=expenses">Expected Monthly Expenses</a> tab.
+  </p>
+</div>
+
+<script src="{{asset "form.js"}}" defer></script>
+<script src="{{asset "import.js"}}" defer></script>
+{{end}}

@@ -1,0 +1,50 @@
+{{/*
+  Contextual help.
+
+  A floating "?" that opens a panel describing only the screen you are on. Each
+  page supplies its own copy by redefining "helptopics" below; a page parsed
+  without one falls back to the empty default here, so a new page cannot break
+  the render by forgetting.
+
+  That override works because every page is parsed as its own template set —
+  layout, then partials, then the page — and a later definition of a name
+  replaces an earlier one. The page file is parsed last, so its "helptopics"
+  wins over this default.
+*/}}
+{{define "helptopics"}}{{end}}
+
+{{define "helpbutton"}}
+<button type="button" class="help-fab" data-help-open
+        aria-label="What is this page for?" aria-haspopup="dialog">
+  {{template "icon" "help"}}
+</button>
+
+{{/*
+  A real <dialog>, so Escape, focus trapping and the backdrop come from the
+  browser rather than being re-implemented. It is opened by script; with
+  scripting off the button simply does nothing, which is acceptable for help
+  text — unlike the logout dialog, where the form still has to work.
+*/}}
+<dialog class="help-panel" id="help-panel" aria-labelledby="help-panel-title">
+  <div class="help-head">
+    <h2 class="help-title" id="help-panel-title" data-help-title>About this page</h2>
+    <button type="button" class="modal-close" data-help-close aria-label="Close">
+      {{template "icon" "close"}}
+    </button>
+  </div>
+
+  <div data-help-body>
+    {{template "helptopics" .}}
+  </div>
+</dialog>
+{{end}}
+
+{{/*
+  One topic. Rendered hidden; the script reveals whichever matches the current
+  context — for the dashboard that is the selected tab, elsewhere there is only
+  one.
+
+  Call as:  {{template "helptopic" ...}}  is not possible with several arguments,
+  so topics are written out longhand in each page instead. The markup contract is
+  just: .help-topic[data-topic], an h3, a lead <p>, and a <ul class="help-list">.
+*/}}

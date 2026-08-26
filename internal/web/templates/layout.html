@@ -1,0 +1,186 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- The old templates had no viewport tag and no media queries, so the whole
+     app rendered at desktop width on a phone -- which is where most people
+     actually log an expense. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · YABA</title>
+<link rel="stylesheet" href="{{asset "style.css"}}">
+</head>
+<body{{if not .Username}} class="is-auth"{{end}}>
+
+{{template "iconsprite" .}}
+
+<a class="skip-link" href="#main">Skip to main content</a>
+
+<header class="topbar">
+  <a class="logo" href="{{if .Username}}/dashboard{{else}}/{{end}}">YABA</a>
+
+  {{if .Username}}
+  <nav class="mainnav" aria-label="Main">
+    <a href="/dashboard" {{if eq .Nav "dashboard"}}aria-current="page"{{end}}>Dashboard</a>
+    <a href="/transactions" {{if eq .Nav "transactions"}}aria-current="page"{{end}}>Transactions</a>
+    <a href="/reports" {{if eq .Nav "reports"}}aria-current="page"{{end}}>Reports</a>
+  </nav>
+
+  <div class="user-actions">
+    {{/*
+      The budget picker. Shown only when there is more than one thing to pick,
+      so somebody using YABA alone never sees a control with a single option in
+      it — the feature stays invisible until it is useful.
+
+      A form rather than a link: switching budgets changes server state, and a
+      GET that mutated it could be fired by a prefetch.
+    */}}
+    {{if gt (len .Households) 1}}
+    <form method="POST" action="/household/switch" class="hh-switch">
+      {{template "csrf" .}}
+      <label class="visually-hidden" for="hh-switch">Budget</label>
+      <select id="hh-switch" name="household_id" onchange="this.form.submit()">
+        {{range .Households}}
+        <option value="{{.ID}}" {{if eq .Name $.Household}}selected{{end}}>
+          {{.Name}}{{if not .Personal}} ({{.Members}}){{end}}
+        </option>
+        {{end}}
+      </select>
+      <noscript><button type="submit" class="btn btn-small btn-quiet">Switch</button></noscript>
+    </form>
+    {{end}}
+
+    <a class="hh-link {{if eq .Nav "sessions"}}is-current{{end}}" href="/sessions"
+       title="Active devices">
+      {{template "icon" "shield"}}
+      <span class="visually-hidden">Active devices</span>
+    </a>
+
+    <a class="hh-link {{if eq .Nav "household"}}is-current{{end}}" href="/household"
+       title="Sharing and members">
+      {{template "icon" "users"}}
+      <span class="visually-hidden">Sharing</span>
+      {{/* The role is worth showing constantly when it limits what you can do.
+           An owner is the default case and needs no badge. */}}
+      {{if not .Role.CanManageMembers}}
+      <span class="role-badge">{{.Role.Label}}</span>
+      {{end}}
+    </a>
+
+    <span class="welcome">{{.Username}}</span>
+    <!-- Logout is a form, not a link: a GET /logout can be triggered by any
+         page that embeds it, or by a browser prefetching the link.
+
+         data-confirm-dialog makes the script intercept the submit and ask first.
+         The form is still an ordinary POST, so with scripting off the button logs
+         you straight out rather than doing nothing — the confirmation is an
+         enhancement, not the mechanism. -->
+    <form method="POST" action="/logout" class="inline-form"
+          data-confirm-dialog="logout-dialog">
+      {{template "csrf" .}}
+      <button type="submit" class="btn btn-quiet">Log out</button>
+    </form>
+  </div>
+  {{end}}
+</header>
+
+<main id="main" class="container">
+
+  {{with .Flash}}
+  <!-- role=status announces the message to a screen reader without stealing
+       focus. The old app had nowhere to show one: failures were logged to the
+       server console and the user saw an ordinary redirect. -->
+  <div class="flash flash-{{.Kind}}" role="status">{{.Text}}</div>
+  {{end}}
+
+  {{/*
+    Pending invitations.
+
+    This banner is what stands in for the invitation email this deployment
+    cannot send. It appears on every page rather than only on the sharing
+    settings page, because somebody who has just been invited has no reason to
+    go looking for a settings page they have never visited.
+  */}}
+  {{range .Invites}}
+  <div class="invite-banner" role="status">
+    <span class="invite-icon" aria-hidden="true">{{template "icon" "users"}}</span>
+    <p class="invite-text">
+      {{with .InvitedBy}}<strong>{{.}}</strong> invited{{else}}You are invited{{end}}
+      you to share <strong>{{.HouseholdName}}</strong>
+      as {{if eq .Role.Label "Editor"}}an{{else}}a{{end}} {{.Role.Label}}.
+      <span class="stat-note">{{.Role.Explain}}</span>
+    </p>
+    <span class="invite-actions">
+      <form method="POST" action="/invites/{{.ID}}/accept" class="inline-form">
+        {{template "csrf" $}}
+        <button type="submit" class="btn btn-small btn-primary">Accept</button>
+      </form>
+      <form method="POST" action="/invites/{{.ID}}/decline" class="inline-form">
+        {{template "csrf" $}}
+        <button type="submit" class="btn btn-small btn-quiet">Decline</button>
+      </form>
+    </span>
+  </div>
+  {{end}}
+
+  {{/* A standing reminder when the budget on screen is not your own. Without it
+       it is far too easy to record a personal expense against a shared budget,
+       which is the mistake this feature makes newly possible. */}}
+  {{if not .Personal}}
+  <p class="hh-context">
+    Viewing the shared budget <strong>{{.Household}}</strong> · you are
+    {{if eq .Role.Label "Editor"}}an{{else}}a{{end}} {{.Role.Label}}
+    · <a href="/household">manage sharing</a>
+  </p>
+  {{end}}
+
+  {{template "content" .}}
+</main>
+
+{{if .Username}}
+{{/*
+  Toast region. The wireframe: "a gentle notification is given (gentle meaning it
+  pops up, lives for a few seconds, then makes itself go away)".
+
+  aria-live=polite announces a toast without stealing focus, which is what makes
+  it gentle for a screen reader too rather than just visually.
+*/}}
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+<script src="{{asset "toasts.js"}}" defer></script>
+
+{{template "helpbutton" .}}
+
+{{/* The log-out confirmation. Its primary action submits the form above rather
+     than posting on its own, so there is one logout path and one CSRF token. */}}
+<dialog class="modal" id="logout-dialog" aria-labelledby="logout-dialog-title">
+  <button type="button" class="modal-close" data-modal-close aria-label="Close">
+    {{template "icon" "close"}}
+  </button>
+
+  <div class="modal-body">
+    <span class="modal-icon modal-icon-danger" aria-hidden="true">
+      {{template "icon" "warning"}}
+    </span>
+    <div>
+      <h2 class="modal-title" id="logout-dialog-title">Log out?</h2>
+      <p class="modal-text">You'll need to sign in again to access your account.</p>
+    </div>
+  </div>
+
+  <div class="modal-actions">
+    <button type="button" class="btn modal-cancel" data-modal-close>No, stay</button>
+    <button type="button" class="btn btn-danger-solid" data-modal-confirm>Yes, log out</button>
+  </div>
+</dialog>
+
+<script src="{{asset "ui.js"}}" defer></script>
+{{end}}
+
+<footer class="footer">
+  {{/* /about is linked from here rather than from the login page, which the
+       brief asked to keep free of a "Learn more" link. Without this the page
+       would be orphaned. */}}
+  <p>YABA — Yet Another Budgeting App · <a href="/about">What is YABA?</a></p>
+</footer>
+
+</body>
+</html>{{end}}

@@ -1,0 +1,147 @@
+{{/*
+  Icon sprite.
+
+  Inline SVG rather than an icon font from a CDN: no third-party request, no
+  extra Content-Security-Policy allowance, works with no network, and each icon
+  inherits its colour from `currentColor` so the same markup is correct in both
+  themes.
+
+  Defined once as a hidden <svg> of <symbol>s, then referenced with <use>, so the
+  path data appears in the document a single time however many places use it.
+
+  Call as: {{template "icon" "wallet"}}
+*/}}
+{{define "iconsprite"}}
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    {{/* Stroke-based line icons at a 24x24 grid, sharing one style so they look
+         like a set rather than four unrelated glyphs. */}}
+    <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2"/>
+      <path d="M3 8v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2H5a2 2 0 0 1-2-2Z"/>
+      <circle cx="16.5" cy="14.5" r="1.2"/>
+    </symbol>
+
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3l7 3v5.5c0 4.3-2.9 8.2-7 9.5-4.1-1.3-7-5.2-7-9.5V6l7-3Z"/>
+      <path d="M9.5 12.2l1.9 1.9 3.4-3.6"/>
+    </symbol>
+
+    {{/* Two people: the sharing icon. One head-and-shoulders in front, a second
+         offset behind, which reads as "more than one person" at 18px where a
+         detailed group of three turns to mud. */}}
+    <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="9" cy="8" r="3.4"/>
+      <path d="M2.6 20a6.6 6.6 0 0 1 12.8 0"/>
+      <path d="M16.2 5.2a3.4 3.4 0 0 1 0 6.6"/>
+      <path d="M17.6 14.4A6.6 6.6 0 0 1 21.4 20"/>
+    </symbol>
+
+    <symbol id="i-trending-up" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 17l6-6 4 4 7-7"/>
+      <path d="M15 8h5v5"/>
+    </symbol>
+
+    <symbol id="i-receipt" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 3h12v18l-3-1.8-3 1.8-3-1.8L6 21V3Z"/>
+      <path d="M9.5 8h5M9.5 12h5"/>
+    </symbol>
+
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 5v14M5 12h14"/>
+    </symbol>
+
+    <symbol id="i-minus" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 12h14"/>
+    </symbol>
+
+    <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 6h13M8 12h13M8 18h13"/>
+      <path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>
+    </symbol>
+
+    <symbol id="i-piggy" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 12a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1a4 4 0 0 1-4 4h-1l-1 2H10l-1-2H8a4 4 0 0 1-4-4v-1Z"/>
+      <path d="M2.5 11.5l1.8.6M15.5 10h.01"/>
+    </symbol>
+
+    <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>
+    </symbol>
+
+    <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 16V4"/>
+      <path d="M8 8l4-4 4 4"/>
+      <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+    </symbol>
+
+    <symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 20h4l10-10-4-4L4 16v4Z"/>
+      <path d="M13.5 6.5l4 4"/>
+    </symbol>
+
+    {{/* Two eyes: the crossed-out one is swapped in by auth.js when the password
+         is visible, so the button's state is legible without colour. */}}
+    <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z"/>
+      <circle cx="12" cy="12" r="2.6"/>
+    </symbol>
+
+    <symbol id="i-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 3l18 18"/>
+      <path d="M10.6 6.2A9.9 9.9 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-2.8 3.3"/>
+      <path d="M6.3 7.8A17 17 0 0 0 2 12s3.6 6 10 6a9.6 9.6 0 0 0 3.6-.7"/>
+      <path d="M9.6 9.9a2.6 2.6 0 0 0 3.6 3.6"/>
+    </symbol>
+
+    {{/* Help, and the two glyphs the dialogs use. */}}
+    <symbol id="i-help" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="9.2"/>
+      <path d="M9.3 9.2a2.8 2.8 0 1 1 4.3 2.4c-.9.6-1.6 1-1.6 2.1"/>
+      <path d="M12 17.3h.01"/>
+    </symbol>
+
+    <symbol id="i-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3.8 2.6 20.2h18.8L12 3.8Z"/>
+      <path d="M12 10v4.2M12 17.4h.01"/>
+    </symbol>
+
+    <symbol id="i-check-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="9"/>
+      <path d="M8.2 12.3l2.6 2.6 5-5.4"/>
+    </symbol>
+
+    <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 6l12 12M18 6L6 18"/>
+    </symbol>
+
+    <symbol id="i-empty" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="8.5"/>
+      <path d="M8.5 12h7"/>
+    </symbol>
+  </defs>
+</svg>
+{{end}}
+
+{{/* aria-hidden because every icon in this app sits next to its own text label,
+     so announcing it again would just be noise. */}}
+{{define "icon"}}<svg class="icon" aria-hidden="true" focusable="false"><use href="#i-{{.}}"/></svg>{{end}}

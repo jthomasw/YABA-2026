@@ -1,0 +1,308 @@
+{{define "helptopics"}}
+<div class="help-topic" data-topic="_">
+  <h3>Sharing</h3>
+  <p class="help-lead">Work on one budget with other people, each with their own level of access.</p>
+  <ul class="help-list">
+    <li>{{template "icon" "check-circle"}}
+      <span>Your own budget is private and always stays that way. To share, create
+      a <strong>shared budget</strong> and invite people to that — nothing you have
+      already recorded moves into it.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span><strong>Owner</strong> controls everything, including members and
+      savings. <strong>Editor</strong> records income and expenses but cannot move
+      money in or out of savings funds. <strong>Viewer</strong> can look and
+      nothing more.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      {{if .MailEnabled}}
+      <span>An invitation is emailed to them, and also appears as a banner the
+      next time they sign in. It expires in 24 hours.</span></li>
+      {{else}}
+      <span>There is no email server configured, so an invitation appears as a
+      banner the next time that person signs in. Tell them to expect it.</span></li>
+      {{end}}
+    <li>{{template "icon" "check-circle"}}
+      <span>Use the picker in the top bar to move between your own budget and any
+      shared ones. Whatever is selected there is what
+      <a href="/dashboard">Dashboard</a> and
+      <a href="/transactions">Transactions</a> show.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Removing someone leaves everything they entered in place — the
+      entries belong to the budget, not to them, so your totals do not
+      change.</span></li>
+  </ul>
+</div>
+{{end}}
+
+{{define "content"}}
+
+<div class="page-head">
+  <h1><span class="head-icon head-share">{{template "icon" "users"}}</span> Sharing</h1>
+  <a class="btn btn-quiet" href="/dashboard">Back to dashboard</a>
+</div>
+
+<div class="entry-single">
+
+  {{/* ── which budget is this? ────────────────────────────────────────────── */}}
+  <div class="card">
+    <div class="card-head">
+      <h2>{{.Household}}</h2>
+      <span class="tag tag-role tag-role-{{.Role}}">{{.Role.Label}}</span>
+    </div>
+
+    {{if .Personal}}
+    <p class="hint">
+      This is your own private budget. Nobody else can see it, and it cannot be
+      shared — create a shared budget below instead.
+    </p>
+    {{else}}
+    <p class="hint">{{.Role.Explain}}</p>
+
+    {{if .Role.CanManageHousehold}}
+    <form method="POST" action="/household/rename" class="row-form">
+      {{template "csrf" .}}
+      <div class="field">
+        <label for="hh-name">Budget name</label>
+        <input id="hh-name" name="name" type="text" required maxlength="60"
+               value="{{.Household}}">
+      </div>
+      <button type="submit" class="btn btn-primary">Save name</button>
+    </form>
+    {{end}}
+    {{end}}
+  </div>
+
+  {{/* ── members ──────────────────────────────────────────────────────────── */}}
+  <div class="card">
+    <h2>Who has access</h2>
+
+    <div class="table-scroll">
+      <table class="table">
+        <caption class="visually-hidden">People who can see this budget</caption>
+        <thead>
+          <tr>
+            <th scope="col">Person</th>
+            <th scope="col">Access</th>
+            <th scope="col"><span class="visually-hidden">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Members}}
+          <tr>
+            <td data-label="Person">
+              <strong>{{.Name}}</strong>{{if .IsSelf}} <span class="tag">You</span>{{end}}
+              <div class="tx-detail"><span>{{.Email}}</span></div>
+            </td>
+
+            <td data-label="Access">
+              {{/* An owner gets a live selector; everyone else gets the label.
+                   The condition is the same method the middleware enforces, so a
+                   control can never appear where the POST would be refused. */}}
+              {{if $.Role.CanManageMembers}}
+              <form method="POST" action="/household/members/{{.UserID}}/role" class="inline-form">
+                {{template "csrf" $}}
+                <label class="visually-hidden" for="role-{{.UserID}}">Access for {{.Name}}</label>
+                <select id="role-{{.UserID}}" name="role" onchange="this.form.submit()">
+                  {{$current := .Role}}
+                  {{range $.Roles}}
+                  <option value="{{.}}" {{if eq . $current}}selected{{end}}>{{.Label}}</option>
+                  {{end}}
+                </select>
+                <noscript><button type="submit" class="btn btn-small btn-quiet">Set</button></noscript>
+              </form>
+              {{else}}
+              <span class="tag tag-role tag-role-{{.Role}}">{{.Role.Label}}</span>
+              {{end}}
+            </td>
+
+            <td class="row-actions">
+              {{if and $.Role.CanManageMembers (not .IsSelf)}}
+              {{/* Handing over the budget. One action rather than promote-then-
+                   demote, which leaves the household briefly co-owned. Not
+                   offered for someone who is already an owner, and not for
+                   yourself. */}}
+              {{if ne .Role "owner"}}
+              <form method="POST" action="/household/members/{{.UserID}}/transfer"
+                    class="inline-form danger-form"
+                    data-confirm="Make {{.Name}} the owner of this budget? You become an editor, so you will no longer be able to move savings or manage members.">
+                {{template "csrf" $}}
+                <button type="submit" class="btn btn-small btn-quiet">Make owner</button>
+              </form>
+              {{end}}
+              <form method="POST" action="/household/members/{{.UserID}}/remove"
+                    class="inline-form danger-form"
+                    data-confirm="Remove {{.Name}} from this budget? Anything they entered stays.">
+                {{template "csrf" $}}
+                <button type="submit" class="btn btn-small btn-danger">Remove</button>
+              </form>
+              {{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {{/* ── invitations ──────────────────────────────────────────────────────── */}}
+  {{if and .Role.CanManageMembers (not .Personal)}}
+  <div class="card">
+    <h2>Invite someone</h2>
+
+    <div class="callout">
+      {{if .MailEnabled}}
+      <p><strong>They get an email.</strong> It says who invited them, which
+         budget, and what access they will have — and asks them to sign in with
+         this address. Invitations expire after 24 hours; use Resend if one
+         lapses.</p>
+      <p class="stat-note">There is no accept link in the email on purpose. A
+         link that granted access on click would be a credential sitting in an
+         inbox, forwardable to anyone. Signing in first means the person who
+         joins is the person who owns the address.</p>
+      {{else}}
+      <p><strong>Nothing is emailed.</strong> No mail server is configured, so
+         the invitation waits here and appears as a banner the next time that
+         person signs in. Let them know to look for it.</p>
+      {{end}}
+    </div>
+
+    <form method="POST" action="/household/invite" class="row-form" novalidate>
+      {{template "csrf" .}}
+      <div class="field">
+        <label for="invite-email">Email address</label>
+        <input id="invite-email" name="email" type="email" required
+               inputmode="email" spellcheck="false" placeholder="name@example.com">
+        <p class="hint">They do not need an account yet.</p>
+      </div>
+      <div class="field">
+        <label for="invite-role">Access</label>
+        {{/* Owner is deliberately absent: ownership is granted by promoting an
+             existing member, not handed to somebody who has not joined yet. */}}
+        <select id="invite-role" name="role">
+          <option value="editor">Editor — can add and edit entries</option>
+          <option value="viewer">Viewer — can only look</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary">Send invitation</button>
+    </form>
+
+    {{if .Pending}}
+    <h3 class="sub-head">Waiting to be answered</h3>
+    <ul class="invite-list">
+      {{range .Pending}}
+      <li class="invite-row">
+        <span>
+          <strong>{{.Email}}</strong>
+          {{/* An expired invitation is shown rather than hidden: the owner needs
+               to know their invitation lapsed, and needs the button that fixes
+               it. Silently vanishing would leave them wondering whether they
+               ever sent it. */}}
+          {{if .Expired}}
+          <span class="stat-note">
+            as {{.Role.Label}} · <span class="tag tag-expired">expired</span>
+            · sent {{dateName .CreatedAt}}
+          </span>
+          {{else}}
+          <span class="stat-note">
+            as {{.Role.Label}} · invited {{dateName .CreatedAt}} · expires {{.ExpiresAt}}
+          </span>
+          {{end}}
+        </span>
+        <span class="invite-actions">
+          <form method="POST" action="/household/invites/{{.ID}}/resend" class="inline-form">
+            {{template "csrf" $}}
+            <button type="submit" class="btn btn-small {{if .Expired}}btn-primary{{else}}btn-quiet{{end}}">
+              {{if .Expired}}Send again{{else}}Resend{{end}}
+            </button>
+          </form>
+          <form method="POST" action="/household/invites/{{.ID}}/revoke" class="inline-form">
+            {{template "csrf" $}}
+            <button type="submit" class="btn btn-small btn-quiet">Withdraw</button>
+          </form>
+        </span>
+      </li>
+      {{end}}
+    </ul>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{/* ── create a shared budget ───────────────────────────────────────────── */}}
+  <div class="card">
+    <h2>Create a shared budget</h2>
+    <p class="hint">
+      A separate budget you can invite people to. Your own entries stay where they
+      are — a shared budget starts empty, and you switch between them from the top
+      bar.
+    </p>
+    <form method="POST" action="/household" class="row-form">
+      {{template "csrf" .}}
+      <div class="field">
+        <label for="new-hh">Name</label>
+        <input id="new-hh" name="name" type="text" required maxlength="60"
+               placeholder="Flat 4B, Family, Holiday fund…">
+      </div>
+      <button type="submit" class="btn btn-primary">{{template "icon" "plus"}} Create</button>
+    </form>
+  </div>
+
+  {{/* ── leaving and deleting ─────────────────────────────────────────────── */}}
+  {{if not .Personal}}
+  <div class="card card-danger">
+    <h2>Leave or delete</h2>
+
+    <div class="danger-row">
+      <div>
+        <h3>Leave this budget</h3>
+        <p class="hint">You lose access. Everything you entered stays in it.</p>
+      </div>
+      <form method="POST" action="/household/leave" class="inline-form danger-form"
+            data-confirm="Leave {{.Household}}? You will lose access to it.">
+        {{template "csrf" .}}
+        <button type="submit" class="btn btn-quiet">Leave</button>
+      </form>
+    </div>
+
+    {{if .Role.CanManageHousehold}}
+    <div class="danger-row">
+      <div>
+        <h3>Delete this budget</h3>
+        <p class="hint">
+          Permanently removes it and every entry, fund and recurring expense in
+          it, for everyone. This cannot be undone.
+        </p>
+      </div>
+      <form method="POST" action="/household/delete" class="inline-form danger-form"
+            data-confirm="Permanently delete {{.Household}} and everything in it, for every member? This cannot be undone.">
+        {{template "csrf" .}}
+        <button type="submit" class="btn btn-danger">Delete budget</button>
+      </form>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{/* ── activity ─────────────────────────────────────────────────────────── */}}
+  {{if .Activity}}
+  <div class="card">
+    <h2>Recent activity</h2>
+    <p class="stat-note">
+      Who changed what in this budget. Entries record creation, edits, deletions,
+      savings movements and membership changes. Each one is written in the same
+      database transaction as the change itself, so this list cannot describe
+      something that did not happen — or miss something that did.
+    </p>
+    <ul class="activity">
+      {{range .Activity}}
+      <li>
+        <span class="activity-who">{{.Actor}}</span>
+        <span class="activity-what">{{.Action}} {{.Entity}}</span>
+        {{with .Summary}}<span class="activity-detail">{{.}}</span>{{end}}
+        <span class="stat-note activity-when">{{.CreatedAt}}</span>
+      </li>
+      {{end}}
+    </ul>
+  </div>
+  {{end}}
+
+</div>
+{{end}}

@@ -1,15 +1,48 @@
-Open .gitignore and paste:
+# The previous version of this file began with the literal line
+#   "Open .gitignore and paste:"
+# which git read as a filename pattern, and every *.db rule below it was
+# commented out. The result was that yaba.db and an 18 MB YABA-2026.exe were
+# both committed.
 
-# Database files
+# Databases. A shared database file guarantees merge conflicts nobody can
+# resolve, and it puts real password hashes into the repository.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 
-#*.db
-#*.sqlite
-#*.sqlite3 
+# Uploaded receipts belong to whoever is running the app, not in the repo.
+/uploads/
 
-# OS files
+# Snapshots live outside the project by default, but `yaba restore` moves the
+# database it replaces aside next to the original, and that copy is real data.
+*.before-restore-*
+/backups/
+
+# Build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.out
+/YABA-2026
+/yaba
+
+# Go test and coverage artefacts
+*.test
+*.prof
+coverage.out
+coverage.html
+
+# Local configuration. YABA_SESSION_KEY belongs here, never in a commit.
+.env
+.env.local
+
+# Editors and OS
 .DS_Store
 Thumbs.db
-
-# Go build files
-*.exe
-*.out
+*.swp
+*~
+.idea/

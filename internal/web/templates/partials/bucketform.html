@@ -1,0 +1,44 @@
+{{/*
+  The "add a recurring expense" form.
+
+  Defined once because the Expected Monthly Expenses panel shows it in two
+  places: collapsed in a <details> when there are already expenses, and open in
+  the empty state so a new user has something to fill in immediately. Copying it
+  would mean two forms drifting apart.
+*/}}
+{{define "bucketform"}}
+<form method="POST" action="/buckets" class="row-form">
+  {{template "csrf" .}}
+
+  <div class="field">
+    <label for="bucket-name">Name</label>
+    <input id="bucket-name" name="name" type="text" required maxlength="40" placeholder="Rent">
+  </div>
+
+  <div class="field">
+    <label for="bucket-kind">Cost</label>
+    <select id="bucket-kind" name="cost_kind" data-bucket-kind>
+      <option value="fixed">Fixed each month</option>
+      <option value="variable">Varies each month</option>
+    </select>
+  </div>
+
+  <div class="field" data-bucket-amount>
+    <label for="bucket-amount">Amount per month</label>
+    <input id="bucket-amount" name="amount" type="number" step="0.01" min="0.01"
+           inputmode="decimal" placeholder="750.00">
+    {{/* A varying cost is worked out from the transactions recorded against it,
+         so the field is disabled rather than hidden when that is selected. */}}
+    <p class="hint">A varying cost is learned from the payments you record.</p>
+  </div>
+
+  <div class="field">
+    <label class="radio">
+      <input type="checkbox" name="essential" value="yes">
+      Essential — counts towards the emergency fund target
+    </label>
+  </div>
+
+  <button type="submit" class="btn btn-primary">Add expense</button>
+</form>
+{{end}}

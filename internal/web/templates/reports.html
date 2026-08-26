@@ -1,0 +1,229 @@
+{{define "helptopics"}}
+<div class="help-topic" data-topic="_">
+  <h3>Reports</h3>
+  <p class="help-lead">The longer view — patterns rather than single entries.</p>
+  <ul class="help-list">
+    <li>{{template "icon" "check-circle"}}
+      <span><strong>What this means</strong> turns your figures into plain
+      sentences, most urgent first: overspending, a breached budget, a savings rate
+      worth knowing about.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span><strong>Month by month</strong> compares income against spending and
+      shows the share you kept. That savings rate is the single most useful number
+      in personal finance.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span><strong>Category budgets</strong> cap an everyday category such as
+      Food. They are different from recurring expenses: a budget is a limit you set
+      yourself, a recurring expense is a bill that must be paid.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>The period selector at the top applies to every chart on the
+      page.</span></li>
+  </ul>
+</div>
+{{end}}
+
+{{define "content"}}
+
+<div class="page-head">
+  <h1>Reports</h1>
+
+  <form method="GET" action="/reports" class="period-form">
+    <label for="month">Period</label>
+    <select id="month" name="month" onchange="this.form.submit()">
+      <option value="" {{if eq .Month ""}}selected{{end}}>All time</option>
+      {{range .Months}}
+      <option value="{{.}}" {{if eq . $.Month}}selected{{end}}>{{monthName .}}</option>
+      {{end}}
+    </select>
+    <noscript><button type="submit" class="btn btn-quiet">Apply</button></noscript>
+  </form>
+</div>
+
+<section class="card">
+  <h2>What this means</h2>
+  <ul class="insight-list">
+    {{range .Observations}}
+    <li class="insight insight-{{.Severity}}">{{.Text}}</li>
+    {{end}}
+  </ul>
+</section>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Where the money went · {{.MonthLabel}}</h2>
+    {{if .Charts.SpendLabels}}
+    <div class="chart-box">
+      <canvas id="chart-spend"
+              data-labels="{{jsonAttr .Charts.SpendLabels}}"
+              data-values="{{jsonAttr .Charts.SpendValues}}"
+              role="img" aria-label="Spending by category"></canvas>
+    </div>
+    {{else}}
+    {{template "emptyChart" "No spending recorded for this period."}}
+    {{end}}
+  </div>
+
+  <div class="card">
+    <h2>Income by source · {{.MonthLabel}}</h2>
+    {{if .Charts.IncomeLabels}}
+    <div class="chart-box">
+      <canvas id="chart-income"
+              data-labels="{{jsonAttr .Charts.IncomeLabels}}"
+              data-values="{{jsonAttr .Charts.IncomeValues}}"
+              role="img" aria-label="Income by source"></canvas>
+    </div>
+    {{else}}
+    {{template "emptyChart" "No income recorded for this period."}}
+    {{end}}
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Essential vs non-essential</h2>
+    {{/* The old app collected this flag on every expense form and displayed it
+         nowhere at all. */}}
+    {{if .Charts.EssentialLabels}}
+    <div class="chart-box">
+      <canvas id="chart-essential"
+              data-labels="{{jsonAttr .Charts.EssentialLabels}}"
+              data-values="{{jsonAttr .Charts.EssentialValues}}"
+              role="img" aria-label="Essential compared with non-essential spending"></canvas>
+    </div>
+    <p class="stat-note">
+      Essential {{money .Essential}} · Non-essential {{money .NonEssent}}
+    </p>
+    {{else}}
+    {{template "emptyChart" "Mark expenses as essential or not to see this split."}}
+    {{end}}
+  </div>
+
+  <div class="card">
+    <h2>Categories · {{.MonthLabel}}</h2>
+    {{if .SpendByCategory}}
+    <div class="table-scroll">
+      <table class="table">
+        <thead>
+          <tr><th scope="col">Category</th><th scope="col" class="num">Total</th></tr>
+        </thead>
+        <tbody>
+          {{range .SpendByCategory}}
+          <tr><th scope="row">{{.Label}}</th><td class="num">{{money .Total}}</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    {{template "empty" "Nothing spent in this period."}}
+    {{end}}
+  </div>
+</div>
+
+<div class="card">
+  <h2>Month by month</h2>
+  <div class="chart-box">
+    <canvas id="chart-monthly"
+            data-labels="{{jsonAttr .Charts.MonthLabels}}"
+            data-income="{{jsonAttr .Charts.MonthIncome}}"
+            data-expense="{{jsonAttr .Charts.MonthExpense}}"
+            role="img" aria-label="Income compared with spending each month"></canvas>
+  </div>
+
+  {{/* The same figures as the chart, in text: a canvas is opaque to a screen
+       reader, so the numbers are given both ways. */}}
+  <div class="table-scroll">
+    <table class="table">
+      <caption class="visually-hidden">Income, spending and savings rate by month</caption>
+      <thead>
+        <tr>
+          <th scope="col">Month</th>
+          <th scope="col" class="num">Income</th>
+          <th scope="col" class="num">Spent</th>
+          <th scope="col" class="num">Net</th>
+          <th scope="col" class="num">Saved</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Monthly}}
+        <tr>
+          <th scope="row">{{monthName .Month}}</th>
+          <td class="num">{{money .Income}}</td>
+          <td class="num">{{money .Expense}}</td>
+          <td class="num {{if negative .Net}}is-negative{{else}}is-positive{{end}}">{{money .Net}}</td>
+          <td class="num">{{pctInt .SavingsRate}}%</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Category budgets</h2>
+  <p class="stat-note">
+    A monthly cap on one spending category. These are separate from the recurring
+    expenses on the dashboard: a budget limits an ad-hoc category such as Food,
+    whereas a recurring expense is a bill that has to be paid.
+  </p>
+
+  {{if .Role.CanEditEntries}}
+  <form method="POST" action="/budgets" class="row-form">
+    {{template "csrf" .}}
+    <div class="field">
+      <label for="budget-category">Category</label>
+      <input id="budget-category" name="category" type="text" required maxlength="60"
+             list="category-options" placeholder="Food">
+      <datalist id="category-options">
+        {{range .Categories}}<option value="{{.}}"></option>{{end}}
+      </datalist>
+    </div>
+    <div class="field">
+      <label for="budget-limit">Limit per month</label>
+      <input id="budget-limit" name="limit" type="number" step="0.01" min="0.01"
+             inputmode="decimal" required placeholder="250.00">
+    </div>
+    <button type="submit" class="btn btn-primary">Save budget</button>
+  </form>
+  {{end}}
+
+  {{if .Budgets}}
+  <ul class="budget-list">
+    {{range .Budgets}}
+    <li class="budget budget-{{.Status}}">
+      <div class="budget-head">
+        <h3>{{.Category}}</h3>
+        <p>
+          {{money .Spent}} of {{money .Limit}}
+          {{if .Over}}
+          <strong class="is-negative">{{money .Remaining}} over</strong>
+          {{else}}
+          <span class="stat-note">{{money .Remaining}} left</span>
+          {{end}}
+        </p>
+      </div>
+
+      <div class="progress" role="progressbar"
+           aria-valuenow="{{pctInt .Progress}}" aria-valuemin="0" aria-valuemax="100"
+           aria-label="{{.Category}} budget used">
+        <div class="progress-bar" style="width: {{pct .Progress}}%"></div>
+      </div>
+
+      {{if $.Role.CanEditEntries}}
+      <form method="POST" action="/budgets/{{.ID}}/delete" class="inline-form danger-form"
+            data-confirm="Remove the {{.Category}} budget?">
+        {{template "csrf" $}}
+        <button type="submit" class="btn btn-small btn-quiet">Remove</button>
+      </form>
+      {{end}}
+    </li>
+    {{end}}
+  </ul>
+  {{else}}
+  {{template "empty" "No category budgets set."}}
+  {{end}}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+        crossorigin="anonymous"></script>
+<script src="{{asset "dashboard.js"}}" defer></script>
+{{end}}

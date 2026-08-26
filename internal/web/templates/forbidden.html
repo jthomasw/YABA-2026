@@ -1,0 +1,47 @@
+{{define "helptopics"}}
+<div class="help-topic" data-topic="_">
+  <h3>Access levels</h3>
+  <p class="help-lead">Why a page can be closed to you.</p>
+  <ul class="help-list">
+    <li>{{template "icon" "check-circle"}}
+      <span>Each shared budget gives every member one of three levels.
+      <strong>Owner</strong> can do everything, <strong>Editor</strong> records
+      income and expenses, <strong>Viewer</strong> can only look.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Only an owner moves money into or out of savings funds, even though an
+      editor can record ordinary spending.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Ask an owner on the <a href="/household">Sharing</a> page to change
+      your access, or switch to your own budget from the picker in the top
+      bar.</span></li>
+  </ul>
+</div>
+{{end}}
+
+{{define "content"}}
+
+{{/*
+  403. A real page rather than http.Error's plain text, because the most likely
+  visitor is not an attacker: it is a viewer who followed a link, or somebody
+  whose role changed while they had a tab open. Both need a way onward.
+*/}}
+<div class="form-wrapper">
+  <div class="card notice-card">
+    <span class="notice-icon" aria-hidden="true">{{template "icon" "shield"}}</span>
+
+    <h1>Not permitted</h1>
+    <p class="notice-lead">{{.Reason}}</p>
+
+    <p class="hint">
+      You are {{if eq .Role.Label "Editor"}}an{{else}}a{{end}}
+      <strong>{{.Role.Label}}</strong> of <strong>{{.Household}}</strong>.
+      {{.Role.Explain}}
+    </p>
+
+    <div class="form-actions">
+      <a class="btn btn-primary" href="/dashboard">Back to dashboard</a>
+      <a class="btn btn-quiet" href="/household">See who has access</a>
+    </div>
+  </div>
+</div>
+{{end}}

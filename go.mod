@@ -1,15 +1,25 @@
 module github.com/jthomasw/YABA-2026
 
+// Method-based routing patterns ("POST /funds/{id}/close") need Go 1.22 or
+// later, and the code uses them to keep destructive routes off GET.
 go 1.25.0
 
 require (
 	github.com/gorilla/sessions v1.4.0
-	github.com/jmoiron/sqlx v1.4.0
 	golang.org/x/crypto v0.48.0
 	modernc.org/sqlite v1.46.1
 )
 
-replace github.com/jthomasw/YABA-2026 => ./
+// The previous go.mod contained:
+//
+//	replace github.com/jthomasw/YABA-2026 => ./
+//
+// A module replacing itself with its own directory is a no-op at best and
+// confuses tooling at worst. Removed.
+//
+// github.com/jmoiron/sqlx was also required. It was used only by the deleted
+// sqlite/ tutorial package; run `go mod tidy` to drop it and any other
+// now-unused entries from go.sum.
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
