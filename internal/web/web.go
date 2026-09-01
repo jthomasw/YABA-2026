@@ -714,17 +714,48 @@ func (s *Server) clearSession(w http.ResponseWriter, r *http.Request) {
 // removed by whatever made the process restart -- including the load that a
 // brute-force attempt itself produces. See store.RateRetryIn and friends.
 
-// clientIP extracts the remote address, ignoring forwarded headers.
+// clientIP extracts the address a request really came from.
 //
-// X-Forwarded-For is deliberately not trusted: this app is not behind a known
-// proxy, and honouring a client-supplied header would let an attacker defeat
-// the rate limiter by varying it on every request.
+// X-Forwarded-For is honoured ONLY when the connection itself arrived from the
+// loopback interface. That single condition is what makes the header safe to
+// read: a header any client can set is worthless as an identifier, but the same
+// header written by a reverse proxy running on this machine -- reached over a
+// connection nothing outside the machine can make -- is the only way to see the
+// real client at all.
+//
+// Without this, every request behind nginx arrives as 127.0.0.1, so the login
+// limiter's key collapses from "this address from this network" to "this address
+// from anywhere" -- and one person could lock another out of their own account,
+// which is precisely what keying on the IP was meant to prevent.
+//
+// The RIGHTMOST entry is taken, not the leftmost. nginx is configured with
+// proxy_add_x_forwarded_for, which APPENDS the peer it actually spoke to. A
+// client may invent a header of its own, but it can only prepend to the list;
+// the entry nginx added is always last, and is the only one that was observed
+// rather than claimed.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if !trustedProxyIP(host) {
+		return host
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		if last := strings.TrimSpace(parts[len(parts)-1]); last != "" {
+			return last
+		}
 	}
 	return host
+}
+
+// trustedProxyIP reports whether a forwarded header from this peer may be
+// believed. Loopback only: a proxy on this machine is the one thing an outsider
+// cannot impersonate.
+func trustedProxyIP(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // ── generic middleware ────────────────────────────────────────────────────────

@@ -134,7 +134,13 @@ func run(cfg config) error {
 		if err != nil {
 			return fmt.Errorf("check pending migrations: %w", err)
 		}
-		if pending > 0 {
+		switch {
+		case pending > 0 && db.Version(sqlDB) == 0:
+			// A database with no schema at all. There is nothing to lose, and
+			// VerifySnapshot rightly refuses a snapshot with no schema_migrations
+			// table -- so attempting one here would make every first run fatal.
+			log.Printf("startup: new database — nothing to back up before migrating")
+		case pending > 0:
 			log.Printf("startup: %d migration(s) pending — taking a backup first", pending)
 			snap, err := db.Backup(context.Background(), sqlDB, backupCfg)
 			if err != nil {
@@ -227,7 +233,14 @@ func run(cfg config) error {
 		return err
 	}
 
-	log.Printf("YABA listening on http://localhost%s", addr)
+	// addr is ":8000" when only a port was given and "127.0.0.1:8000" when a host
+	// was too. Only the first form needs a host pasted on to become a real URL;
+	// the old line printed "http://localhost127.0.0.1:8000" for the second.
+	shown := addr
+	if strings.HasPrefix(shown, ":") {
+		shown = "localhost" + shown
+	}
+	log.Printf("YABA listening on http://%s", shown)
 	return srv.ListenAndServe()
 }
 

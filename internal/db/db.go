@@ -1829,6 +1829,24 @@ func Pending(sqlDB *sql.DB) (int, error) {
 	return pending, nil
 }
 
+// Version reports the highest migration version this database has applied, and
+// 0 for one that has never been migrated.
+//
+// Pending answers "how much work is there?", which is 12 for a brand-new file
+// and 12 for a very old one. This answers the different question the startup
+// backup actually needs: "is there anything here worth protecting?" A file with
+// no schema_migrations table holds nothing, and VerifySnapshot correctly refuses
+// a snapshot of it -- so backing it up would abort a first run for the sake of
+// preserving an empty database.
+func Version(sqlDB *sql.DB) int {
+	var v int
+	if err := sqlDB.QueryRow(
+		`SELECT IFNULL(MAX(version), 0) FROM schema_migrations`).Scan(&v); err != nil {
+		return 0
+	}
+	return v
+}
+
 // BackupLoop takes a snapshot on a timer until ctx is cancelled.
 //
 // It runs in the server process, so backups happen wherever the binary runs
