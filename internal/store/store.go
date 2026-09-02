@@ -1,12 +1,5 @@
 // Package store is the only package that speaks SQL.
-//
-// Previously every query lived inline in an http.HandlerFunc, which made the
-// money rules impossible to test without spinning up a web server and made it
-// easy to write a handler that trusted a form field where it should have
-// trusted the database. Keeping SQL here means a handler can only ask for
-// operations that are safe by construction.
 package store
-
 
 import (
 	"context"
@@ -22,9 +15,8 @@ import (
 	"github.com/jthomasw/YABA-2026/internal/money"
 )
 
-// Cents is an alias so callers of this package do not have to import money
-// just to name a field type. Being an alias (=) and not a definition means
-// money.Cents and store.Cents are the same type, methods included.
+// Cents is an alias so callers of this package do not have to import money just to name
+// a field type.
 type Cents = money.Cents
 
 // Ratio is re-exported for the same reason as Cents.
@@ -35,26 +27,8 @@ type Store struct {
 	db *sql.DB
 }
 
-// Scope says whose money a call operates on: the household that owns the data,
-// and the person performing the action.
-//
-// Every method that touches financial data takes one of these instead of a bare
-// id, and that is a deliberate defence rather than tidiness. Before shared
-// budgeting there was one id and it was the user's. Now there are two, both
-// int64, and passing the wrong one would compile perfectly while showing one
-// household another's money -- the worst bug this application could have. A
-// named struct makes that mistake impossible to express.
-//
-// The two fields have distinct jobs:
-//
-//	HouseholdID  ownership. Every SELECT filters on it and every INSERT sets
-//	             it. This is what "whose data is this" means.
-//	UserID       attribution. Written to the user_id column on insert so the
-//	             UI can say "Added by Priya", and never used to filter a read.
-//
-// That split is why removing somebody from a household leaves their entries
-// intact: the rows belong to the household, and the departing member's id is
-// only a label on them.
+// Scope says whose money a call operates on: the household that owns the data, and the
+// person performing the action.
 type Scope struct {
 	HouseholdID int64
 	UserID      int64
@@ -69,17 +43,9 @@ func New(db *sql.DB) *Store {
 // raw SQL text to a user.
 var (
 	// ErrNotFound covers "no such row" and "that row belongs to someone else".
-	// Deliberately the same error for both, so a probing user cannot tell a
-	// missing id from another person's id.
 	ErrNotFound = errors.New("not found")
 
-	// ErrConflict means the row was changed by somebody else between the moment
-	// it was read and the moment it was saved.
-	//
-	// A separate error from ErrNotFound because the two need different words on
-	// screen and lead to different actions: one is "this is gone", the other is
-	// "look at what changed, then decide". Collapsing them was the old
-	// behaviour's problem in miniature -- it silently chose for the user.
+	// ErrConflict means the row changed between being read and being saved.
 	ErrConflict = errors.New("changed by someone else")
 
 	// ErrEmailTaken is returned instead of a raw UNIQUE constraint error.
@@ -97,18 +63,14 @@ func Today() string {
 	return time.Now().Format(DateLayout)
 }
 
-// DateLayout is the storage format for occurred_on. Text dates in this format
-// sort lexicographically in the same order as chronologically, which is why
-// SQLite can index and ORDER BY them directly.
+// DateLayout is the storage format for occurred_on.
 const DateLayout = "2006-01-02"
 
 // MonthLayout is the storage format for a month selector, e.g. "2026-04".
 const MonthLayout = "2006-01"
 
-// ParseDate validates a user-supplied date. The old code accepted any string
-// the browser sent and wrote it straight to the column, so a hand-edited form
-// could put "tomorrow" or "" into a date field and quietly break every chart
-// that sorted on it.
+// ParseDate validates a user-supplied date. Without it a hand-edited form could put
+// tomorrow, or nothing at all, into a column every chart sorts on.
 func ParseDate(s string) (string, error) {
 	if s == "" {
 		return Today(), nil
@@ -125,12 +87,7 @@ func ParseDate(s string) (string, error) {
 	return t.Format(DateLayout), nil
 }
 
-// monthRange converts "2026-04" into the half-open interval
-// ["2026-04-01", "2026-05-01").
-//
-// Filtering this way lets SQLite use idx_tx_user_date. The obvious
-// alternative, substr(occurred_on, 1, 7) = ?, wraps the column in a function
-// and forces a full scan of every row the user owns.
+// monthRange converts 2026-04 into the half-open interval [2026-04-01, 2026-05-01).
 func monthRange(month string) (start, end string, err error) {
 	if month == "" {
 		return "", "", nil
@@ -148,11 +105,9 @@ type LabelTotal struct {
 	Total Cents
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // transactions.go
 // ═════════════════════════════════════════════════════════════════════════════
-
 
 // Kind is the type of a money movement.
 type Kind string
@@ -160,18 +115,15 @@ type Kind string
 const (
 	// KindIncome is external money arriving. Increases cash.
 	KindIncome Kind = "income"
-	// KindExpense is money leaving for good. Decreases cash. The only kind
-	// that counts as spending.
+	// KindExpense is money leaving for good. Decreases cash.
 	KindExpense Kind = "expense"
-	// KindFundDeposit moves cash into a savings fund. A transfer: cash falls,
-	// the fund rises, net worth is unchanged. Not spending.
+	// KindFundDeposit moves cash into a savings fund.
 	KindFundDeposit Kind = "fund_deposit"
 	// KindFundWithdrawal moves money back out of a fund. Not income.
 	KindFundWithdrawal Kind = "fund_withdrawal"
 )
 
-// Valid reports whether k is one of the four known kinds. Handlers call this
-// before trusting a value that came from a query string.
+// Valid reports whether k is one of the four known kinds.
 func (k Kind) Valid() bool {
 	switch k {
 	case KindIncome, KindExpense, KindFundDeposit, KindFundWithdrawal:
@@ -180,9 +132,8 @@ func (k Kind) Valid() bool {
 	return false
 }
 
-// IsTransfer reports whether k moves money between the user's own pots rather
-// than in or out of their control. Transfers are excluded from spending and
-// income analytics.
+// IsTransfer reports whether k moves money between the user's own pots rather than in
+// or out of their control.
 func (k Kind) IsTransfer() bool {
 	return k == KindFundDeposit || k == KindFundWithdrawal
 }
@@ -202,9 +153,7 @@ func (k Kind) Label() string {
 	return string(k)
 }
 
-// cashSign is the multiplier this kind applies to spendable cash. Written once
-// here and reused in every SQL aggregate below, so no two queries can disagree
-// about whether a deposit reduces cash.
+// cashSign is the multiplier this kind applies to spendable cash.
 const cashSignSQL = `CASE kind
 	WHEN 'income'          THEN  amount_cents
 	WHEN 'fund_withdrawal' THEN  amount_cents
@@ -212,17 +161,6 @@ const cashSignSQL = `CASE kind
 END`
 
 // txSelect is the column list and joins shared by List, All and ByID.
-//
-// Written once because it was written three times: three byte-identical SELECT
-// blocks that had to be kept in step with scanTransaction's argument order.
-// Adding the "added by" join meant editing all three, and a query that scans
-// columns in a different order than it selects them fails at runtime rather than
-// at compile time. One constant makes that impossible.
-//
-// The LEFT JOIN on users is deliberately left, not inner: a deleted account
-// cascades its transactions away, but a legacy row could still carry a user_id
-// that no longer resolves, and an inner join would make such a row vanish from
-// every list rather than merely show no author.
 const txSelect = `
 	SELECT t.id, t.kind, t.label, t.amount_cents, t.occurred_on, t.essential,
 	       IFNULL(t.payee,''), IFNULL(t.place,''), IFNULL(t.note,''),
@@ -246,9 +184,7 @@ type Transaction struct {
 	OccurredOn string // the 5W "When?"
 	Essential  *bool  // nil for anything that is not an expense
 
-	// The remaining three of the wireframe's five Ws. Optional: the form asks
-	// for them, but an expense with only a category and an amount is still a
-	// valid expense, and refusing to save one would make the app tedious.
+	// The remaining three of the wireframe's five Ws.
 	Payee string // "Who?"
 	Place string // "Where?"
 	Note  string // "Why?"
@@ -264,10 +200,7 @@ type Transaction struct {
 	ReceiptName string
 	CreatedAt   string
 
-	// AddedBy is the name of whoever entered this row, for a shared budget where
-	// "who put this here?" is a real question. Empty when the entry predates
-	// shared budgeting or its author's account has since been deleted, which is
-	// why the template checks it rather than always printing a name.
+	// AddedBy is who entered this row, for a shared budget.
 	AddedBy string
 
 	// LineItemCount is filled in by List so the table can show an expander
@@ -322,18 +255,13 @@ type NewTransaction struct {
 	ReceiptPath string
 	ReceiptName string
 
-	// Version is the version the editor was shown, used as a compare-and-swap on
-	// update. Zero means "do not check", which is what Add uses and what a
-	// caller with no version to offer gets -- so the check is opt-in per call
-	// site rather than something that silently starts failing everywhere.
+	// Version is the version the editor was shown, used as a compare-and-swap on update.
 	Version int64
 }
 
-// Add inserts a plain income or expense.
-//
-// Fund movements deliberately cannot be created here: they must go through
-// Deposit, Withdraw or CloseFund, which enforce the balance rules inside a
-// transaction. That is what stops a handler from inventing a deposit.
+// Add inserts a plain income or expense. Fund movements cannot be created here: they
+// go through Deposit, Withdraw or CloseFund, which enforce the balance rules inside a
+// transaction, so a handler cannot invent a deposit.
 func (s *Store) Add(ctx context.Context, sc Scope, n NewTransaction) (int64, error) {
 	if n.Kind != KindIncome && n.Kind != KindExpense {
 		return 0, fmt.Errorf("Add only accepts income or expense, got %q", n.Kind)
@@ -342,9 +270,7 @@ func (s *Store) Add(ctx context.Context, sc Scope, n NewTransaction) (int64, err
 		return 0, fmt.Errorf("amount must be positive")
 	}
 
-	// An expense always records the essential flag; income never does. The
-	// CHECK constraint on the table enforces the shape, this keeps the Go side
-	// honest about it.
+	// An expense always records the essential flag; income never does.
 	var essential any
 	if n.Kind == KindExpense {
 		v := true
@@ -359,12 +285,7 @@ func (s *Store) Add(ctx context.Context, sc Scope, n NewTransaction) (int64, err
 		return 0, err
 	}
 
-	// household_id owns the row; user_id records who entered it, which is what
-	// the transactions list shows as "Added by". Both columns are NOT NULL, so
-	// an insert that forgot either one fails immediately rather than producing a
-	// row that no household can see.
-	// The insert and its audit entry share one transaction, so the history can
-	// never describe a row that does not exist, or miss one that does.
+	// household_id owns the row and user_id records who entered it.
 	var newID int64
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `
@@ -393,11 +314,8 @@ func (s *Store) Add(ctx context.Context, sc Scope, n NewTransaction) (int64, err
 	return newID, nil
 }
 
-// Update edits an existing income or expense in place.
-//
-// The old app had no edit path at all: correcting a typo meant deleting the
-// row and retyping it, which lost the original created_at and reordered the
-// user's history.
+// Update edits an income or expense in place. Without it, correcting a typo meant
+// deleting and retyping, which lost created_at and reordered the user's history.
 func (s *Store) Update(ctx context.Context, sc Scope, id int64, n NewTransaction) error {
 	if n.Kind != KindIncome && n.Kind != KindExpense {
 		return fmt.Errorf("Update only accepts income or expense, got %q", n.Kind)
@@ -420,22 +338,11 @@ func (s *Store) Update(ctx context.Context, sc Scope, id int64, n NewTransaction
 		return err
 	}
 
-	// The WHERE clause carries household_id as well as id. Every mutating query in
-	// this package does, so a guessed id belonging to someone else affects
-	// zero rows instead of theirs.
-	//
-	// kind is also constrained, which prevents an edit form from converting a
-	// fund transfer into a plain expense and silently unbalancing a fund.
-	//
-	// version is the compare-and-swap. Shared budgeting made it possible for two
-	// members to open the same expense and both save, and the second write used
-	// to discard the first with no sign that anything had happened. Requiring the
-	// version the editor was shown means a stale form affects zero rows, and the
-	// caller can tell the difference between "gone" and "changed underneath you".
+	// The WHERE clause carries household_id as well as id, so a guessed id belonging to
+	// someone else affects zero rows.
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
-		// What it said before, so the history records the change rather than
-		// only the outcome. Read inside the same transaction as the write, so
-		// nothing can move between the two.
+		// What it said before, so the history records the change rather than only the
+		// outcome.
 		var wasLabel string
 		var wasCents int64
 		if err := tx.QueryRowContext(ctx,
@@ -472,19 +379,8 @@ func (s *Store) Update(ctx context.Context, sc Scope, id int64, n NewTransaction
 	return err
 }
 
-// explainFailedUpdate works out why an UPDATE matched nothing.
-//
-// Three causes are indistinguishable from a row count of zero, and the user
-// deserves to be told which: the row is gone, somebody else changed it, or it is
-// not an editable kind. Guessing "not found" for all three would send someone
-// hunting for an entry that is on screen in front of them.
-// It takes the caller's transaction rather than the pool, and that is not a
-// style choice: the pool is capped at ONE connection so that SQLite's single
-// writer becomes harmless queueing. Asking the pool for a second connection
-// while a transaction holds the only one waits for a connection that cannot be
-// released until the waiting finishes — the query blocks forever, taking the
-// request with it. It deadlocked exactly once, in the conflict path, and hung
-// the test suite for ten minutes rather than failing.
+// explainFailedUpdate works out why an UPDATE matched nothing: the row is gone,
+// somebody else changed it, or it is not an editable kind.
 func explainFailedUpdate(ctx context.Context, tx *sql.Tx, sc Scope, id int64) error {
 	var kind Kind
 	var version int64
@@ -517,19 +413,7 @@ func (s *Store) ByID(ctx context.Context, sc Scope, id int64) (Transaction, erro
 	return t, err
 }
 
-// Delete removes an income or expense.
-//
-// Fund movements are excluded: deleting one would leave the fund's derived
-// balance out of step with the cash that funded it. Funds are closed through
-// CloseFund instead, which books the reversal properly.
-// Delete removes an income or expense, and records what it was.
-//
-// RETURNING gives the label and amount back from the same statement that removes
-// the row. Reading it first and then deleting would be two steps with a gap, and
-// the gap is exactly where the row could change — so the history would describe
-// something slightly different from what was actually destroyed. This is the one
-// place where the old value is unrecoverable afterwards, so it has to be captured
-// at the moment of deletion.
+// Delete removes an income or expense and records what it was.
 func (s *Store) Delete(ctx context.Context, sc Scope, id int64) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		var kind Kind
@@ -626,10 +510,8 @@ func (s *Store) List(ctx context.Context, sc Scope, f Filter) ([]Transaction, in
 		offset = 0
 	}
 
-	// Ordering by created_at then id, not by occurred_on. A user who
-	// backdates an entry still expects to see it at the top of the list
-	// immediately after saving it. Ties break on id so the order is total and
-	// pagination cannot show the same row on two pages.
+	// Ordered by created_at then id, not occurred_on: somebody who backdates an entry
+	// still expects to see it at the top immediately after saving.
 	rows, err := s.db.QueryContext(ctx, `
 		`+txSelect+`
 		WHERE `+where+`
@@ -670,8 +552,7 @@ func (s *Store) List(ctx context.Context, sc Scope, f Filter) ([]Transaction, in
 	return out, total, nil
 }
 
-// All returns every matching transaction with no page limit. Used only by the
-// CSV export, which by definition wants the whole set.
+// All returns every matching transaction with no page limit.
 func (s *Store) All(ctx context.Context, sc Scope, f Filter) ([]Transaction, error) {
 	f.Limit = -1
 	f.Offset = 0
@@ -727,8 +608,7 @@ func (t Totals) NetWorth() Cents {
 	return t.Income - t.Expense
 }
 
-// Totals aggregates all four kinds in a single pass. The old dashboard ran two
-// separate SUM queries and then four more for the charts, each a full scan.
+// Totals aggregates all four kinds in a single pass.
 func (s *Store) Totals(ctx context.Context, sc Scope, month string) (Totals, error) {
 	start, end, err := monthRange(month)
 	if err != nil {
@@ -817,8 +697,6 @@ func (s *Store) Breakdown(ctx context.Context, sc Scope, kind Kind, month string
 }
 
 // EssentialSplit divides real spending into essential and non-essential.
-// The old app collected this flag on every expense form and then never showed
-// it anywhere.
 func (s *Store) EssentialSplit(ctx context.Context, sc Scope, month string) (essential, other Cents, err error) {
 	start, end, err := monthRange(month)
 	if err != nil {
@@ -847,12 +725,9 @@ type Point struct {
 	Balance Cents
 }
 
-// BalanceSeries returns the running cash balance over time.
-//
-// The running total is accumulated in SQL with a window function rather than
-// in a Go loop, so the query returns one row per day instead of one per
-// transaction. A user with 2,000 rows across 90 days previously sent 2,000
-// points to Chart.js; now they send 90.
+// BalanceSeries returns the running cash balance over time, accumulated in SQL with a
+// window function so the query returns one row per day rather than one per
+// transaction -- 90 points instead of 2,000.
 func (s *Store) BalanceSeries(ctx context.Context, sc Scope) ([]Point, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT occurred_on,
@@ -1037,8 +912,7 @@ func nullIfEmpty(s string) any {
 	return s
 }
 
-// cleanLabel trims a label and caps its length. Without a cap a pasted essay
-// becomes a pie-chart legend entry and breaks the layout.
+// cleanLabel trims a label and caps its length.
 func cleanLabel(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	// Truncate by rune, not byte: slicing a byte string mid-character would
@@ -1058,14 +932,7 @@ func escapeLike(s string) string {
 	return s
 }
 
-// resolveBucket validates a bucket id supplied by a form and returns it in the
-// form the driver wants: nil for "no bucket", or the id.
-//
-// The ownership check matters more than it first appears. A bucket id arrives
-// from a <select> in the browser and can be edited freely. Without this check a
-// user could attribute their own expense to someone else's recurring bucket,
-// which would corrupt that person's variable-cost estimate and their income
-// allocation -- a way to silently alter another user's budget.
+// resolveBucket validates a bucket id supplied by a form: nil for no bucket, or the id.
 func (s *Store) resolveBucket(ctx context.Context, sc Scope, bucketID *int64) (any, error) {
 	if bucketID == nil || *bucketID <= 0 {
 		return nil, nil
@@ -1085,10 +952,6 @@ func (s *Store) resolveBucket(ctx context.Context, sc Scope, bucketID *int64) (a
 }
 
 // cleanNote trims a free-text note and caps it.
-//
-// The cap is generous compared with cleanLabel because "Why?" invites a
-// sentence, but it is still bounded: an unbounded column is a way to bloat the
-// database and to break every layout that renders it.
 func cleanNote(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.Join(strings.Fields(s), " ")
@@ -1099,11 +962,9 @@ func cleanNote(s string) string {
 	return s
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // funds.go
 // ═════════════════════════════════════════════════════════════════════════════
-
 
 // Fund is a savings pot. Balance is always derived from transactions and is
 // never read from a column, let alone from a form field.
@@ -1116,7 +977,6 @@ type Fund struct {
 	CreatedAt    string
 
 	// IsEmergency marks the one fund the Emergency Fund dashboard tab tracks.
-	// A partial unique index in the schema guarantees at most one per user.
 	IsEmergency bool
 }
 
@@ -1142,12 +1002,8 @@ func (f Fund) Complete() bool {
 // progress bar when there is nothing to progress towards.
 func (f Fund) HasGoal() bool { return f.Goal > 0 }
 
-// MonthlyNeeded is the amount per month required to reach the goal within
-// TargetMonths. Returns 0 when either the goal or the horizon is unset.
-//
-// target_months existed in the old emergency_goals table and was written by
-// the form handler, but nothing ever read it, so the user's answer to "in how
-// many months?" had no effect on anything.
+// MonthlyNeeded is the amount per month required to reach the goal within TargetMonths,
+// and 0 when either the goal or the horizon is unset.
 func (f Fund) MonthlyNeeded() Cents {
 	if f.TargetMonths <= 0 || f.Remaining() <= 0 {
 		return 0
@@ -1261,17 +1117,9 @@ func (s *Store) RenameFund(ctx context.Context, sc Scope, fundID int64, name str
 	return requireOneRow(res)
 }
 
-// Deposit moves cash into a fund.
-//
-// The whole operation is one row, inserted inside a transaction that first
-// re-reads the user's available cash. Two things follow from that:
-//
-//   - A user cannot move in more than they hold. The old handler performed no
-//     check at all, so any amount could be transferred regardless of balance.
-//   - The cash side and the fund side can no longer disagree. The old code
-//     wrote three separate rows (an expense, a funds.balance update and a
-//     fund_transactions row) with no transaction around them, logging any
-//     errors and carrying on, so a partial failure left the books unbalanced.
+// Deposit moves cash into a fund: one row, inserted inside a transaction that first
+// re-reads available cash, so a user cannot move in more than they hold and the cash
+// side and the fund side cannot disagree.
 func (s *Store) Deposit(ctx context.Context, sc Scope, fundID int64, amount Cents, occurredOn string) error {
 	if amount <= 0 {
 		return fmt.Errorf("deposit must be positive")
@@ -1308,10 +1156,6 @@ func (s *Store) Deposit(ctx context.Context, sc Scope, fundID int64, amount Cent
 }
 
 // Withdraw moves money out of a fund and back into spendable cash.
-//
-// The old app had no withdrawal path whatsoever: the only way to get money out
-// of a fund was to delete the entire fund, which is why the delete handler had
-// to credit the balance back and is where the exploit lived.
 func (s *Store) Withdraw(ctx context.Context, sc Scope, fundID int64, amount Cents, occurredOn string) error {
 	if amount <= 0 {
 		return fmt.Errorf("withdrawal must be positive")
@@ -1348,23 +1192,6 @@ func (s *Store) Withdraw(ctx context.Context, sc Scope, fundID int64, amount Cen
 }
 
 // CloseFund returns any remaining balance to cash and marks the fund closed.
-//
-// This replaces the old /delete-fund handler, which did the following:
-//
-//	fundBalance, _ := strconv.ParseFloat(r.FormValue("fund_balance"), 64)
-//	db.Exec("INSERT INTO income(...) VALUES(?, ?, ?, ?)", user, ..., fundBalance)
-//
-// The credited amount came from a hidden form field, so posting
-// fund_balance=999999 credited 999999 as income. The live database still
-// contains a 50,000,000 fund deposit created this way.
-//
-// Here the balance is computed from the fund's own transactions inside the
-// transaction that books the reversal, and the reversal is a fund_withdrawal
-// rather than income -- closing a fund does not make the user richer, so it
-// must not appear as earnings in their income breakdown.
-//
-// The fund row is kept and stamped with closed_at instead of being deleted, so
-// its transaction history stays intact and referential integrity holds.
 func (s *Store) CloseFund(ctx context.Context, sc Scope, fundID int64) (Cents, error) {
 	var returned Cents
 
@@ -1413,13 +1240,7 @@ func (s *Store) CloseFund(ctx context.Context, sc Scope, fundID int64) (Cents, e
 // EmergencyFundName is used when one is created automatically.
 const EmergencyFundName = "Emergency fund"
 
-// EmergencyFund returns the user's emergency fund, creating it on first use.
-//
-// The wireframe gives the Emergency Fund its own dashboard tab, so there has to
-// be exactly one identifiable fund behind it rather than whichever fund the user
-// happened to name "emergency". A partial unique index in the schema enforces
-// the "exactly one" half; this method supplies the "always exists" half so the
-// tab never has to render an error state.
+// EmergencyFund returns the household's emergency fund, creating it on first use.
 func (s *Store) EmergencyFund(ctx context.Context, sc Scope) (Fund, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT `+fundColumns+`
@@ -1433,10 +1254,7 @@ func (s *Store) EmergencyFund(ctx context.Context, sc Scope) (Fund, error) {
 		return Fund{}, err
 	}
 
-	// Adopt an existing fund that is obviously meant to be the emergency one
-	// before creating a second. Users migrating from the old app very often
-	// already have a fund called "Emergency Fund", and ending up with two would
-	// split their savings across both.
+	// Adopt an obviously-intended fund before creating a second.
 	var adoptID int64
 	err = s.db.QueryRowContext(ctx, `
 		SELECT id FROM funds
@@ -1467,11 +1285,8 @@ func (s *Store) EmergencyFund(ctx context.Context, sc Scope) (Fund, error) {
 	return scanFund(row)
 }
 
-// FundWithdrawalHistory returns the monthly total withdrawn from one fund,
-// oldest month first.
-//
-// This is the raw material for the Emergency Fund tab's question: "what does
-// their rate of extraction look like?"
+// FundWithdrawalHistory returns the monthly total withdrawn from one fund, oldest
+// first: the raw material for the Emergency Fund tab's rate-of-extraction figure.
 func (s *Store) FundWithdrawalHistory(ctx context.Context, sc Scope, fundID int64) ([]MonthPoint, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT substr(occurred_on, 1, 7) AS m, SUM(amount_cents)
@@ -1505,12 +1320,8 @@ type DepositRate struct {
 	Months int
 }
 
-// DepositRates returns, per fund, the total deposited and the number of
-// distinct calendar months in which a deposit happened.
-//
-// Returned as one map from one query rather than a per-fund lookup, because
-// the dashboard renders every fund at once and a query per fund is the classic
-// N+1 that makes a page slow as soon as a user has a handful of them.
+// DepositRates returns, per fund, the total deposited and how many distinct months saw
+// a deposit.
 func (s *Store) DepositRates(ctx context.Context, sc Scope) (map[int64]DepositRate, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT fund_id,
@@ -1538,11 +1349,7 @@ func (s *Store) DepositRates(ctx context.Context, sc Scope) (map[int64]DepositRa
 
 // ── transaction plumbing ──────────────────────────────────────────────────────
 
-// inTx runs fn inside a database transaction, rolling back on any error.
-//
-// Every read inside fn must use tx, never s.db: the pool is capped at one
-// connection, so a query issued on s.db while a transaction is open would wait
-// forever for a connection the transaction already holds.
+// inTx runs fn inside a transaction, rolling back on any error.
 func (s *Store) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1628,11 +1435,9 @@ func cleanFundName(s string) string {
 	return s
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // buckets.go
 // ═════════════════════════════════════════════════════════════════════════════
-
 
 // CostKind distinguishes the two sorts of recurring expense the wireframe
 // describes: one that is the same every month, and one whose amount has to be
@@ -1678,10 +1483,8 @@ type Bucket struct {
 	// activity yet in the month. Zero for fixed buckets.
 	Estimate Cents
 
-	// Low and High bracket what this bucket has historically cost. For a fixed
-	// bucket both equal Fixed. For a variable one they are the cheapest and
-	// dearest month observed, which is what lets the dashboard show expected
-	// expenses as a range rather than a single misleading number.
+	// Low and High bracket what this bucket has historically cost: both equal Fixed for a
+	// fixed bucket, and the cheapest and dearest month observed for a variable one.
 	Low, High Cents
 }
 
@@ -1736,9 +1539,8 @@ func (n *NewBucket) normalise() error {
 		return fmt.Errorf("a fixed monthly expense needs an amount")
 	}
 	if n.CostKind == CostVariable {
-		// A variable bucket's amount comes from its transactions, so a typed-in
-		// figure would be misleading. Ignore rather than reject it: the form
-		// keeps the field visible when switching kinds.
+		// A variable bucket's amount comes from its transactions, so a typed-in figure would
+		// be misleading.
 		n.Fixed = 0
 	}
 	if n.Fixed < 0 {
@@ -1794,10 +1596,6 @@ func (s *Store) UpdateBucket(ctx context.Context, sc Scope, bucketID int64, n Ne
 }
 
 // ArchiveBucket retires a bucket without deleting it.
-//
-// Archiving rather than deleting keeps the allocation history readable: a
-// DELETE would cascade through allocations and rewrite the past, making last
-// month's funding report disagree with what the user saw at the time.
 func (s *Store) ArchiveBucket(ctx context.Context, sc Scope, bucketID int64) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE expense_buckets SET archived_at = ?
@@ -1809,16 +1607,11 @@ func (s *Store) ArchiveBucket(ctx context.Context, sc Scope, bucketID int64) err
 	return requireOneRow(res)
 }
 
-// MoveBucket shifts a bucket one place up or down the priority list.
-//
-// Up and down rather than a typed priority number, because two buckets sharing
-// a number would make the waterfall order depend on row id, which the user
-// cannot see or control.
+// MoveBucket shifts a bucket one place up or down.
 func (s *Store) MoveBucket(ctx context.Context, sc Scope, bucketID int64, up bool) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		// Renumber first. Priorities drift out of sequence as buckets are
-		// archived, and swapping two non-adjacent numbers would then move an
-		// item several places at once.
+		// Renumber first. Priorities drift out of sequence as buckets are archived, and
+		// swapping two non-adjacent numbers would then move an item several places at once.
 		if err := renumberInTx(ctx, tx, sc.HouseholdID); err != nil {
 			return err
 		}
@@ -1914,10 +1707,7 @@ func (s *Store) Buckets(ctx context.Context, sc Scope, month string) ([]Bucket, 
 		return nil, err
 	}
 
-	// One query for the list, with correlated subqueries for the three
-	// per-month figures. The alternative -- a query per bucket -- is the N+1
-	// that makes this page slow the moment a user has a realistic number of
-	// recurring expenses.
+	// One query with correlated subqueries for the three per-month figures.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.id, b.name, b.priority, b.cost_kind, b.fixed_cents, b.essential,
 		       IFNULL((
@@ -2000,10 +1790,8 @@ func (s *Store) Buckets(ctx context.Context, sc Scope, month string) ([]Bucket, 
 	return out, rows.Err()
 }
 
-// bucketDue computes what a bucket needs for the month.
-//
-// Kept as a plain function on the struct's values so the allocation code and
-// the display code cannot disagree about the number.
+// bucketDue computes what a bucket needs for the month, as a plain function so the
+// allocation code and the display code cannot disagree about the number.
 func bucketDue(b Bucket) Cents {
 	if b.CostKind == CostFixed {
 		return b.Fixed
@@ -2017,13 +1805,8 @@ func bucketDue(b Bucket) Cents {
 	return b.Estimate
 }
 
-// bucketRange brackets what a bucket costs.
-//
-// A fixed bucket has no range: it is the same figure every month, so pretending
-// otherwise would invent uncertainty. A variable one is bracketed by the
-// cheapest and dearest month seen, widened to include this month's actual spend
-// if it has already exceeded the historical high -- an unusually large bill
-// should raise the top of the range, not be hidden by it.
+// bucketRange brackets what a bucket costs. A fixed bucket has no range: pretending
+// otherwise would invent uncertainty.
 func bucketRange(b Bucket, low, high Cents) (Cents, Cents) {
 	if b.CostKind == CostFixed {
 		return b.Fixed, b.Fixed
@@ -2092,12 +1875,8 @@ func (s *Store) BucketOptions(ctx context.Context, sc Scope) ([]Bucket, error) {
 	return out, rows.Err()
 }
 
-// EssentialMonthlyCost is the sum of the monthly requirement of every bucket
-// tagged essential.
-//
-// This is the wireframe's definition of the emergency fund target: "Emergency
-// fund is derived from the sum total of essential designated recurring monthly
-// expense buckets that have been tagged as 'essential'."
+// EssentialMonthlyCost sums the monthly requirement of every bucket tagged essential,
+// which is how the emergency fund target is sized.
 func (s *Store) EssentialMonthlyCost(ctx context.Context, sc Scope, month string) (Cents, error) {
 	buckets, err := s.Buckets(ctx, sc, month)
 	if err != nil {
@@ -2112,11 +1891,9 @@ func (s *Store) EssentialMonthlyCost(ctx context.Context, sc Scope, month string
 	return total, nil
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // allocations.go
 // ═════════════════════════════════════════════════════════════════════════════
-
 
 // Allocation is one slice of an income earmarked for one bucket.
 type Allocation struct {
@@ -2149,22 +1926,6 @@ func (a AllocationSummary) FullyFunded() bool {
 func (a AllocationSummary) Progress() float64 { return Ratio(a.Allocated, a.Required) }
 
 // Reallocate recomputes every allocation for one month from scratch.
-//
-// The wireframe describes an incremental rule: "When income is added, the funds
-// immediately get allocated to the highest priority expense and then cascades
-// down to the next highest priority until either all expenses have been paid or
-// the income funds have all been allocated."
-//
-// Applying that incrementally is correct only while nothing else ever changes.
-// In practice the user will edit an income's amount, delete one, reorder the
-// priority list, or change a bucket's cost -- and each of those makes previously
-// recorded allocations wrong in a way that is fiddly to unwind row by row.
-//
-// So the rule is implemented as a pure function of the month's current state
-// and re-run after any mutation that could affect it. The observable behaviour
-// for the described case is identical, because income is replayed in
-// chronological order; the difference is that every other case is also correct,
-// and running it twice changes nothing.
 func (s *Store) Reallocate(ctx context.Context, sc Scope, month string) error {
 	if month == "" {
 		month = Today()[:7]
@@ -2306,9 +2067,6 @@ func (s *Store) Reallocate(ctx context.Context, sc Scope, month string) error {
 }
 
 // ReallocateMonthOf recomputes the month containing the given date.
-//
-// Handlers call this after adding, editing or deleting an income or a
-// bucket-attributed expense, which is the only place that knows the date.
 func (s *Store) ReallocateMonthOf(ctx context.Context, sc Scope, date string) error {
 	if len(date) < 7 {
 		return s.Reallocate(ctx, sc, Today()[:7])
@@ -2394,16 +2152,11 @@ func (s *Store) AllocationsForBucket(ctx context.Context, sc Scope, bucketID int
 	return out, rows.Err()
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // lineitems.go
 // ═════════════════════════════════════════════════════════════════════════════
 
-
-// LineItem is one entry within a transaction.
-//
-// The wireframe asks for "a breakdown on what categories the individual line
-// items in the transaction belong to" -- a single shop trip is one transaction
+// LineItem is one entry within a transaction: a single shop trip is one transaction
 // but may be groceries, cleaning products and a magazine.
 type LineItem struct {
 	ID          int64
@@ -2420,11 +2173,9 @@ type NewLineItem struct {
 	Amount      Cents
 }
 
-// SetLineItems replaces a transaction's lines.
-//
-// The items must sum exactly to the transaction's amount. Allowing them to
-// disagree would mean the category breakdown and the headline spending total
-// tell different stories, and there would be no way to know which is right.
+// SetLineItems replaces a transaction's lines. They must sum exactly to the
+// transaction's amount, or the category breakdown and the headline total would tell
+// different stories with no way to know which is right.
 func (s *Store) SetLineItems(ctx context.Context, sc Scope, txID int64, items []NewLineItem) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		var total Cents
@@ -2512,8 +2263,6 @@ func (s *Store) LineItemCounts(ctx context.Context, sc Scope, txIDs []int64) (ma
 	}
 
 	// Build the IN list from placeholders rather than by interpolating the ids.
-	// They are int64s parsed from the database and so are safe, but writing the
-	// query this way means no future edit can turn it into an injection.
 	ph := make([]byte, 0, len(txIDs)*2)
 	args := make([]any, 0, len(txIDs)+1)
 	args = append(args, sc.HouseholdID)
@@ -2547,13 +2296,8 @@ func (s *Store) LineItemCounts(ctx context.Context, sc Scope, txIDs []int64) (ma
 	return out, rows.Err()
 }
 
-// CategoryBreakdown totals spending by category, using line-item categories
-// where a transaction has them and the transaction's own label where it does
-// not.
-//
-// The two halves have to be unioned rather than one replacing the other:
-// counting a transaction's label as well as its lines would double the total,
-// and ignoring unlined transactions would drop most of the data.
+// CategoryBreakdown totals spending by category, using line-item categories where a
+// transaction has them and its own label where it does not.
 func (s *Store) CategoryBreakdown(ctx context.Context, sc Scope, month string) ([]LabelTotal, error) {
 	start, end, err := monthRange(month)
 	if err != nil {
@@ -2609,18 +2353,12 @@ func (s *Store) CategoryBreakdown(ctx context.Context, sc Scope, month string) (
 	return out, rows.Err()
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // budgets.go
 // ═════════════════════════════════════════════════════════════════════════════
 
-
-// Budget is a monthly spending cap for one category, joined against what has
-// actually been spent in the period being viewed.
-//
-// This is the feature the old app was missing entirely: it recorded spending
-// faithfully but never compared it to a plan, which is the part that makes a
-// budgeting tool a budgeting tool rather than a ledger.
+// Budget is a monthly spending cap for one category, joined against what was actually
+// spent in the period.
 type Budget struct {
 	ID       int64
 	Category string
@@ -2651,10 +2389,6 @@ func (b Budget) Status() string {
 }
 
 // ListBudgets returns every budget with the spend for the given month.
-//
-// Matching is case-insensitive on the category label, because a user who types
-// "food" one day and "Food" the next means the same category and would
-// otherwise see their budget appear untouched.
 func (s *Store) ListBudgets(ctx context.Context, sc Scope, month string) ([]Budget, error) {
 	start, end, err := monthRange(month)
 	if err != nil {
@@ -2732,12 +2466,8 @@ func (s *Store) DeleteBudget(ctx context.Context, sc Scope, id int64) error {
 	return requireOneRow(res)
 }
 
-// SpendCategories lists the expense labels the user has actually used, newest
-// activity first, to populate a datalist on the expense and budget forms.
-//
-// Free-text categories were a real weakness of the old forms: "Food", "food"
-// and "Foood" each became their own pie slice. Suggesting existing labels
-// nudges users towards reusing them without imposing a fixed taxonomy.
+// SpendCategories lists the expense labels actually used, newest first, to populate a
+// datalist on the expense and budget forms.
 func (s *Store) SpendCategories(ctx context.Context, sc Scope) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT TRIM(label)
@@ -2764,11 +2494,9 @@ func (s *Store) SpendCategories(ctx context.Context, sc Scope) ([]string, error)
 	return out, rows.Err()
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // users.go
 // ═════════════════════════════════════════════════════════════════════════════
-
 
 // User is an account. It never carries the password hash.
 type User struct {
@@ -2796,20 +2524,8 @@ func NormalizeEmail(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
 
-// CreateUser inserts a new account.
-//
-// display_name is derived from the address rather than asked for: the wireframe's
-// signup flow collects only an email and a password, and prompting for a third
-// field would contradict it.
-//
-// Case-insensitive uniqueness is enforced here rather than by a COLLATE NOCASE
-// index, because an existing database may already hold two accounts differing
-// only in case -- the old schema's UNIQUE(username) was case-sensitive, and this
-// project's database really does contain "Kushith" and "kushith". A NOCASE index
-// could not be created over that data at all. See internal/db/migrate.go.
-//
-// The check and the insert share a transaction, so two simultaneous signups for
-// the same address cannot both pass the check and then both insert.
+// CreateUser inserts a new account, with display_name derived from the address because
+// signup asks only for an email and a password.
 func (s *Store) CreateUser(ctx context.Context, email, passwordHash string) (int64, error) {
 	email = NormalizeEmail(email)
 	if email == "" {
@@ -2834,12 +2550,9 @@ func (s *Store) CreateUser(ctx context.Context, email, passwordHash string) (int
 			return ErrEmailTaken
 		}
 
-		// username is written as well as email. That column is a vestige of the
-		// old schema which migration 3 deliberately did not drop: dropping it
-		// would have meant rebuilding the table, and with foreign keys on,
-		// DROP TABLE users performs an implicit DELETE that cascades and removes
-		// every transaction in the database. It is NOT NULL UNIQUE, so it still
-		// has to be given a value.
+		// username is written as well as email: a vestige of the old schema that migration 3
+		// deliberately did not drop, because rebuilding the table would have cascaded and
+		// deleted every transaction. It is NOT NULL UNIQUE, so it still needs a value.
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO users(username, email, display_name, password_hash) VALUES(?, ?, ?, ?)`,
 			email, email, display, passwordHash)
@@ -2853,11 +2566,9 @@ func (s *Store) CreateUser(ctx context.Context, email, passwordHash string) (int
 			return err
 		}
 
-		// Every account owns a personal household from the moment it exists.
-		// This is in the same transaction as the INSERT above deliberately: a
-		// user committed without a household would be able to sign in and then
-		// have nowhere to record anything, and every page would have to cope
-		// with that state. Doing it here means the state is unreachable.
+		// Every account owns a personal household from the moment it exists, in the same
+		// transaction as the insert: a user committed without one could sign in and have
+		// nowhere to record anything, and every page would have to cope with that state.
 		_, err = createPersonalHousehold(ctx, tx, id, display)
 		return err
 	})
@@ -2865,22 +2576,8 @@ func (s *Store) CreateUser(ctx context.Context, email, passwordHash string) (int
 	return id, err
 }
 
-// CredentialsFor looks up an account and returns its password hash.
-//
-// The lookup is in two stages, and the order matters:
-//
-//  1. An exact match on what the user typed, case and all.
-//  2. Failing that, a case-insensitive match.
-//
-// Stage 2 is the convenience most people expect. Stage 1 exists because a
-// legacy database can hold two accounts differing only in case, and going
-// straight to a case-insensitive match would return an arbitrary one of them --
-// so whoever typed "kushith" might be checked against "Kushith"'s password and
-// be told, wrongly and permanently, that their own password is incorrect.
-//
-// Both stages also match the legacy username column, because migration 3
-// backfilled email from it: accounts predating that change sign in with exactly
-// the string they always used.
+// CredentialsFor looks up an account and returns its password hash, matching exactly
+// first and case-insensitively second.
 func (s *Store) CredentialsFor(ctx context.Context, email string) (User, string, error) {
 	typed := strings.TrimSpace(email)
 
@@ -2931,10 +2628,8 @@ func (s *Store) credentialsExact(ctx context.Context, typed string) (User, strin
 	return u, hash, nil
 }
 
-// EmailExists reports whether an address already has an account.
-//
-// The combined login/signup form needs this to decide which of the two things
-// the user is trying to do.
+// EmailExists reports whether an address already has an account, which is how the
+// combined login and signup form decides which of the two the user is doing.
 func (s *Store) EmailExists(ctx context.Context, email string) (bool, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `
@@ -2947,10 +2642,7 @@ func (s *Store) EmailExists(ctx context.Context, email string) (bool, error) {
 	return n > 0, nil
 }
 
-// UserByID resolves the id held in a session cookie to a live account.
-//
-// Called on every authenticated request rather than trusting the cookie's
-// contents, so a deleted account's outstanding cookies stop working at once.
+// UserByID resolves the id held in a session to a live account.
 func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 	var u User
 	err := s.db.QueryRowContext(ctx,
@@ -2969,28 +2661,17 @@ func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 // sessions
 // ═════════════════════════════════════════════════════════════════════════════
 
-// A login is a row here, not just a signed cookie. That is the whole point: a
-// row can be deleted, so a login can be revoked. See migration 5.
+// A login is a row here, not just a signed cookie.
 
 const (
-	// SessionTTL is how long a login lasts from the moment it is created,
-	// however active it is. An absolute ceiling means a forgotten session on a
-	// shared computer cannot live forever.
+	// SessionTTL is how long a login lasts from the moment it is created, however active
+	// it is.
 	SessionTTL = 30 * 24 * time.Hour
 
-	// SessionIdleTTL is how long a login may go untouched before it is treated
-	// as abandoned. Shorter than the absolute limit, because an unused session
-	// is exactly the kind most likely to have been left on someone else's
-	// machine.
+	// SessionIdleTTL is how long a login may go untouched before it counts as abandoned.
 	SessionIdleTTL = 14 * 24 * time.Hour
 
-	// sessionTouchAfter is how stale last_seen_at must be before a request
-	// bothers to update it.
-	//
-	// Without this, every page load would be a write, and SQLite serialises
-	// writers -- so reading the dashboard would queue behind other readers'
-	// bookkeeping. A minute of imprecision in "last active" is invisible to the
-	// user and removes almost all of those writes.
+	// sessionTouchAfter is how stale last_seen_at must be before a request updates it.
 	sessionTouchAfter = time.Minute
 )
 
@@ -3008,10 +2689,64 @@ type Session struct {
 	Current bool
 }
 
+// DeviceName turns the browser's self-description into something recognisable -- Chrome
+// on Windows rather than 120 characters of Mozilla/5.0 -- so a login that is not yours
+// can be spotted.
+func (s Session) DeviceName() string {
+	ua := s.UserAgent
+	if strings.TrimSpace(ua) == "" {
+		return "Unknown device"
+	}
+
+	browser := ""
+	switch {
+	case strings.Contains(ua, "Edg"):
+		browser = "Edge"
+	case strings.Contains(ua, "OPR"), strings.Contains(ua, "Opera"):
+		browser = "Opera"
+	case strings.Contains(ua, "SamsungBrowser"):
+		browser = "Samsung Internet"
+	case strings.Contains(ua, "Firefox"), strings.Contains(ua, "FxiOS"):
+		browser = "Firefox"
+	case strings.Contains(ua, "CriOS"), strings.Contains(ua, "Chrome"),
+		strings.Contains(ua, "Chromium"):
+		browser = "Chrome"
+	case strings.Contains(ua, "Safari"):
+		browser = "Safari"
+	}
+
+	// iPhone and iPad are checked before Mac, because their user agents contain
+	// "like Mac OS X"; Android is checked before Linux for the same reason.
+	device := ""
+	switch {
+	case strings.Contains(ua, "iPhone"):
+		device = "iPhone"
+	case strings.Contains(ua, "iPad"):
+		device = "iPad"
+	case strings.Contains(ua, "Android"):
+		device = "Android"
+	case strings.Contains(ua, "Windows"):
+		device = "Windows"
+	case strings.Contains(ua, "CrOS"):
+		device = "ChromeOS"
+	case strings.Contains(ua, "Macintosh"), strings.Contains(ua, "Mac OS X"):
+		device = "Mac"
+	case strings.Contains(ua, "Linux"):
+		device = "Linux"
+	}
+
+	switch {
+	case browser != "" && device != "":
+		return browser + " on " + device
+	case browser != "":
+		return browser
+	case device != "":
+		return device
+	}
+	return "Unknown device"
+}
+
 // newSessionID returns a fresh 256-bit random token.
-//
-// Random, not sequential: the id IS the credential, so a predictable one would
-// be a login anybody could walk into. 32 bytes is well beyond guessing range.
 func newSessionID() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -3021,10 +2756,6 @@ func newSessionID() (string, error) {
 }
 
 // cleanUserAgent trims a browser's self-description to something loggable.
-//
-// Capped because it arrives from the client and is displayed back on the device
-// list. The template escapes it, so this is about storage and layout rather than
-// safety.
 func cleanUserAgent(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if len(s) > 200 {
@@ -3039,10 +2770,8 @@ func (s *Store) CreateSession(ctx context.Context, userID int64, userAgent strin
 	if err != nil {
 		return "", err
 	}
-	// The TTL is passed as a bound modifier so the expiry is computed by SQLite
-	// in the same clock the comparison later uses. Computing it in Go would
-	// compare a Go timestamp against datetime('now') and drift if the two
-	// disagree about the timezone.
+	// The TTL is passed as a bound modifier so the expiry is computed by SQLite in the
+	// same clock the comparison later uses.
 	ttl := fmt.Sprintf("+%d seconds", int64(SessionTTL.Seconds()))
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO sessions(id, user_id, expires_at, user_agent)
@@ -3054,15 +2783,6 @@ func (s *Store) CreateSession(ctx context.Context, userID int64, userAgent strin
 }
 
 // SessionUser resolves a session token to the account it belongs to.
-//
-// One query does the validating and the resolving together: the join means an
-// account deleted since login has no row to return, and the two time conditions
-// mean an expired or abandoned session is indistinguishable from one that never
-// existed. Callers get ErrNotFound for all of it, which is the right amount of
-// information to give whoever presented the token.
-//
-// last_seen_at is then touched, but only if it is already stale -- see
-// sessionTouchAfter for why that matters on SQLite.
 func (s *Store) SessionUser(ctx context.Context, id string) (User, error) {
 	if id == "" {
 		return User{}, ErrNotFound
@@ -3091,10 +2811,8 @@ func (s *Store) SessionUser(ctx context.Context, id string) (User, error) {
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE sessions SET last_seen_at = datetime('now')
 		WHERE id = ? AND last_seen_at < datetime('now', ?)`, id, stale); err != nil {
-		// Not fatal: the caller is authenticated either way, and failing the
-		// request over a bookkeeping write would be a poor trade. It does mean
-		// the session could eventually idle out mid-use, which is why this is
-		// logged rather than swallowed silently.
+		// Not fatal: the caller is authenticated either way, and failing the request over a
+		// bookkeeping write would be a poor trade.
 		return u, nil
 	}
 	return u, nil
@@ -3128,10 +2846,8 @@ func (s *Store) Sessions(ctx context.Context, userID int64, current string) ([]S
 	return out, rows.Err()
 }
 
-// DeleteSession revokes one login.
-//
-// user_id is part of the WHERE clause so a guessed token cannot be used to sign
-// somebody else out.
+// DeleteSession revokes one login. user_id is part of the WHERE clause so a guessed
+// token cannot be used to sign somebody else out.
 func (s *Store) DeleteSession(ctx context.Context, userID int64, id string) error {
 	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM sessions WHERE id = ? AND user_id = ?`, id, userID)
@@ -3145,9 +2861,6 @@ func (s *Store) DeleteSession(ctx context.Context, userID int64, id string) erro
 }
 
 // DeleteUserSessions revokes every login for an account.
-//
-// This is what a password change calls, and what makes changing a password
-// actually mean something: without it, an old cookie kept working.
 func (s *Store) DeleteUserSessions(ctx context.Context, userID int64) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
 	if err != nil {
@@ -3158,9 +2871,6 @@ func (s *Store) DeleteUserSessions(ctx context.Context, userID int64) (int64, er
 }
 
 // DeleteOtherSessions revokes every login for an account except the one given.
-//
-// The "sign out everywhere else" case: you keep working where you are and every
-// other device is dropped.
 func (s *Store) DeleteOtherSessions(ctx context.Context, userID int64, keep string) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM sessions WHERE user_id = ? AND id <> ?`, userID, keep)
@@ -3171,11 +2881,7 @@ func (s *Store) DeleteOtherSessions(ctx context.Context, userID int64, keep stri
 	return n, nil
 }
 
-// PurgeExpiredSessions removes rows no login can use any more.
-//
-// Nothing depends on this for correctness -- SessionUser already refuses an
-// expired row -- so it is housekeeping, not enforcement. Without it the table
-// grows forever.
+// PurgeExpiredSessions removes rows no login can use.
 func (s *Store) PurgeExpiredSessions(ctx context.Context) (int64, error) {
 	idle := fmt.Sprintf("-%d seconds", int64(SessionIdleTTL.Seconds()))
 	res, err := s.db.ExecContext(ctx, `
@@ -3192,19 +2898,11 @@ func (s *Store) PurgeExpiredSessions(ctx context.Context) (int64, error) {
 // ── password resets ───────────────────────────────────────────────────────────
 
 // ResetTTL is how long a password reset link works.
-//
-// One hour, not a day. A reset link is a bearer credential sitting in an inbox:
-// anyone who reads that mailbox, now or later, can take the account with it. The
-// shorter the window the smaller that exposure, and an hour is comfortably longer
-// than the gap between asking for a link and clicking it.
 const ResetTTL = time.Hour
 
-// CreateReset issues a single-use password reset token.
-//
-// Every other outstanding token for the account is deleted first. If somebody
-// asks for three links because the first two seemed not to arrive, only the last
-// should work -- and if an attacker requested one an hour ago, the owner
-// requesting their own invalidates it.
+// CreateReset issues a single-use password reset token, deleting every other
+// outstanding one for the account: only the most recent link should work, and the
+// owner requesting their own invalidates one an attacker asked for.
 func (s *Store) CreateReset(ctx context.Context, userID int64) (string, error) {
 	token, err := newSessionID() // same generator: 256 bits of crypto/rand
 	if err != nil {
@@ -3232,9 +2930,6 @@ func (s *Store) CreateReset(ctx context.Context, userID int64) (string, error) {
 }
 
 // ResetUser resolves a token to the account it belongs to, without consuming it.
-//
-// Used to decide whether to show the "choose a new password" form at all, so an
-// expired link says so instead of presenting a form that will fail on submit.
 func (s *Store) ResetUser(ctx context.Context, token string) (User, error) {
 	if token == "" {
 		return User{}, ErrNotFound
@@ -3257,15 +2952,6 @@ func (s *Store) ResetUser(ctx context.Context, token string) (User, error) {
 }
 
 // ConsumeReset sets a new password hash and burns the token.
-//
-// Four things happen in one transaction: the token is marked used, the hash is
-// replaced, every session for the account is deleted, and any other outstanding
-// tokens go too. They belong together because the reason for resetting a password
-// is usually that somebody else might have it -- so leaving their laptop signed
-// in, or a second reset link alive, would defeat the exercise.
-//
-// The token is marked used inside the same UPDATE that requires it to be unused,
-// so two simultaneous submissions cannot both succeed.
 func (s *Store) ConsumeReset(ctx context.Context, token, passwordHash string) (int64, error) {
 	var userID int64
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
@@ -3299,14 +2985,8 @@ func (s *Store) ConsumeReset(ctx context.Context, token, passwordHash string) (i
 	return userID, err
 }
 
-// ChangePassword replaces the hash for a signed-in user and signs out their
-// other devices.
-//
-// Deliberately different from a reset: the current session is spared, because the
-// person just proved they know the old password and signing them out of the page
-// they are looking at would be gratuitous. Every *other* session goes, which is
-// the useful half -- a laptop left signed in somewhere is exactly what changing a
-// password is meant to address.
+// ChangePassword replaces the hash for a signed-in user and signs out their other
+// devices.
 func (s *Store) ChangePassword(ctx context.Context, userID int64, passwordHash, keepSession string) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
@@ -3344,19 +3024,11 @@ func (s *Store) PurgeExpiredResets(ctx context.Context) (int64, error) {
 
 // ── one-time form tokens ──────────────────────────────────────────────────────
 
-// FormTokenTTL is how long an unused form token stays valid.
-//
-// Long enough to fill in a form slowly, be interrupted, and come back; short
-// enough that the table does not accumulate tokens from browser tabs that were
-// opened and forgotten months ago.
+// FormTokenTTL is how long an unused form token stays valid: long enough to fill in a
+// form slowly and be interrupted, short enough not to accumulate forgotten tabs.
 const FormTokenTTL = 12 * time.Hour
 
-// NewFormToken issues a token to embed in a form that must not be submitted
-// twice.
-//
-// Reuses the session-id generator: this is not a secret in the way a session is,
-// but it must be unguessable all the same. A predictable token would let one
-// person's submission cancel somebody else's pending form.
+// NewFormToken issues a token to embed in a form that must not be submitted twice.
 func (s *Store) NewFormToken(ctx context.Context, userID int64, purpose string) (string, error) {
 	token, err := newSessionID()
 	if err != nil {
@@ -3372,14 +3044,6 @@ func (s *Store) NewFormToken(ctx context.Context, userID int64, purpose string) 
 }
 
 // ConsumeFormToken spends a token, reporting whether this caller got it.
-//
-// The whole design rests on one property: DELETE ... RETURNING is atomic, so
-// when the same form is submitted twice at the same moment, exactly one of the
-// two deletes affects a row. The loser is told, and can be redirected to the
-// result of the first rather than shown an error for something that worked.
-//
-// A read followed by a delete would not do: both requests would read the token,
-// both would find it present, and both would insert an expense.
 func (s *Store) ConsumeFormToken(ctx context.Context, userID int64, token string) (bool, error) {
 	if strings.TrimSpace(token) == "" {
 		return false, nil
@@ -3424,16 +3088,10 @@ type AuditEntry struct {
 	CreatedAt string
 }
 
-// recordAudit writes one entry inside a caller's transaction.
-//
-// Deliberately takes the *sql.Tx rather than opening its own. The record and the
-// change it describes have to be one atomic act: a log written afterwards can be
-// lost by a crash, leaving a change nobody can account for, and a log written
-// beforehand can describe something that then rolled back. Both failures are
-// worse than useless in an audit trail, because they are silent.
+// recordAudit writes one entry inside the caller's transaction, deliberately not its
+// own.
 func recordAudit(ctx context.Context, tx *sql.Tx, sc Scope,
 	action, entity string, entityID int64, summary string) error {
-
 	var id any
 	if entityID != 0 {
 		id = entityID
@@ -3495,24 +3153,11 @@ const (
 )
 
 // RateRetryIn reports how long a key must wait, or zero if it may try now.
-//
-// A duration rather than a boolean, so the page can count down instead of saying
-// "a few minutes" -- which is the one thing a locked-out user cannot act on. They
-// do not know whether to wait or go and do something else.
-//
-// The counter lives in the database rather than in a map, because the map was
-// cleared by every restart -- and a process that falls over under load restarts
-// itself, so the limit was removable by the very thing it was meant to survive.
-// It also means two processes share one count instead of granting double.
 func (s *Store) RateRetryIn(ctx context.Context, key string) (time.Duration, error) {
 	window := fmt.Sprintf("-%d seconds", int64(RateWindow.Seconds()))
 	ahead := fmt.Sprintf("+%d seconds", int64(RateWindow.Seconds()))
 
-	// Seconds remaining computed in SQL via epoch arithmetic, not by parsing the
-	// stored timestamp in Go. window_start is written by datetime('now'), which
-	// is UTC and has no zone marker, so a Go-side parse would be one time.Parse
-	// mistake away from being wrong by the local offset -- which in this
-	// hemisphere would mean lockouts that expire hours early or hours late.
+	// Seconds remaining are computed in SQL rather than by parsing the timestamp in Go.
 	var failures, remaining int64
 	err := s.db.QueryRowContext(ctx, `
 		SELECT failures,
@@ -3536,13 +3181,8 @@ func (s *Store) RateRetryIn(ctx context.Context, key string) (time.Duration, err
 	return time.Duration(remaining) * time.Second, nil
 }
 
-// RateFail records a failed attempt, starting a new window if the old one has
-// aged out.
-//
-// One statement, not read-then-write. Two simultaneous wrong passwords would
-// otherwise both read the same count and both write count+1, recording one
-// failure instead of two -- which is a small hole, but it is the kind that turns
-// a limit of ten into a limit of twenty under load.
+// RateFail records a failed attempt, starting a new window when the old one has aged
+// out.
 func (s *Store) RateFail(ctx context.Context, key string) error {
 	window := fmt.Sprintf("-%d seconds", int64(RateWindow.Seconds()))
 	_, err := s.db.ExecContext(ctx, `
@@ -3585,10 +3225,6 @@ func (s *Store) PurgeOldAttempts(ctx context.Context) (int64, error) {
 }
 
 // isUniqueViolation reports whether err is a UNIQUE constraint failure.
-//
-// modernc.org/sqlite returns a driver-specific error type, so matching on the
-// message is the portable option that adds no dependency. The check is narrow
-// enough not to swallow unrelated failures.
 func isUniqueViolation(err error) bool {
 	if err == nil {
 		return false
@@ -3598,25 +3234,15 @@ func isUniqueViolation(err error) bool {
 		strings.Contains(msg, "constraint failed: unique")
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // households.go
 // ═════════════════════════════════════════════════════════════════════════════
 
-
-// A household is the thing that owns money, and a Role is what a person may do
-// to it. See internal/db/migrate004.go for the schema and why personal and
-// shared households are kept separate.
+// A household is the thing that owns money, and a Role is what a person may do to it.
 
 // ── roles ─────────────────────────────────────────────────────────────────────
 
 // Role is a member's authority within one household.
-//
-// The permissions are methods on this type rather than if-statements in
-// handlers, and that is the whole point of the design: there is exactly one
-// definition of "may this person move money", so a new handler cannot invent a
-// subtly different rule. A handler that forgets to ask gets no access at all,
-// because the zero value is not a valid role.
 type Role string
 
 const (
@@ -3633,8 +3259,7 @@ const (
 	RoleViewer Role = "viewer"
 )
 
-// Valid reports whether r is a role this application recognises. Used to
-// validate anything arriving from a form before it reaches SQL.
+// Valid reports whether r is a role this application recognises.
 func (r Role) Valid() bool {
 	return r == RoleOwner || r == RoleEditor || r == RoleViewer
 }
@@ -3670,14 +3295,8 @@ func (r Role) Explain() string {
 // actually earned and spent.
 func (r Role) CanEditEntries() bool { return r == RoleOwner || r == RoleEditor }
 
-// CanMoveFunds covers depositing to, withdrawing from and closing a savings
-// fund, and is owner-only.
-//
-// This is the one asymmetry worth explaining. Logging a grocery shop and
-// draining the emergency fund are both "writes", but they carry very different
-// consequences, and a shared household is precisely the situation where that
-// difference matters: an editor mistyping an expense costs a correction, an
-// editor emptying the emergency fund costs the household's safety net.
+// CanMoveFunds covers depositing to, withdrawing from and closing a savings fund, and
+// is owner-only.
 func (r Role) CanMoveFunds() bool { return r == RoleOwner }
 
 // CanManageMembers covers inviting, removing, and changing roles.
@@ -3690,12 +3309,9 @@ func (r Role) CanManageHousehold() bool { return r == RoleOwner }
 
 var (
 	// ErrNotMember means the caller is not in the household they asked about.
-	// Handlers map it to 404 rather than 403, so a probing user cannot discover
-	// which household ids exist.
 	ErrNotMember = errors.New("not a member of that household")
 
-	// ErrForbidden means the caller is a member but their role does not permit
-	// the action.
+	// ErrForbidden means the caller is a member but their role does not permit the action.
 	ErrForbidden = errors.New("your role does not allow that")
 
 	// ErrLastOwner blocks removing or demoting the only owner, which would
@@ -3725,8 +3341,7 @@ type Household struct {
 	Members  int
 }
 
-// Membership is a household together with the caller's authority in it. It is
-// what the web layer resolves once per request and passes to every store call.
+// Membership is a household together with the caller's authority in it.
 type Membership struct {
 	Household
 	Role Role
@@ -3763,26 +3378,17 @@ type Invite struct {
 	InvitedBy     string
 	CreatedAt     string
 
-	// ExpiresAt is when this invitation stops being acceptable, and Expired says
-	// whether that has already happened.
-	//
-	// Expired is computed in SQL rather than compared in Go so that the answer
-	// comes from the same clock as the WHERE clauses that enforce it. Two
-	// different clocks would eventually disagree, and the page would offer an
-	// Accept button the server refuses.
+	// ExpiresAt is when the invitation stops being acceptable, and Expired says whether
+	// that has happened.
 	ExpiresAt string
 	Expired   bool
 }
 
 // ── creating households ───────────────────────────────────────────────────────
 
-// createPersonalHousehold inserts a user's own household and makes them its
-// owner. It runs inside the caller's transaction because it must be atomic with
-// the signup that needs it: a user committed without a household could log in
-// and would then have nowhere to put anything.
-//
-// Called by CreateUser, and by ActiveHousehold as a repair for any account that
-// somehow lacks one.
+// createPersonalHousehold inserts a user's own household and makes them its owner,
+// inside the caller's transaction: a user committed without one could log in and have
+// nowhere to put anything. Called by CreateUser, and by ActiveHousehold as a repair.
 func createPersonalHousehold(ctx context.Context, tx *sql.Tx, userID int64, display string) (int64, error) {
 	name := strings.TrimSpace(display)
 	if name == "" {
@@ -3849,20 +3455,7 @@ func (s *Store) CreateSharedHousehold(ctx context.Context, userID int64, name st
 
 // ── resolving the caller's household ──────────────────────────────────────────
 
-// ActiveHousehold returns the household the user is currently working in,
-// together with their role in it.
-//
-// This runs on every authenticated request, so it is one query in the common
-// case. It is also the place three edge cases are absorbed rather than left to
-// become 500s:
-//
-//   - active_household_id is NULL, because the household was deleted
-//     (ON DELETE SET NULL) or the row predates migration 4;
-//   - the user still points at a household they have since been removed from;
-//   - the user has no personal household at all.
-//
-// The first two fall back to the personal household; the third creates one.
-// Every one of them would otherwise be a user who cannot load any page.
+// ActiveHousehold returns the household the user is working in and their role in it.
 func (s *Store) ActiveHousehold(ctx context.Context, u User) (Membership, error) {
 	m, err := s.activeHouseholdOnce(ctx, u.ID)
 	if err == nil {
@@ -3906,12 +3499,8 @@ func (s *Store) ActiveHousehold(ctx context.Context, u User) (Membership, error)
 	return s.activeHouseholdOnce(ctx, u.ID)
 }
 
-// activeHouseholdOnce reads the active household, returning ErrNotFound if the
-// pointer is null or no longer backed by a membership row.
-//
-// The join to household_members is what makes removal take effect immediately:
-// a user who is removed from a shared household stops being able to read it on
-// their very next request, without anything having to invalidate their session.
+// activeHouseholdOnce reads the active household, returning ErrNotFound if the pointer
+// is null or no longer backed by a membership.
 func (s *Store) activeHouseholdOnce(ctx context.Context, userID int64) (Membership, error) {
 	var m Membership
 	var personal sql.NullInt64
@@ -3934,8 +3523,6 @@ func (s *Store) activeHouseholdOnce(ctx context.Context, userID int64) (Membersh
 }
 
 // HouseholdsFor lists every household the user belongs to, for the switcher.
-// Personal first, then shared by name, so the list does not reorder itself as
-// households are added.
 func (s *Store) HouseholdsFor(ctx context.Context, userID int64) ([]Household, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT h.id, h.name, h.personal_for,
@@ -3963,10 +3550,6 @@ func (s *Store) HouseholdsFor(ctx context.Context, userID int64) ([]Household, e
 }
 
 // SwitchHousehold points the user at a different household.
-//
-// The UPDATE's WHERE clause carries the membership test, so an id the user is
-// not a member of changes nothing -- there is no window between checking and
-// writing, and no way to switch into someone else's budget by editing a form.
 func (s *Store) SwitchHousehold(ctx context.Context, userID, householdID int64) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE users SET active_household_id = ?
@@ -4047,23 +3630,9 @@ func (s *Store) Members(ctx context.Context, householdID, selfID int64) ([]Membe
 	return out, rows.Err()
 }
 
-// SetRole changes one member's role.
-//
-// Demoting the last owner is refused. The count and the update share a
-// transaction, so two owners cannot simultaneously demote each other and leave
-// the household with none -- a check outside a transaction would let both pass.
-// TransferOwnership hands a household to another member in one action.
-//
-// Previously this took two: promote them to owner, then demote yourself. Both
-// steps succeed independently, so the sequence has two bad intermediate states.
-// Stop after the first and the budget has two owners; stop after a failed second
-// and you have given away control while keeping it, which is confusing rather
-// than dangerous. Worse, doing it in the other order is blocked outright by the
-// last-owner rule, so the only workable sequence was the one that leaves the
-// household briefly co-owned.
-//
-// One transaction removes the question. Either the household has exactly one new
-// owner, or nothing changed.
+// SetRole changes one member's role. Demoting the last owner is refused, and the count
+// and the update share a transaction, so two owners cannot simultaneously demote each
+// other and leave the household with none.
 func (s *Store) TransferOwnership(ctx context.Context, householdID, fromUserID, toUserID int64) error {
 	if fromUserID == toUserID {
 		return fmt.Errorf("you already own this budget")
@@ -4091,9 +3660,8 @@ func (s *Store) TransferOwnership(ctx context.Context, householdID, fromUserID, 
 			`SELECT role FROM household_members WHERE household_id = ? AND user_id = ?`,
 			householdID, toUserID).Scan(&theirs)
 		if errors.Is(err, sql.ErrNoRows) {
-			// Only an existing member can be promoted. Handing a budget to an
-			// address that has not accepted an invitation would leave it owned by
-			// nobody who can sign in.
+			// Only an existing member can be promoted. Handing a budget to an address that has
+			// not accepted an invitation would leave it owned by nobody who can sign in.
 			return ErrNotMember
 		}
 		if err != nil {
@@ -4172,10 +3740,6 @@ func (s *Store) SetRole(ctx context.Context, householdID, actorID, targetID int6
 }
 
 // RemoveMember takes somebody out of a household.
-//
-// Their entries stay: transactions are owned by the household, and user_id is
-// only attribution. Deleting a departing member's expenses would silently
-// rewrite the household's history and change every total on the dashboard.
 func (s *Store) RemoveMember(ctx context.Context, householdID, actorID, targetID int64) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		var role Role
@@ -4207,27 +3771,21 @@ func (s *Store) RemoveMember(ctx context.Context, householdID, actorID, targetID
 			return err
 		}
 
-		// Anyone left pointing at this household is moved back to their own, or
-		// their pointer is cleared for ActiveHousehold to repair. Without this
-		// they would keep reading a household they no longer belong to until
-		// they happened to switch.
+		// Anyone left pointing at this household is moved back to their own, or their pointer
+		// is cleared for ActiveHousehold to repair.
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE users
 			SET active_household_id = (SELECT id FROM households WHERE personal_for = users.id)
 			WHERE id = ? AND active_household_id = ?`, targetID, householdID); err != nil {
 			return err
 		}
-		// Their entries stay; only the membership goes. The history says who
-		// removed them, which is the question this table exists to answer.
+		// Their entries stay; only the membership goes.
 		return recordAudit(ctx, tx, Scope{HouseholdID: householdID, UserID: actorID},
 			"removed a member", "member", targetID, "their entries were kept")
 	})
 }
 
 // DeleteHousehold removes a shared household and everything in it.
-//
-// Personal households are refused: that is where the user's own data lives, and
-// there is no path in the UI to delete your entire history by accident.
 func (s *Store) DeleteHousehold(ctx context.Context, householdID int64) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		var personal sql.NullInt64
@@ -4282,19 +3840,6 @@ func (s *Store) LeaveHousehold(ctx context.Context, householdID, userID int64) e
 // ── invitations ───────────────────────────────────────────────────────────────
 
 // InviteMember records an invitation for an email address.
-//
-// The address does not need an account yet: invitations are matched by email at
-// sign-in, so somebody can be invited and then sign up. Nothing is emailed --
-// there is no mail server here -- so the invitation waits in the database and is
-// shown as a banner the next time that person loads a page.
-//
-// Only editor and viewer can be granted. Ownership moves by explicit transfer.
-// InviteTTL is how long an invitation stays acceptable.
-//
-// Twenty-four hours, as asked for. Short enough that an address typed wrongly,
-// or sent to someone who has since left, stops being a way into a budget
-// tomorrow -- and short enough that resending will be routine, which is why
-// there is a resend action rather than only a revoke.
 const InviteTTL = 24 * time.Hour
 
 // inviteTTLModifier is InviteTTL as a SQLite datetime modifier, derived from the
@@ -4302,10 +3847,6 @@ const InviteTTL = 24 * time.Hour
 var inviteTTLModifier = fmt.Sprintf("+%d seconds", int64(InviteTTL.Seconds()))
 
 // ErrInviteExpired is returned when an invitation is real but too old to use.
-//
-// Distinct from ErrNotFound on purpose: "that invitation has expired, ask them
-// to send another" is actionable, and "not found" would send the recipient
-// looking for a mistake they did not make.
 var ErrInviteExpired = errors.New("invitation expired")
 
 func (s *Store) InviteMember(ctx context.Context, householdID, invitedBy int64, email string, role Role) error {
@@ -4350,8 +3891,7 @@ func (s *Store) InviteMember(ctx context.Context, householdID, invitedBy int64, 
 	})
 }
 
-// PendingInvites lists a household's unanswered invitations, for its settings
-// page.
+// PendingInvites lists a household's unanswered invitations, for its settings page.
 func (s *Store) PendingInvites(ctx context.Context, householdID int64) ([]Invite, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.household_id, i.email, i.role, i.created_at,
@@ -4380,14 +3920,6 @@ func (s *Store) PendingInvites(ctx context.Context, householdID int64) ([]Invite
 }
 
 // ResendInvite gives an unanswered invitation another 24 hours.
-//
-// The alternative -- revoke, then invite again -- works, but it is two actions
-// for one intention, and the partial unique index means the revoke has to
-// succeed first or the second invitation is rejected as a duplicate. Extending
-// the row is one statement and cannot half-happen.
-//
-// The row is only touched while it is still 'pending', so this cannot resurrect
-// an invitation somebody has already declined.
 func (s *Store) ResendInvite(ctx context.Context, householdID, inviteID int64) (Invite, error) {
 	var inv Invite
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
@@ -4414,11 +3946,6 @@ func (s *Store) ResendInvite(ctx context.Context, householdID, inviteID int64) (
 }
 
 // TestOnlyExpireInvite ages an invitation past its window.
-//
-// Exported for tests, and named so that its purpose is unmistakable at the call
-// site. The alternative -- reaching into *sql.DB from the test package -- would
-// mean the test writes its own SQL against a column the store owns, and those two
-// copies drift. This way there is one statement, here.
 func (s *Store) TestOnlyExpireInvite(ctx context.Context, inviteID int64) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE household_invites SET expires_at = datetime('now', '-1 minute') WHERE id = ?`,
@@ -4426,13 +3953,8 @@ func (s *Store) TestOnlyExpireInvite(ctx context.Context, inviteID int64) error 
 	return err
 }
 
-// PurgeStaleInvites removes invitations that expired long enough ago that nobody
-// is going to act on them.
-//
-// Not the moment they expire: an owner looking at the members page should see
-// that the invitation they sent yesterday lapsed, with a button to send it
-// again. Deleting on the stroke of expiry would make it silently vanish, and
-// "did I actually invite them?" is a worse question than "that one expired".
+// PurgeStaleInvites removes invitations that expired long enough ago that nobody will
+// act on them.
 func (s *Store) PurgeStaleInvites(ctx context.Context) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
 		DELETE FROM household_invites
@@ -4445,11 +3967,8 @@ func (s *Store) PurgeStaleInvites(ctx context.Context) (int64, error) {
 	return res.RowsAffected()
 }
 
-// InvitesFor lists the unanswered invitations addressed to one person, matched
-// case-insensitively so an invitation to "Bob@x.com" reaches bob@x.com.
-//
-// Invitations to a household they are somehow already in are filtered out, so a
-// stale row cannot leave an undismissable banner on every page.
+// InvitesFor lists unanswered invitations addressed to one person, matched case-
+// insensitively.
 func (s *Store) InvitesFor(ctx context.Context, userID int64, email string) ([]Invite, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.household_id, h.name, i.role, i.created_at,
@@ -4485,12 +4004,8 @@ func (s *Store) InvitesFor(ctx context.Context, userID int64, email string) ([]I
 	return out, rows.Err()
 }
 
-// AcceptInvite turns an invitation into a membership and switches the user into
-// the household.
-//
-// The invitation is re-read inside the transaction and matched against the
-// caller's own address, so a guessed invitation id belonging to somebody else
-// is refused.
+// AcceptInvite turns an invitation into a membership and switches the user into the
+// household.
 func (s *Store) AcceptInvite(ctx context.Context, inviteID, userID int64, email string) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		var householdID int64
@@ -4508,9 +4023,7 @@ func (s *Store) AcceptInvite(ctx context.Context, inviteID, userID int64, email 
 		if err != nil {
 			return err
 		}
-		// Checked inside the transaction, not before it. An expiry test done
-		// earlier and acted on later has a gap, and the whole point of the
-		// deadline is that it is not negotiable by timing.
+		// Checked inside the transaction, not before it.
 		if expired {
 			return ErrInviteExpired
 		}
@@ -4539,10 +4052,9 @@ func (s *Store) AcceptInvite(ctx context.Context, inviteID, userID int64, email 
 	})
 }
 
-// DeclineInvite marks an invitation refused. The row is kept rather than
-// deleted so the inviter can see what happened, and because
-// idx_invites_open is partial on status='pending' a fresh invitation can still
-// be sent later.
+// DeclineInvite marks an invitation refused. The row is kept rather than deleted so the
+// inviter can see what happened, and because idx_invites_open is partial on
+// status='pending' a fresh invitation can still be sent later.
 func (s *Store) DeclineInvite(ctx context.Context, inviteID int64, email string) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE household_invites
@@ -4558,9 +4070,7 @@ func (s *Store) DeclineInvite(ctx context.Context, inviteID int64, email string)
 	return nil
 }
 
-// RevokeInvite withdraws an invitation the household sent. householdID is part
-// of the WHERE clause, so an owner cannot revoke another household's invitation
-// by id.
+// RevokeInvite withdraws an invitation the household sent.
 func (s *Store) RevokeInvite(ctx context.Context, inviteID, householdID int64) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE household_invites
@@ -4576,11 +4086,9 @@ func (s *Store) RevokeInvite(ctx context.Context, inviteID, householdID int64) e
 	return nil
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // jobs.go
 // ═════════════════════════════════════════════════════════════════════════════
-
 
 // JobStatus tracks a receipt through the queue.
 type JobStatus string
@@ -4600,11 +4108,8 @@ const (
 type ReceiptJob struct {
 	ID int64
 
-	// UserID is who uploaded the file; HouseholdID is which budget the expense
-	// it becomes will belong to. They are recorded separately because the two
-	// answers can differ by the time the worker runs -- the user may have
-	// switched households in the meantime -- and the budget the user was looking
-	// at when they chose the file is the one they meant.
+	// UserID is who uploaded the file; HouseholdID is which budget the expense will belong
+	// to.
 	UserID      int64
 	HouseholdID int64
 
@@ -4618,17 +4123,12 @@ type ReceiptJob struct {
 	FinishedAt    string
 }
 
-// MaxJobAttempts is how many times a receipt is retried before the user is told
-// it failed. Retrying at all covers a transient problem such as the file not
-// having finished syncing; retrying forever would hide a real failure, which is
-// the one outcome the wireframe insists must reach the user.
+// MaxJobAttempts is how many times a receipt is retried before the user is told it
+// failed.
 const MaxJobAttempts = 3
 
-// EnqueueReceipt adds a receipt to the processing queue and returns its id.
-//
-// This is the whole point of the queue: the handler returns immediately, so the
-// user "can go about the rest of their business" rather than watching a spinner
-// while an image is analysed.
+// EnqueueReceipt adds a receipt to the processing queue and returns its id, so the
+// handler returns immediately rather than holding the user on a spinner.
 func (s *Store) EnqueueReceipt(ctx context.Context, sc Scope, path, originalName string) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO receipt_jobs(user_id, household_id, path, original_name) VALUES(?, ?, ?, ?)`,
@@ -4640,11 +4140,6 @@ func (s *Store) EnqueueReceipt(ctx context.Context, sc Scope, path, originalName
 }
 
 // ClaimReceiptJob atomically takes the oldest queued job.
-//
-// The UPDATE ... WHERE status = 'queued' is what makes the claim safe: if two
-// workers race, only one UPDATE affects a row, and the loser sees zero rows
-// affected and moves on. Selecting and then updating in two steps would hand
-// the same receipt to both.
 func (s *Store) ClaimReceiptJob(ctx context.Context) (ReceiptJob, error) {
 	var job ReceiptJob
 
@@ -4686,8 +4181,7 @@ func (s *Store) ClaimReceiptJob(ctx context.Context) (ReceiptJob, error) {
 	return job, err
 }
 
-// CompleteReceiptJob marks a job done, optionally linking the transaction it
-// produced.
+// CompleteReceiptJob marks a job done, optionally linking the transaction it produced.
 func (s *Store) CompleteReceiptJob(ctx context.Context, jobID int64, txID *int64) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE receipt_jobs
@@ -4726,11 +4220,7 @@ func (s *Store) RetryOrFailReceiptJob(ctx context.Context, jobID int64, cause st
 	return false, nil
 }
 
-// RecoverStuckJobs returns jobs left in 'processing' back to the queue.
-//
-// A job is only ever in that state while a worker holds it in memory, so if the
-// process was killed mid-flight the row is stranded and the receipt would never
-// be processed and never be reported as failed. Called once at startup.
+// RecoverStuckJobs returns jobs left in processing back to the queue.
 func (s *Store) RecoverStuckJobs(ctx context.Context) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE receipt_jobs SET status = 'queued' WHERE status = 'processing'`)
@@ -4770,20 +4260,7 @@ func (s *Store) ReceiptJobs(ctx context.Context, userID int64, limit int) ([]Rec
 	return out, rows.Err()
 }
 
-// UnattachedReceipt fetches a processed receipt that has not yet become an
-// expense.
-//
-// Scoped by household_id, not user_id: a receipt uploaded by one member belongs
-// to that household's budget, so any member who may edit should be able to
-// finish it -- and, more importantly, a member of a *different* household must
-// not be able to attach it by guessing the id. That is the
-// insecure-direct-object-reference shape, and the household filter is what
-// closes it.
-//
-// The transaction_id IS NULL condition is what makes attaching idempotent-safe:
-// once a receipt has become an expense, this returns ErrNotFound rather than
-// letting the same file be attached to a second transaction. A resubmitted form
-// or a double-tapped notification therefore cannot duplicate a receipt.
+// UnattachedReceipt fetches a processed receipt that has not yet become an expense.
 func (s *Store) UnattachedReceipt(ctx context.Context, sc Scope, jobID int64) (ReceiptJob, error) {
 	var j ReceiptJob
 	err := s.db.QueryRowContext(ctx, `
@@ -4803,12 +4280,8 @@ func (s *Store) UnattachedReceipt(ctx context.Context, sc Scope, jobID int64) (R
 	return j, nil
 }
 
-// UnattachedReceipts lists processed receipts in this budget that nobody has
-// turned into an expense yet.
-//
-// Without this the upload is a dead end whenever the notification is missed:
-// notifications are dismissed, cleared on another device, or simply scrolled
-// past, and the file itself was then unreachable from anywhere in the UI.
+// UnattachedReceipts lists processed receipts in this budget that nobody has turned into
+// an expense. Without it an upload is a dead end whenever the notification is missed.
 func (s *Store) UnattachedReceipts(ctx context.Context, sc Scope, limit int) ([]ReceiptJob, error) {
 	if limit <= 0 {
 		limit = 10
@@ -4838,21 +4311,8 @@ func (s *Store) UnattachedReceipts(ctx context.Context, sc Scope, limit int) ([]
 	return out, rows.Err()
 }
 
-// DiscardReceipt throws away an uploaded receipt nobody wants, returning the
-// stored path so the caller can delete the file too.
-//
-// The waiting list otherwise has only one exit: turning the receipt into an
-// expense. Upload the same screenshot three times by accident and the only way
-// to clear it would be to invent three expenses, which is a worse outcome than
-// the mess it tidies.
-//
-// The row is deleted rather than flagged. A status of 'discarded' would be
-// tidier, but receipt_jobs.status carries a CHECK constraint listing its four
-// values, and SQLite cannot alter a CHECK without rebuilding the table -- which
-// is the one migration shape this project refuses, because a rebuild with
-// foreign keys on performs a cascading delete. Weighed against that, losing a
-// queue artefact nobody wanted is the cheaper loss. No financial record is
-// touched: an attached receipt is refused outright.
+// DiscardReceipt throws away an uploaded receipt nobody wants, returning the stored
+// path so the caller can delete the file too.
 func (s *Store) DiscardReceipt(ctx context.Context, sc Scope, jobID int64) (string, error) {
 	var path string
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
@@ -4862,8 +4322,6 @@ func (s *Store) DiscardReceipt(ctx context.Context, sc Scope, jobID int64) (stri
 			jobID, sc.HouseholdID).Scan(&path)
 		if errors.Is(err, sql.ErrNoRows) {
 			// Either it belongs to another budget, or it is already an expense.
-			// Refusing the second case matters: deleting it there would leave a
-			// transaction pointing at a file about to be removed from disk.
 			return ErrNotFound
 		}
 		if err != nil {
@@ -4889,17 +4347,6 @@ func (s *Store) DiscardReceipt(ctx context.Context, sc Scope, jobID int64) (stri
 }
 
 // AttachReceipt links a processed receipt to the expense it became.
-//
-// Both writes happen in one transaction. Copying the file reference onto the
-// transaction and marking the job attached are two halves of one fact, and if
-// they can come apart the failure modes are both bad: a transaction pointing at
-// a file the job still thinks is free, or a job marked used whose expense has no
-// receipt.
-//
-// The WHERE clauses repeat the ownership and IS NULL conditions rather than
-// trusting the caller's earlier read. Between that read and this write another
-// request could have attached the same receipt, and a check-then-act with a gap
-// in the middle is how the same file ends up on two expenses.
 func (s *Store) AttachReceipt(ctx context.Context, sc Scope, jobID, txID int64) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		var path, name string
@@ -4935,12 +4382,6 @@ func (s *Store) AttachReceipt(ctx context.Context, sc Scope, jobID, txID int64) 
 
 // PendingReceiptCount is how many receipts destined for this budget are still in
 // flight.
-//
-// Scoped to the household rather than the uploader: the figure appears on the
-// household's dashboard and answers "is anything still coming?", which is a
-// question about the budget. A member should see that a shared receipt is being
-// processed even though the notification when it lands goes only to whoever
-// uploaded it.
 func (s *Store) PendingReceiptCount(ctx context.Context, sc Scope) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx,
@@ -4953,19 +4394,13 @@ func (s *Store) PendingReceiptCount(ctx context.Context, sc Scope) (int, error) 
 	return n, nil
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // notifications.go
 // ═════════════════════════════════════════════════════════════════════════════
 
-
-// Notification is a message waiting for a user.
-//
-// Stored in a table rather than the session, which is what makes the
-// wireframe's requirement achievable: "If user is not logged in and there is an
-// issue with processing, then some other notification should be given, perhaps
-// when they log back in again." An unseen row keeps waiting however long the
-// user stays away, and survives a server restart.
+// Notification is a message waiting for a user, stored in a table rather than the
+// session: an unseen row keeps waiting however long the user stays away, and survives
+// a server restart.
 type Notification struct {
 	ID        int64
 	Kind      string // "info" | "success" | "error"
@@ -4991,10 +4426,6 @@ func (s *Store) Notify(ctx context.Context, userID int64, kind, text, link strin
 }
 
 // TakeNotifications returns a user's unseen messages and marks them seen.
-//
-// Read-and-clear in one transaction: two browser tabs polling at the same moment
-// would otherwise both receive the same message, and the user would see the
-// same toast twice.
 func (s *Store) TakeNotifications(ctx context.Context, userID int64) ([]Notification, error) {
 	out := []Notification{}
 

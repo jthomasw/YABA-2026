@@ -1,8 +1,5 @@
-// Package money represents currency amounts as integer cents.
-//
-// Storing money in a float64 is the single most common bug in financial
-// software: 0.1 + 0.2 != 0.3, and SUM() over thousands of REAL rows drifts
-// away from the truth. Cents are exact for every operation this app performs.
+// Package money represents currency amounts as integer cents, because float64
+// cannot hold money exactly: 0.1 + 0.2 != 0.3, and a SUM over REAL rows drifts.
 package money
 
 import (
@@ -13,8 +10,6 @@ import (
 )
 
 // Cents is a currency amount in the smallest unit (US cents).
-// A negative value is legal (it represents a debit or a shortfall); handlers
-// decide whether a negative amount is acceptable for a given field.
 type Cents int64
 
 // Zero is the additive identity, provided for readability.
@@ -23,16 +18,10 @@ const Zero Cents = 0
 // ErrInvalidAmount is returned when a string cannot be read as an amount.
 var ErrInvalidAmount = errors.New("not a valid amount")
 
-// maxAmount caps a single transaction at $1 billion. Without a ceiling a user
-// can type a number that overflows int64 once multiplied by 100, and absurd
-// values wreck every chart's y-axis. (The legacy database contains a
-// 50,000,000 fund deposit created through the old delete-fund exploit, which
-// is exactly the kind of value this guards against.)
+// maxAmount caps one transaction at $1 billion.
 const maxAmount = 100_000_000_000 // $1,000,000,000.00 in cents
 
-// FromFloat converts a float dollar amount to Cents, rounding half away from
-// zero. It exists for the legacy migration path only; new code should parse
-// user input with Parse and never round-trip through float64.
+// FromFloat converts float dollars to Cents, rounding half away from zero.
 func FromFloat(f float64) Cents {
 	if f >= 0 {
 		return Cents(int64(f*100 + 0.5))
@@ -112,10 +101,8 @@ func Parse(s string) (Cents, error) {
 	return Cents(total), nil
 }
 
-// ParsePositive is Parse plus the requirement that the amount is greater than
-// zero. Almost every form in this app wants this: the old code accepted
-// negative income, which let a user reduce their spending total by "earning"
-// a negative salary.
+// ParsePositive is Parse plus the requirement that the amount is above zero, which
+// is what stops a negative income reducing a spending total.
 func ParsePositive(s string) (Cents, error) {
 	c, err := Parse(s)
 	if err != nil {
@@ -179,8 +166,7 @@ func (c Cents) Input() string {
 }
 
 // Ratio returns c/of as a percentage in [0, 100], clamped, and 0 when the
-// denominator is zero. Progress bars and "percent of spending" summaries all
-// need the same guard against division by zero.
+// denominator is zero.
 func Ratio(c, of Cents) float64 {
 	if of <= 0 {
 		return 0

@@ -1,11 +1,6 @@
-// Command yaba runs the YABA budgeting server.
-//
-// main does three things and nothing else: read configuration, wire the
-// packages together, and start listening. The schema lives in internal/db, the
-// SQL in internal/store, and the request handling in internal/web.
-//
-// The previous main.go also held every CREATE TABLE statement and a
-// hand-rolled migration routine that re-ran ALTER TABLE on every boot.
+// Command yaba runs the YABA budgeting server. main reads configuration, wires the
+// packages together and listens: the schema lives in internal/db, the SQL in
+// internal/store, and request handling in internal/web.
 package main
 
 import (
@@ -46,9 +41,8 @@ func main() {
 		backupKeep = flag.Int("backup-keep", int(envInt64("YABA_BACKUP_KEEP", db.DefaultBackupKeep)),
 			"how many snapshots to retain")
 
-		// Links in emails have to be absolute, and the host cannot be taken from
-		// the request: honouring a client-supplied Host header would let anyone
-		// mint a password reset link pointing wherever they liked.
+		// Links in emails must be absolute, and the host cannot come from the request:
+		// honouring a client-supplied Host header would let anyone mint a reset link.
 		baseURL  = flag.String("base-url", envOr("YABA_BASE_URL", ""), "externally reachable root, for links in emails")
 		smtpHost = flag.String("smtp-host", envOr("YABA_SMTP_HOST", ""), "SMTP host; unset writes emails to the log")
 		smtpPort = flag.Int("smtp-port", int(envInt64("YABA_SMTP_PORT", 587)), "SMTP port (587 STARTTLS, 465 TLS)")
@@ -124,11 +118,6 @@ func run(cfg config) error {
 	}
 
 	// Back up before changing the schema, and treat a failure as fatal.
-	//
-	// A migration is the most dangerous thing that happens to this file, and the
-	// one moment a backup is unarguably worth its cost. Refusing to start is the
-	// right response: continuing would apply an irreversible change with no way
-	// back, which is precisely the situation the backup exists to prevent.
 	if backupCfg.Dir != "" {
 		pending, err := db.Pending(sqlDB)
 		if err != nil {
@@ -136,9 +125,8 @@ func run(cfg config) error {
 		}
 		switch {
 		case pending > 0 && db.Version(sqlDB) == 0:
-			// A database with no schema at all. There is nothing to lose, and
-			// VerifySnapshot rightly refuses a snapshot with no schema_migrations
-			// table -- so attempting one here would make every first run fatal.
+			// A database with no schema has nothing to lose, and VerifySnapshot refuses a
+			// snapshot with no schema_migrations -- so backing up here would make first run fatal.
 			log.Printf("startup: new database — nothing to back up before migrating")
 		case pending > 0:
 			log.Printf("startup: %d migration(s) pending — taking a backup first", pending)
@@ -159,21 +147,16 @@ func run(cfg config) error {
 
 	st := store.New(sqlDB)
 
-	// Sweep sessions that can no longer be used. Nothing depends on this for
-	// correctness -- an expired row is refused whether or not it still exists --
-	// so a failure is logged rather than fatal. It is here so the table does not
-	// grow forever on a server that is restarted more often than it is logged
-	// into.
+	// Housekeeping only: an expired session is refused whether or not the row exists,
+	// so a failure is logged rather than fatal. Without it the table grows forever.
 	if n, err := st.PurgeExpiredSessions(context.Background()); err != nil {
 		log.Printf("startup: could not purge expired sessions: %v", err)
 	} else if n > 0 {
 		log.Printf("startup: purged %d expired session(s)", n)
 	}
 
-	// The same reasoning for the three other tables that accumulate rows nobody
-	// can use: spent reset tokens, lapsed invitations, and login-attempt windows
-	// that have aged out. None of them affect correctness -- every one is filtered
-	// by the queries that read them -- so a failure here is logged, not fatal.
+	// The same for spent reset tokens, lapsed invitations and aged-out login windows:
+	// every query that reads them already filters, so a failure here is logged, not fatal.
 	if n, err := st.PurgeExpiredResets(context.Background()); err != nil {
 		log.Printf("startup: could not purge reset tokens: %v", err)
 	} else if n > 0 {
@@ -195,15 +178,13 @@ func run(cfg config) error {
 		log.Printf("startup: purged %d unused form token(s)", n)
 	}
 
-	// The receipt queue is drained by a background goroutine, so an upload
-	// handler returns as soon as the file is on disk. Started before the server
-	// so that anything left over from a previous run is picked up immediately.
+	// The receipt queue is drained by a background goroutine, started before the server
+	// so anything left over from a previous run is picked up immediately.
 	ctx, cancelWorker := context.WithCancel(context.Background())
 	defer cancelWorker()
 
-	// nil means the default processor: the receipt is stored and queued, and the
-	// amount is typed in. Passing a processor here is the seam for reading it
-	// automatically, and nothing else in the wiring would change.
+	// nil means the default processor, which stores and queues the receipt for the
+	// amount to be typed in. Passing one here is the seam for reading it automatically.
 	receipts := worker.New(st, nil, 5*time.Second)
 	go receipts.Run(ctx)
 
@@ -224,18 +205,15 @@ func run(cfg config) error {
 		UploadDir:    uploadDir,
 		SecureCookie: secureCookie,
 		MaxUploadMB:  maxUploadMB,
-		// Passing the worker in lets an upload nudge it awake rather than
-		// waiting up to one interval. The web package only knows it as a Waker,
-		// so the dependency does not point back at worker.
+		// Passing the worker in lets an upload nudge it awake rather than waiting a whole
+		// interval. web knows it only as a Waker, so the dependency does not point back.
 		Worker: receipts,
 	})
 	if err != nil {
 		return err
 	}
 
-	// addr is ":8000" when only a port was given and "127.0.0.1:8000" when a host
-	// was too. Only the first form needs a host pasted on to become a real URL;
-	// the old line printed "http://localhost127.0.0.1:8000" for the second.
+	// addr is :8000 when only a port was given and 127.0.0.1:8000 when a host was too.
 	shown := addr
 	if strings.HasPrefix(shown, ":") {
 		shown = "localhost" + shown
@@ -247,16 +225,9 @@ func run(cfg config) error {
 // sessionKeyEnv is the variable holding the cookie signing key.
 const sessionKeyEnv = "YABA_SESSION_KEY"
 
-// sessionKey loads the cookie signing key.
-//
-// The old code used a literal: sessions.NewCookieStore([]byte("super-secret-key")).
-// That string is in the repository's git history, so anyone who has ever seen
-// the source can forge a session cookie for any account. A signing key has to
-// come from the environment.
-//
-// When the variable is unset a random key is generated so the app still starts
-// for local development, with a warning: the consequence is that restarting the
-// server signs out everyone, which is the correct trade-off for a default.
+// sessionKey loads the cookie signing key, which has to come from the environment:
+// a literal in the source sits in git history, and anyone who has seen it can forge
+// a session. Unset generates a random key, so a restart signs everyone out.
 func sessionKey() ([]byte, error) {
 	raw := strings.TrimSpace(os.Getenv(sessionKeyEnv))
 

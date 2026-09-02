@@ -8,7 +8,7 @@
 (function () {
   "use strict";
 
-  function init() {
+  function initReveal() {
     document.querySelectorAll("[data-reveal]").forEach(function (btn) {
       var input = document.getElementById(btn.getAttribute("data-reveal"));
       if (!input) return;
@@ -30,6 +30,10 @@
         try { input.setSelectionRange(pos, pos); } catch (e) { /* not supported */ }
       });
     });
+  }
+
+  function init() {
+    initReveal();
   }
 
   if (document.readyState === "loading") {

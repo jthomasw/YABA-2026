@@ -72,7 +72,10 @@
           {{range .Sessions}}
           <tr {{if .Current}}class="is-current-session"{{end}}>
             <td data-label="Device">
-              <strong>{{if .UserAgent}}{{.UserAgent}}{{else}}Unknown browser{{end}}</strong>
+              {{/* The full user-agent string moves to the tooltip: it is the only
+                   evidence available if somebody is working out whether a login is
+                   theirs, but it is unreadable as a label. */}}
+              <strong{{if .UserAgent}} title="{{.UserAgent}}"{{end}}>{{.DeviceName}}</strong>
               {{if .Current}}<span class="tag tag-current">This device</span>{{end}}
             </td>
             <td data-label="Last active">{{.LastSeenAt}}</td>

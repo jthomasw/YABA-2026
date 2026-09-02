@@ -1,9 +1,5 @@
-// Package worker drains the receipt queue in the background.
-//
-// The wireframe is explicit about why this exists: "Picture gets put into a
-// queue server side for processing and the user can go about the rest of their
-// business." The upload handler therefore only writes a file and a row; all the
-// slow work happens here, out of the request's way.
+// Package worker drains the receipt queue in the background, so an upload handler
+// writes one file and one row and returns without waiting for the slow work.
 package worker
 
 import (
@@ -19,16 +15,9 @@ import (
 	"github.com/jthomasw/YABA-2026/internal/store"
 )
 
-// Processor turns a receipt image into something useful.
-//
-// An interface rather than a concrete implementation, so the queue, the retries
-// and the notifications are testable on their own and reading an amount off an
-// image can be added later by writing one type. Today the only implementation is
-// ReviewProcessor, which stores the receipt and asks for the amount.
+// Processor turns a receipt image into a draft transaction.
 type Processor interface {
-	// Process examines the image at path and returns a draft transaction.
-	// Returning ErrNeedsReview is not a failure: it means the image was stored
-	// fine but the amount could not be read, so a human has to finish the job.
+	// Process examines the image at path and returns a draft.
 	Process(ctx context.Context, job store.ReceiptJob) (Draft, error)
 }
 
@@ -51,10 +40,7 @@ type Worker struct {
 	processor Processor
 	interval  time.Duration
 
-	// wake lets the upload handler nudge the worker so a receipt is picked up
-	// immediately instead of waiting for the next tick. Buffered with capacity
-	// one: if a nudge is already pending, another is redundant, and a
-	// non-blocking send means the web handler never waits on the worker.
+	// wake lets an upload nudge the worker instead of waiting for the next tick.
 	wake chan struct{}
 
 	stopOnce sync.Once
@@ -87,12 +73,8 @@ func (w *Worker) Wake() {
 	}
 }
 
-// Run processes jobs until ctx is cancelled.
-//
-// Any job left in 'processing' from a previous run is returned to the queue
-// first. Without that, a receipt held by a process that was killed mid-flight
-// would sit in limbo forever: never processed, and never reported as failed,
-// which is the one outcome the specification rules out.
+// Run processes jobs until ctx is cancelled. A job left in 'processing' by a killed
+// process is requeued first, or it would never run and never be reported as failed.
 func (w *Worker) Run(ctx context.Context) {
 	defer close(w.done)
 
@@ -106,8 +88,7 @@ func (w *Worker) Run(ctx context.Context) {
 	defer ticker.Stop()
 
 	for {
-		// Drain fully on each pass, so a burst of uploads is not spread across
-		// one tick each.
+		// Drain fully on each pass, so a burst of uploads is not spread across one tick each.
 		for w.processNext(ctx) {
 			if ctx.Err() != nil {
 				return
@@ -178,10 +159,8 @@ func (w *Worker) finishExtracted(ctx context.Context, job store.ReceiptJob, d Dr
 		d.Label = "Scanned receipt"
 	}
 
-	// The scope comes off the job, not from a fresh lookup of the user's current
-	// household. The user may have switched budgets between uploading the file
-	// and the worker getting to it, and the expense belongs to the budget they
-	// were looking at when they chose it.
+	// The scope comes off the job, not the uploader's current household: they may have
+	// switched budgets since, and the expense belongs to the one they were looking at.
 	sc := store.Scope{HouseholdID: job.HouseholdID, UserID: job.UserID}
 
 	essential := true
@@ -216,11 +195,7 @@ func (w *Worker) finishExtracted(ctx context.Context, job store.ReceiptJob, d Dr
 		fmt.Sprintf("/transactions/%d/edit", txID))
 }
 
-// finishNeedsReview stores the image against a draft the user must complete.
-//
-// Deliberately not a silent success. The receipt is safe and attached, but the
-// amount is unknown, so the notification links straight to the form where the
-// user can fill it in.
+// finishNeedsReview stores the image against a draft the user completes.
 func (w *Worker) finishNeedsReview(ctx context.Context, job store.ReceiptJob) {
 	if err := w.store.CompleteReceiptJob(ctx, job.ID, nil); err != nil {
 		log.Printf("worker: could not mark job %d done: %v", job.ID, err)
@@ -244,10 +219,8 @@ func (w *Worker) finishFailed(ctx context.Context, job store.ReceiptJob, cause e
 		return // it will come round again
 	}
 
-	// "Regardless, the user needs to be informed of the import failure so that
-	// they can do something about it." The notification is written to the
-	// database, not pushed to a live page, precisely so it survives until the
-	// user is next looking.
+	// Written to the database rather than pushed to a live page, so a failure still
+	// reaches the user whenever they next sign in.
 	w.notify(ctx, job.UserID, "error",
 		fmt.Sprintf("Could not import the receipt %s. Please add it manually.", job.OriginalName),
 		"/transactions/new?type=expense")
@@ -261,17 +234,8 @@ func (w *Worker) notify(ctx context.Context, userID int64, kind, text, link stri
 
 // ── the default processor ─────────────────────────────────────────────────────
 
-// ReviewProcessor checks that the file exists and readable, then hands the
-// receipt to the user to complete.
-//
-// This is honest about what the application can currently do. Reading an amount
-// off a photograph needs OCR, and there is no OCR dependency in this project. A
-// processor that invented a plausible-looking amount would be far worse than one
-// that says so: a budgeting app that quietly fabricates numbers is useless.
-//
-// Everything around it -- the queue, the claim, the retry, the notification, the
-// recovery of stranded jobs -- is real and works. Replace this type to add
-// extraction.
+// ReviewProcessor checks the stored file is readable and then hands the receipt to the
+// user.
 type ReviewProcessor struct{}
 
 // Process verifies the stored file and asks for review.
@@ -289,9 +253,6 @@ func (ReviewProcessor) Process(_ context.Context, job store.ReceiptJob) (Draft, 
 }
 
 // localPath converts a stored path to the local separator.
-//
-// Paths are held in the database with forward slashes so the same database works
-// on Windows and Linux. Everything that touches the filesystem goes through here.
 func localPath(stored string) string {
 	return filepath.FromSlash(stored)
 }

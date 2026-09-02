@@ -2257,3 +2257,80 @@ func TestActivityAnswersWhoDeletedIt(t *testing.T) {
 		t.Errorf("the history does not say who did it: %q", list)
 	}
 }
+
+// ── the sharing page's recent activity ────────────────────────────────────────
+
+// TestRecentActivityIsCappedAtThree: the list answers "what just happened here?",
+// so it shows the newest three and no more. The audit table still holds
+// everything; only the view is capped.
+func TestRecentActivityIsCappedAtThree(t *testing.T) {
+	rig := newRig(t)
+	rig.login()
+
+	for i := 0; i < 6; i++ {
+		rig.addExpenseVia(t, fmt.Sprintf("Coffee %d", i), "3.50")
+	}
+
+	body := rig.do("GET", "/household", nil).Body.String()
+
+	// Scoped to the activity list rather than searched for across the page, for
+	// the reason the audit test already gives: a short string matches somewhere
+	// in a full HTML document almost every time.
+	found := regexp.MustCompile(`(?s)<ul class="activity">(.*?)</ul>`).FindStringSubmatch(body)
+	if found == nil {
+		t.Fatal("no activity list on the page")
+	}
+	if n := strings.Count(found[1], "activity-who"); n != 3 {
+		t.Errorf("activity list shows %d entries, want 3", n)
+	}
+}
+
+// ── signing up from the sign-in page ──────────────────────────────────────────
+
+// TestUnknownEmailIsAnsweredInRedOnThePage: an address with no account is told
+// so in the page's own red banner, with the password step underneath it. No
+// dialog and no second page: the answer belongs where the button was.
+func TestUnknownEmailIsAnsweredInRedOnThePage(t *testing.T) {
+	rig := newRig(t)
+
+	body := rig.do("POST", "/auth", url.Values{
+		"csrf_token": {rig.csrf("/")},
+		"email":      {"nobody@example.com"},
+		"password":   {"longenough123"},
+	}).Body.String()
+
+	if !strings.Contains(body, `class="auth-error"`) {
+		t.Errorf("the answer should be the page's red banner: %q", truncate(body))
+	}
+	if !strings.Contains(body, "doesn't have an account yet") {
+		t.Error("the banner does not say the address has no account")
+	}
+	if !strings.Contains(body, "Confirm password") {
+		t.Error("the password step should be on the page, ready to fill in")
+	}
+	// The same information used to arrive in a modal. It must not come back:
+	// the signed-out page has no other dialog, so any <dialog> here is this one.
+	if strings.Contains(body, "<dialog") {
+		t.Error("this flow should not open a dialog")
+	}
+	if exists, _ := rig.store.EmailExists(context.Background(), "nobody@example.com"); exists {
+		t.Fatal("offering to create the account must not create it")
+	}
+
+	// A mismatch replaces the banner's text with the reason, in the same place,
+	// and leaves the fields on screen to be corrected.
+	body = rig.do("POST", "/auth", url.Values{
+		"csrf_token": {rig.csrf("/")},
+		"create":     {"yes"},
+		"email":      {"nobody@example.com"},
+		"password":   {"longenough123"},
+		"confirm":    {"mismatch12345"},
+	}).Body.String()
+
+	if !strings.Contains(body, "do not match") {
+		t.Errorf("a mismatch should be explained in the banner: %q", extractError(body))
+	}
+	if !strings.Contains(body, "Confirm password") {
+		t.Error("the password step should still be on screen after a mismatch")
+	}
+}

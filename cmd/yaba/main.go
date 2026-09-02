@@ -1,7 +1,6 @@
-// Command yaba is the maintenance tool for a YABA database.
-//
-// Kept out of the server binary because a destructive action should not be one
-// mistyped character away from the thing you run every day:
+// Command yaba is the maintenance tool for a YABA database. It is kept out of the
+// server binary so a destructive action is not one mistyped character away from the
+// thing you run every day.
 //
 //	reset     empty the database, or reduce it to a single account
 //	passwd    set an account's password, or list accounts
@@ -9,20 +8,8 @@
 //	restore   put a snapshot back
 //	repair    find fund movements that could not have happened, and remove them
 //
-// Usage:
-//
-//	go run ./cmd/yaba reset                                # wipe everything
-//	go run ./cmd/yaba reset -keep you@example.com          # keep one account
-//	go run ./cmd/yaba passwd -list
-//	go run ./cmd/yaba passwd -email someone@example.com
-//	go run ./cmd/yaba backup                               # snapshot now
-//	go run ./cmd/yaba backup -list
-//	go run ./cmd/yaba restore -check                       # prove the newest one works
-//	go run ./cmd/yaba restore -db restored.db              # the quarterly drill
-//
 // Run a subcommand with -h for its own flags.
 package main
-
 
 import (
 	"bufio"
@@ -43,11 +30,8 @@ import (
 	"github.com/jthomasw/YABA-2026/internal/money"
 )
 
-// main dispatches on the subcommand.
-//
-// Each subcommand owns a FlagSet rather than sharing the global one, so `reset`
-// and `passwd` can both define -db without colliding, and -h prints only the
-// flags that apply to the subcommand actually being run.
+// main dispatches on the subcommand. Each owns its own FlagSet, so two can define
+// -db without colliding and -h prints only the flags that apply.
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -204,16 +188,7 @@ func runReset(dbPath, uploadDir, keep string, yes, backup bool) error {
 	}
 
 	if backup {
-		// A verified snapshot, taken on the open connection.
-		//
-		// This used to close the database and copy the file, on the reasoning
-		// that WAL keeps recent writes in a sidecar so an open file is unsafe to
-		// copy. The reasoning was right and the remedy was wrong: closing takes
-		// the database offline, the copy landed next to the original where a
-		// single mistaken delete removes both, and nothing ever checked that the
-		// copy was readable. VACUUM INTO needs no downtime, writes somewhere
-		// else, and the snapshot is verified before this command deletes
-		// anything.
+		// A verified snapshot taken on the open connection.
 		snap, err := db.Backup(context.Background(), sqlDB, db.BackupConfig{
 			Dir:       envOr("YABA_BACKUP_DIR", db.DefaultBackupDir()),
 			UploadDir: uploadDir,
@@ -266,19 +241,7 @@ func runReset(dbPath, uploadDir, keep string, yes, backup bool) error {
 	return nil
 }
 
-// pruneToOneUser deletes every account except keepID, and everything belonging
-// to them.
-//
-// One DELETE does almost all of it. Every per-user table declares
-// `user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE`, and the
-// tables below those cascade in turn -- line_items through transactions,
-// allocations through both transactions and expense_buckets. So removing a user
-// row removes their transactions, funds, buckets, allocations, line items,
-// budgets, receipt jobs and notifications, with no chance of missing one.
-//
-// That only holds with foreign keys switched ON, which internal/db.Open does via
-// the DSN. It is asserted here rather than assumed, because silently leaving
-// orphaned rows behind is exactly the failure this design is meant to prevent.
+// pruneToOneUser deletes every account except keepID and everything belonging to it.
 func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 	var fkOn int
 	if err := sqlDB.QueryRow(`PRAGMA foreign_keys`).Scan(&fkOn); err != nil {
@@ -288,24 +251,9 @@ func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 		return errors.New("foreign keys are off, so deleting a user would orphan their rows instead of removing them")
 	}
 
-	// ── shared households come first ────────────────────────────────────────
-	//
-	// Migration 4 introduced a case the plain cascade above gets wrong.
-	//
-	// A row in a SHARED household is owned by the household, but its user_id
-	// still points at whoever entered it -- and that column is ON DELETE CASCADE,
-	// inherited from a schema written when user_id meant ownership. So deleting
-	// another account would take away the entries that person contributed to a
-	// household the kept user is still in, silently changing that household's
-	// totals.
-	//
-	// Fixing the column would mean rebuilding transactions, which this schema
-	// forbids for good reason (see internal/db/migrate004.go). Reassigning the
-	// attribution first achieves the same end: the rows survive, credited to the
-	// account that remains.
-	//
-	// This is the only place an account is ever deleted -- the application itself
-	// has no account-deletion path -- so handling it here covers it entirely.
+	// Shared households first. A row in a shared household is owned by the household but
+	// its user_id still cascades, so deleting another account would remove entries the
+	// kept user still sees. Reassigning attribution keeps the rows, and the totals.
 	for _, table := range []string{
 		"transactions", "funds", "expense_buckets", "allocations", "budgets", "receipt_jobs",
 	} {
@@ -329,10 +277,8 @@ func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 	n, _ := res.RowsAffected()
 	fmt.Printf("Deleted %d account(s) and everything belonging to them.\n", n)
 
-	// A shared household whose every member has just been deleted is unreachable:
-	// nothing can list it and nobody can switch into it, but its transactions are
-	// still on disk. Personal households cascade away with their owner, so only
-	// the shared ones need this.
+	// A shared household whose members have all been deleted is unreachable but still on
+	// disk. Personal ones cascade away with their owner, so only shared ones need this.
 	res, err = sqlDB.Exec(`
 		DELETE FROM households
 		WHERE personal_for IS NULL
@@ -344,9 +290,8 @@ func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 		fmt.Printf("Removed %d shared budget(s) that no longer had any members.\n", n)
 	}
 
-	// Invitations addressed to the deleted accounts are meaningless now, and one
-	// left pending would show a banner to anybody who later signed up with that
-	// address.
+	// A pending invitation to a deleted account would show a banner to whoever signs up
+	// with that address next.
 	if _, err := sqlDB.Exec(`
 		UPDATE household_invites SET status = 'revoked', responded_at = datetime('now')
 		WHERE status = 'pending'
@@ -354,30 +299,13 @@ func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 		return fmt.Errorf("revoke stale invitations: %w", err)
 	}
 
-	// login_attempts is keyed on "ip|email", not on a user id, so no foreign key
-	// reaches it and the rows for deleted accounts would survive. Harmless, but a
-	// lockout recorded against an address that no longer exists would block the
-	// person who signs up with it next.
+	// login_attempts is keyed on ip|email, so no foreign key reaches it.
 	if _, err := sqlDB.Exec(`DELETE FROM login_attempts`); err != nil {
 		fmt.Printf("(could not clear login attempts: %v)\n", err)
 	}
 
-	// The legacy_* tables are archives of the old pre-migration schema. They hold
-	// the very rows being removed, and no cascade reaches them, so they have to be
-	// dropped explicitly -- otherwise the "cleared" database would still contain
-	// every old user's transactions and password hashes.
-	//
-	// Foreign keys have to be OFF for this, and the reason is subtle: migration 1
-	// renamed funds -> legacy_funds, and SQLite rewrites REFERENCES clauses when a
-	// table is renamed. So legacy_fund_transactions now points at legacy_funds.
-	// With keys enforced, DROP TABLE performs an implicit DELETE of the parent's
-	// rows, which the child's still-live constraint refuses -- the drop fails with
-	// "FOREIGN KEY constraint failed".
-	//
-	// Switching them off is safe here in a way it would NOT be for the DELETE
-	// above: dropping a whole table cannot orphan a row in a table that is also
-	// being dropped, whereas deleting a user with keys off would leave their
-	// transactions behind. Hence the narrow window, re-enabled immediately after.
+	// The legacy_* archives hold the very rows being removed and no cascade reaches them,
+	// so a cleared database would still hold old transactions and password hashes.
 	if _, err := sqlDB.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
 		return fmt.Errorf("disable foreign keys for the legacy drop: %w", err)
 	}
@@ -435,10 +363,8 @@ func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 	return nil
 }
 
-// clearUploadsExcept removes every user's receipt directory but the one kept.
-//
-// Receipts live on disk under uploads/<user id>/, which no database cascade can
-// reach, so they would otherwise survive their owner's account.
+// clearUploadsExcept removes every user's receipt directory but the one kept: files
+// under uploads/<user id>/ are on disk, where no database cascade reaches them.
 func clearUploadsExcept(dir string, keepID int64) error {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -506,19 +432,11 @@ func summarise(sqlDB *sql.DB) error {
 	return nil
 }
 
-// dropEverything removes every table and view.
-//
-// Dropping tables rather than deleting the file, because the file may be held
-// open by a syncing client such as OneDrive, and because this leaves the
-// database's own permissions and location untouched.
+// dropEverything removes every table and view. Dropping rather than deleting the file,
+// which may be held open by a syncing client and would lose its permissions.
 func dropEverything(sqlDB *sql.DB) error {
-	// Foreign keys off for the duration. With them on, dropping a parent table
-	// performs an implicit cascading DELETE, so the drop order would matter and
-	// a wrong one would fail.
-	//
-	// PRAGMA is a no-op inside a transaction, so this is deliberately not run in
-	// one; a partial drop is harmless here because the schema is rebuilt straight
-	// afterwards.
+	// Foreign keys off for the duration, or dropping a parent table cascades and the drop
+	// order starts to matter.
 	if _, err := sqlDB.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
 		return fmt.Errorf("disable foreign keys: %w", err)
 	}
@@ -580,25 +498,9 @@ type anomaly struct {
 	AvailableOf string      // what Available is a measure of
 }
 
-// findAnomalies replays every household's ledger in order and reports movements
-// that were impossible at the moment they were recorded.
-//
-// Replaying rather than checking the end state, because the end state cannot
-// tell you which row is wrong. Household 8 currently holds a fifty-million
-// dollar deposit against $2,500 of income; a query on final balances says only
-// "this household is broken", while a replay names the transaction and the
-// moment it went wrong.
-//
-// The rule is exactly the invariant the application now enforces: Deposit
-// refuses to move more into a fund than the household has in cash, and Withdraw
-// refuses to take out more than the fund holds. These rows predate those checks
-// -- they came in through the legacy import, and one of them was created by the
-// old delete-fund handler that credited a client-supplied balance.
-//
-// Note that this reports rather than decides. Deleting somebody's financial
-// record on a heuristic is not a thing a program should do unasked, and this
-// database proves why: two rows are flagged, and only one of them is the famous
-// one.
+// findAnomalies replays each household's ledger in order and reports movements that
+// were impossible when recorded: a deposit above available cash, or a withdrawal above
+// the fund's balance.
 func findAnomalies(sqlDB *sql.DB) ([]anomaly, error) {
 	rows, err := sqlDB.Query(`
 		SELECT household_id, id, kind, label, amount_cents, occurred_on, IFNULL(fund_id, 0)
@@ -747,8 +649,7 @@ func runRepair(dbPath, backupDir, uploadDir, del string, yes bool) error {
 	}
 	fmt.Printf("Backed up to %s\n", snap.Path)
 
-	// One transaction: either every named row goes or none does. A partial
-	// deletion would leave the ledger in a state neither the old nor the new one.
+	// One transaction: either every named row goes or none does.
 	tx, err := sqlDB.Begin()
 	if err != nil {
 		return err
@@ -879,11 +780,7 @@ func runBackup(dbPath, dir, uploadDir string, keep int, list bool) error {
 	return nil
 }
 
-// runRestore puts a snapshot back, after proving it is usable.
-//
-// The default is the newest snapshot, because in the situation where this
-// command gets typed for real -- the database is gone or damaged -- nobody wants
-// to be reading filenames.
+// runRestore puts a snapshot back after proving it is usable.
 func runRestore(from, dir, dbPath string, force, check bool) error {
 	if from == "" {
 		found, err := db.Snapshots(dir)
@@ -909,9 +806,8 @@ func runRestore(from, dir, dbPath string, force, check bool) error {
 		return nil
 	}
 
-	// Preserve whatever is currently there before overwriting it. A restore is
-	// usually done under pressure, and "the file I just replaced turned out to
-	// be the good one" is a common way for a bad hour to become a bad week.
+	// Preserve whatever is there before overwriting it: a restore is done under pressure,
+	// and the file just replaced sometimes turns out to have been the good one.
 	if _, err := os.Stat(dbPath); err == nil {
 		aside := dbPath + ".before-restore-" + time.Now().UTC().Format("20060102-150405Z")
 		if err := os.Rename(dbPath, aside); err != nil {
@@ -949,10 +845,6 @@ func clearDir(dir string) error {
 }
 
 // envInt64 reads a positive integer from the environment.
-//
-// Duplicated from the server's main rather than shared: the two binaries have no
-// package in common below them, and a package existing only to hold one
-// six-line helper is a worse trade than the duplication.
 func envInt64(key string, fallback int64) int64 {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
@@ -974,11 +866,7 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-
-// ═════════════════════════════════════════════════════════════════════════════
-// _passwd.go
-// ═════════════════════════════════════════════════════════════════════════════
-
+// ── passwd ────────────────────────────────────────────────────────────────────
 
 func runPasswd(dbPath, email, password string, list bool) error {
 	sqlDB, err := db.Open(dbPath)
@@ -987,10 +875,8 @@ func runPasswd(dbPath, email, password string, list bool) error {
 	}
 	defer sqlDB.Close()
 
-	// Deliberately not running migrations. This tool touches one column of one
-	// row; silently upgrading someone's schema as a side effect of a password
-	// reset would be a surprising and hard-to-undo thing for it to do. Run the
-	// server once first if the database is older than the current schema.
+	// Deliberately does not run migrations: upgrading a schema as a side effect of a
+	// password reset would be surprising and hard to undo.
 
 	if list {
 		return listAccounts(sqlDB)
@@ -1038,10 +924,7 @@ func runPasswd(dbPath, email, password string, list bool) error {
 		return fmt.Errorf("hash password: %w", err)
 	}
 
-	// The password and the session revocation go in one transaction. A password
-	// changed without the sessions being dropped is the exact hole this exists to
-	// close, so the two must not be able to come apart: if the DELETE fails, the
-	// new password is rolled back too and the operator is told to retry.
+	// The password and the session revocation share one transaction.
 	tx, err := sqlDB.Begin()
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
@@ -1056,10 +939,8 @@ func runPasswd(dbPath, email, password string, list bool) error {
 		return fmt.Errorf("expected to update 1 row, updated %d", n)
 	}
 
-	// Every device holding a session for this account is signed out. Before the
-	// sessions table existed there was nothing to delete, and an old cookie kept
-	// working after a password change -- which made changing it nearly pointless
-	// as a response to a suspected compromise.
+	// Every device holding a session is signed out, which is what makes a password change
+	// a real response to a suspected compromise.
 	revoked, err := tx.Exec(`DELETE FROM sessions WHERE user_id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("revoke sessions: %w", err)
@@ -1120,12 +1001,8 @@ func checkPassword(p string) error {
 	return nil
 }
 
-// prompt reads a line from stdin.
-//
-// The input is visible. Turning terminal echo off would mean importing
-// golang.org/x/term, and adding a dependency for this is not worth it -- the
-// alternative is documented instead: pass -password on a machine where nobody is
-// looking over your shoulder, and remember it lands in your shell history.
+// prompt reads a line from stdin, visibly: hiding it would mean importing
+// golang.org/x/term for one helper. Pass -password where nobody can see the screen.
 func prompt(label string) (string, error) {
 	fmt.Print(label)
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')

@@ -2,7 +2,6 @@
 // request handling. It talks to the database only through *store.Store.
 package web
 
-
 import (
 	"bytes"
 	"context"
@@ -49,10 +48,6 @@ var templateFS embed.FS
 var staticFS embed.FS
 
 // Waker is the part of the background worker the web layer needs.
-//
-// An interface with one method rather than a dependency on the worker package,
-// which keeps the arrow pointing one way: worker imports store, web imports
-// store, and neither imports the other.
 type Waker interface {
 	// Wake asks the worker to check its queue now. Must not block.
 	Wake()
@@ -66,14 +61,11 @@ type Config struct {
 	SecureCookie bool
 	MaxUploadMB  int64
 
-	// Worker is nudged after a receipt upload so it is picked up immediately
-	// rather than on the next poll. Optional: uploads still get processed
-	// without it, just up to one interval later.
+	// Worker is nudged after a receipt upload so it is picked up immediately rather than
+	// on the next poll.
 	Worker Waker
 
-	// Mail sends invitations and password reset links. Required: New builds a
-	// log-only mailer if this is nil, so the flows still work locally without a
-	// mail relay.
+	// Mail sends invitations and password reset links.
 	Mail *mail.Mailer
 }
 
@@ -121,14 +113,11 @@ func New(st *store.Store, cfg Config) (*Server, error) {
 		Path:     "/",
 		MaxAge:   int((7 * 24 * time.Hour).Seconds()),
 		HttpOnly: true,
-		// Secure is driven by config rather than hardcoded false, so a
-		// deployment behind TLS gets a cookie the browser will not send over
-		// plain HTTP.
+		// Secure is driven by config rather than hardcoded false, so a deployment behind TLS
+		// gets a cookie the browser will not send over plain HTTP.
 		Secure: cfg.SecureCookie,
-		// Lax blocks the cookie on cross-site POSTs, which is a second line of
-		// defence behind the CSRF token rather than a replacement for it:
-		// SameSite is enforced by the browser, and not every browser in use
-		// enforces it the same way.
+		// Lax blocks the cookie on cross-site POSTs. A second line of defence behind the
+		// CSRF token, not a replacement: not every browser enforces SameSite alike.
 		SameSite: http.SameSiteLaxMode,
 	}
 
@@ -155,24 +144,16 @@ func New(st *store.Store, cfg Config) (*Server, error) {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// Go 1.22+ patterns include the method, so a GET can no longer reach a
-	// handler that mutates data. The old router registered every route with
-	// HandleFunc("/path", ...) and checked r.Method inside the handler, and in
-	// the case of /delete-transaction did not check at all -- it read an id
-	// from the query string and deleted the row. Any prefetching browser,
-	// crawler, or <img src="/delete-transaction?id=3"> on a page the user
-	// visited would silently destroy data.
-	// One landing page serving as both login and signup, as the wireframe
-	// describes: there is deliberately no separate /register route.
+	// Go 1.22+ patterns include the method, so a GET can no longer reach a handler that
+	// mutates data.
 	mux.HandleFunc("GET  /{$}", s.handleLanding)
 	mux.HandleFunc("POST /auth", s.handleAuth)
 	mux.HandleFunc("POST /logout", s.handleLogout)
 	mux.HandleFunc("GET  /about", s.handleAbout)   // the `Learn more!` link
 	mux.HandleFunc("GET  /forgot", s.handleForgot) // the `Forgot password` link
 
-	// Password reset. All four are public by necessity: someone who cannot sign
-	// in is exactly who needs them. The token in the link is what stands in for
-	// authentication, which is why it is short-lived and single-use.
+	// Password reset. All four are public by necessity: someone who cannot sign in is
+	// exactly who needs them.
 	mux.HandleFunc("POST /forgot", s.handleForgotRequest)
 	mux.HandleFunc("GET  /reset", s.handleResetForm)
 	mux.HandleFunc("POST /reset", s.handleResetSubmit)
@@ -185,19 +166,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET  /savings", s.authed(s.handleSavingsRedirect))
 	mux.Handle("GET  /reports", s.authed(s.handleReports))
 
-	// ── permissions ─────────────────────────────────────────────────────────
-	//
-	// From here on the wrapper says who may reach the route, and the choice is
-	// visible at the routing table rather than buried in each handler:
-	//
-	//	s.authed        any member, including a viewer -- reads only
-	//	s.canEdit       owners and editors -- recording income and expenses
-	//	s.canMoveFunds  owners only -- moving money in or out of savings
-	//	s.canManage     owners only -- members and invitations
-	//
-	// Reading the table top to bottom is how you audit this: every POST carries
-	// one of the three write wrappers, and a new route that forgot one would
-	// stand out immediately against its neighbours.
+	// Permissions. The wrapper says who may reach a route, visible in the routing table
+	// rather than buried in each handler: authed is any member and reads only, canEdit is
+	// owners and editors, canMoveFunds and canManage are owners alone.
 
 	// Recurring monthly expense buckets, priority ordered.
 	mux.Handle("POST /buckets", s.canEdit(s.handleBucketCreate))
@@ -207,12 +178,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /buckets/{id}/archive", s.canEdit(s.handleBucketArchive))
 	mux.Handle("POST /buckets/reallocate", s.canEdit(s.handleReallocate))
 
-	// Two dedicated entry pages. Each carries only its own fields, its own
-	// doughnut chart and its own recent list, so nothing on either page is
-	// ambiguous about which direction the money is going.
-	//
-	// The GETs are canEdit rather than authed: a viewer cannot submit the form,
-	// so showing it to them would be an invitation to type an entry and lose it.
+	// Two dedicated entry pages, so nothing on either is ambiguous about which direction
+	// the money goes.
 	mux.Handle("GET  /income", s.canEdit(s.handleIncomePage))
 	mux.Handle("POST /income", s.canEdit(s.handleIncomeCreate))
 	mux.Handle("GET  /expense", s.canEdit(s.handleExpensePage))
@@ -247,12 +214,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /budgets", s.canEdit(s.handleBudgetSet))
 	mux.Handle("POST /budgets/{id}/delete", s.canEdit(s.handleBudgetDelete))
 
-	// ── shared budgeting ────────────────────────────────────────────────────
-	//
-	// The settings page itself is readable by any member -- seeing who else can
-	// view your finances is not a privilege -- but every action on it is the
-	// owner's. Switching household and answering an invitation are personal
-	// choices, so they need only authed.
+	// The settings page is readable by any member -- seeing who else can view your
+	// finances is not a privilege -- but every action on it is the owner's.
 	mux.Handle("GET  /household", s.authed(s.handleHousehold))
 	mux.Handle("POST /household", s.authed(s.handleHouseholdCreate))
 	mux.Handle("POST /household/switch", s.authed(s.handleHouseholdSwitch))
@@ -272,35 +235,25 @@ func (s *Server) Handler() http.Handler {
 	// order is blocked outright by the last-owner rule.
 	mux.Handle("POST /household/members/{id}/transfer", s.canManage(s.handleTransferOwnership))
 
-	// Answering an invitation is not scoped to the household being joined -- the
-	// user is not a member of it yet, so canManage would refuse. AcceptInvite
-	// matches the invitation against the caller's own email address instead.
+	// Answering an invitation is not scoped to the household being joined -- the user is
+	// not a member of it yet, so canManage would refuse.
 	mux.Handle("POST /invites/{id}/accept", s.authed(s.handleInviteAccept))
 	mux.Handle("POST /invites/{id}/decline", s.authed(s.handleInviteDecline))
 
-	// ── active devices ──────────────────────────────────────────────────────
-	//
-	// Only authed, deliberately: these act on the caller's own logins, not on a
+	// Only authed, deliberately: these act on the caller's own logins rather than on a
 	// household's money, so a viewer must be able to sign out their own laptop.
-	// Every query carries the user id, so one account cannot revoke another's.
 	mux.Handle("GET  /sessions", s.authed(s.handleSessions))
 	mux.Handle("POST /sessions/revoke", s.authed(s.handleSessionRevoke))
 	mux.Handle("POST /sessions/revoke-others", s.authed(s.handleSessionRevokeOthers))
 
-	// Changing your own password without a terminal. Keeps this session and ends
-	// every other one, which is the useful half of a password change.
+	// Changing your own password without a terminal.
 	mux.Handle("GET  /password", s.authed(s.handlePasswordForm))
 	mux.Handle("POST /password", s.authed(s.handlePasswordChange))
 
 	// Static assets, served with a content-hashed URL and a long cache lifetime.
 	mux.Handle("GET /static/", http.StripPrefix("/static/", staticHandler(s.staticFS)))
 
-	// Note what is absent: there is no file server rooted at ./uploads.
-	// Receipts are served by handleReceipt, which checks that the requesting
-	// user owns the transaction the receipt belongs to. Exposing the directory
-	// would let anyone who guessed a filename read another user's receipt, and
-	// the old filenames were predictable -- timestamp plus username plus the
-	// original filename.
+	// Note what is absent: no file server rooted at ./uploads.
 
 	return recoverPanics(logRequests(mux))
 }
@@ -320,11 +273,9 @@ func (s *Server) ListenAndServe() error {
 	return srv.ListenAndServe()
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // middleware.go
 // ═════════════════════════════════════════════════════════════════════════════
-
 
 const sessionName = "yaba_session"
 
@@ -332,12 +283,9 @@ const sessionName = "yaba_session"
 // names and the other form values that travel alongside the file.
 const bodySlack = 1 << 20
 
-// Session keys.
-//
-// The cookie carries a session ID -- a random token naming a row in the sessions
-// table -- and no longer a user id. That indirection is the entire point: a user
-// id in a signed cookie can be verified but never cancelled, whereas a row can
-// be deleted, so "sign out everywhere" and a password change become possible.
+// Session keys. The cookie carries a session id naming a row in the sessions table,
+// not a user id: an id in a signed cookie can be verified but never cancelled,
+// whereas a row can be deleted.
 const (
 	sessionID        = "sid"
 	sessionCSRFToken = "csrf"
@@ -379,8 +327,7 @@ func mustUser(r *http.Request) store.User {
 	return u
 }
 
-// mustMembership returns the household the request is working in and the
-// caller's role. Panics for the same reason mustUser does.
+// mustMembership returns the household the request is working in and the caller's role.
 func mustMembership(r *http.Request) store.Membership {
 	m, ok := r.Context().Value(membershipCtxKey{}).(store.Membership)
 	if !ok {
@@ -389,13 +336,8 @@ func mustMembership(r *http.Request) store.Membership {
 	return m
 }
 
-// scopeOf builds the store.Scope for the current request: which household owns
-// the data, and who is acting.
-//
-// Every handler that touches money goes through here, so there is exactly one
-// place the household id can come from -- resolved server-side from the session,
-// never from a form field or a query parameter. That is what makes it impossible
-// for a request to name somebody else's household.
+// scopeOf builds the store.Scope for this request: which household owns the data, and
+// who is acting.
 func scopeOf(r *http.Request) store.Scope {
 	return store.Scope{
 		HouseholdID: mustMembership(r).ID,
@@ -404,20 +346,12 @@ func scopeOf(r *http.Request) store.Scope {
 }
 
 // authed wraps a handler with authentication and, for unsafe methods, CSRF
-// verification.
-//
-// Both checks live in one place so that adding a route cannot accidentally
-// omit either. The old code wrapped each route in an auth() helper that only
-// looked for a non-nil session value and had no CSRF check anywhere in the
-// application.
+// verification. Both live in one place, so adding a route cannot omit either.
 func (s *Server) authed(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, err := s.sessions.Get(r, sessionName)
 		if err != nil {
-			// A cookie signed with an old or rotated key fails to decode.
-			// Clearing it turns a permanently broken session into one failed
-			// request; the old code ignored this error and carried on with an
-			// empty session, which looked like a silent logout loop.
+			// A cookie signed with a rotated key fails to decode.
 			s.clearSession(w, r)
 			s.redirectToLogin(w, r)
 			return
@@ -429,15 +363,8 @@ func (s *Server) authed(next http.HandlerFunc) http.Handler {
 			return
 		}
 
-		// Resolve the session against the database on every request rather than
-		// trusting the cookie's contents. One query both validates and resolves:
-		// a revoked session has no row, a deleted account fails the join, and an
-		// expired or abandoned one fails the time conditions. All four arrive
-		// here as ErrNotFound.
-		//
-		// This is what makes revocation immediate. Deleting the row signs that
-		// device out on its very next request -- no waiting for a cookie to
-		// expire, and no need to rotate the signing key and drop everybody.
+		// The session is resolved against the database on every request rather than trusted
+		// from the cookie.
 		user, err := s.store.SessionUser(r.Context(), sid)
 		if errors.Is(err, store.ErrNotFound) {
 			s.clearSession(w, r)
@@ -450,29 +377,23 @@ func (s *Server) authed(next http.HandlerFunc) http.Handler {
 		}
 		uid := user.ID
 
-		// Bound the request body before anything parses it. Without this, Go's
-		// multipart parser will happily spool an arbitrarily large upload to
-		// the temp directory: header.Size and the LimitReader in saveReceipt
-		// bound what is *kept*, but not what is *received*.
+		// Bound the body before anything parses it: Go's multipart parser will spool an
+		// arbitrarily large upload to the temp directory.
 		if !isSafeMethod(r.Method) {
 			r.Body = http.MaxBytesReader(w, r.Body, s.maxUploadBytes()+bodySlack)
 		}
 
 		if !isSafeMethod(r.Method) && !s.checkCSRF(r, session) {
-			// 403 rather than a redirect: a redirect would look like success
-			// to an attacking page and like a mystery to a real user whose
-			// token expired.
+			// 403 rather than a redirect: a redirect would look like success to an attacking
+			// page and like a mystery to a real user whose token expired.
 			log.Printf("CSRF rejected: %s %s user=%d", r.Method, r.URL.Path, uid)
 			http.Error(w, "This form has expired. Go back, reload the page, and try again.",
 				http.StatusForbidden)
 			return
 		}
 
-		// Resolve the household on every request too, and for the same reason:
-		// being removed from a shared household has to take effect immediately,
-		// not whenever the user next signs in. ActiveHousehold joins through
-		// household_members, so a revoked membership stops reading on the very
-		// next request.
+		// The household is resolved per request for the same reason: removal from a shared
+		// budget takes effect immediately, because ActiveHousehold joins household_members.
 		hh, err := s.store.ActiveHousehold(r.Context(), user)
 		if err != nil {
 			s.serverError(w, r, err)
@@ -487,12 +408,6 @@ func (s *Server) authed(next http.HandlerFunc) http.Handler {
 }
 
 // requirePerm gates a handler on the caller's role.
-//
-// The permission is passed as a method value from store.Role -- CanEditEntries,
-// CanMoveFunds, CanManageMembers -- so the rule being enforced is the same one
-// the templates consult when deciding whether to draw the button. A route
-// registered without one of these wrappers is readable by any member, which is
-// why every mutating route in web.go carries one explicitly.
 func (s *Server) requirePerm(
 	allowed func(store.Role) bool,
 	reason string,
@@ -500,11 +415,8 @@ func (s *Server) requirePerm(
 ) http.Handler {
 	return s.authed(func(w http.ResponseWriter, r *http.Request) {
 		if !allowed(mustMembership(r).Role) {
-			// A viewer never sees the button that posts here, so arriving at all
-			// means either a page left open while somebody changed your role, or
-			// a deliberate probe. Both are served best by saying plainly what
-			// happened rather than by a bare 403: the first case is innocent and
-			// the second learns nothing it did not already know.
+			// A viewer never sees the button that posts here, so arriving means a page left open
+			// while somebody changed your role, or a deliberate probe.
 			log.Printf("permission refused: %s %s user=%d role=%s",
 				r.Method, r.URL.Path, mustUser(r).ID, mustMembership(r).Role)
 
@@ -528,8 +440,7 @@ func (s *Server) canEdit(next http.HandlerFunc) http.Handler {
 		next)
 }
 
-// canMoveFunds permits owners only: deposits, withdrawals and closing a savings
-// fund. See store.Role.CanMoveFunds for why this is stricter than canEdit.
+// canMoveFunds permits owners only: deposits, withdrawals and closing a savings fund.
 func (s *Server) canMoveFunds(next http.HandlerFunc) http.Handler {
 	return s.requirePerm(store.Role.CanMoveFunds,
 		"Only the owner of this budget can move money into or out of savings.",
@@ -543,12 +454,8 @@ func (s *Server) canManage(next http.HandlerFunc) http.Handler {
 		next)
 }
 
-// backTo picks a safe place to return to after a refused POST.
-//
-// Only the path of a same-origin Referer is used, and it must be absolute.
-// Reflecting the header wholesale would turn every permission failure into an
-// open redirect, which is a neat way to make a phishing link look like it came
-// from this application.
+// backTo picks a safe place to return to after a refused POST: only the path of a same-
+// origin Referer.
 func backTo(r *http.Request) string {
 	ref := r.Header.Get("Referer")
 	if ref == "" {
@@ -580,12 +487,6 @@ func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
 const csrfFormField = "csrf_token"
 
 // csrfToken returns the session's CSRF token, minting one if needed.
-//
-// The token is per-session and stable for its lifetime. That is weaker than
-// rotating per-request but strong enough for the threat it addresses -- a
-// third-party page cannot read the token, because it cannot read the cookie or
-// the page body across origins -- and it avoids breaking a user's back button
-// or a second browser tab.
 func (s *Server) csrfToken(w http.ResponseWriter, r *http.Request) string {
 	session, err := s.sessions.Get(r, sessionName)
 	if err != nil {
@@ -598,9 +499,7 @@ func (s *Server) csrfToken(w http.ResponseWriter, r *http.Request) string {
 
 	tok, err := randomToken(32)
 	if err != nil {
-		// Without a token, forms cannot be submitted safely. Log and return
-		// empty; checkCSRF treats an empty stored token as a failure, so the
-		// result is a rejected POST rather than an unprotected one.
+		// Without a token, forms cannot be submitted safely.
 		log.Printf("csrf: could not generate token: %v", err)
 		return ""
 	}
@@ -618,11 +517,8 @@ func (s *Server) checkCSRF(r *http.Request, session *sessions.Session) bool {
 		return false
 	}
 
-	// r.FormValue would consume the body of a multipart upload before the
-	// handler can read the file, so the receipt form's token is read from the
-	// URL-encoded values only after ParseMultipartForm has run. PostFormValue
-	// on a multipart request returns "" unless the form was already parsed,
-	// hence the explicit multipart branch.
+	// r.FormValue would consume a multipart body before the handler can read the file, so
+	// the token is read from the URL-encoded values only after ParseMultipartForm has run.
 	got := r.PostFormValue(csrfFormField)
 	if got == "" && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 		if err := r.ParseMultipartForm(s.maxUploadBytes()); err == nil {
@@ -648,11 +544,8 @@ func randomToken(n int) (string, error) {
 
 // ── flash messages ────────────────────────────────────────────────────────────
 
-// flash is a one-shot message shown after a redirect.
-//
-// The old handlers logged failures and then redirected to the dashboard
-// regardless, so a rejected transfer and a successful one produced identical
-// screens and the user had no way to tell which had happened.
+// flash is a one-shot message shown after a redirect, so a rejected action and a
+// successful one no longer produce identical screens.
 type flash struct {
 	Kind string // "success" | "error"
 	Text string
@@ -708,31 +601,9 @@ func (s *Server) clearSession(w http.ResponseWriter, r *http.Request) {
 
 // ── login rate limiting ───────────────────────────────────────────────────────
 
-// Rate limiting now lives in the store, keyed on the same strings as before.
-//
-// The map this replaced was cleared by every restart, so any lockout could be
-// removed by whatever made the process restart -- including the load that a
-// brute-force attempt itself produces. See store.RateRetryIn and friends.
+// Rate limiting lives in the store, keyed on the same strings as before.
 
 // clientIP extracts the address a request really came from.
-//
-// X-Forwarded-For is honoured ONLY when the connection itself arrived from the
-// loopback interface. That single condition is what makes the header safe to
-// read: a header any client can set is worthless as an identifier, but the same
-// header written by a reverse proxy running on this machine -- reached over a
-// connection nothing outside the machine can make -- is the only way to see the
-// real client at all.
-//
-// Without this, every request behind nginx arrives as 127.0.0.1, so the login
-// limiter's key collapses from "this address from this network" to "this address
-// from anywhere" -- and one person could lock another out of their own account,
-// which is precisely what keying on the IP was meant to prevent.
-//
-// The RIGHTMOST entry is taken, not the leftmost. nginx is configured with
-// proxy_add_x_forwarded_for, which APPENDS the peer it actually spoke to. A
-// client may invent a header of its own, but it can only prepend to the list;
-// the entry nginx added is always last, and is the only one that was observed
-// rather than claimed.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -750,9 +621,7 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-// trustedProxyIP reports whether a forwarded header from this peer may be
-// believed. Loopback only: a proxy on this machine is the one thing an outsider
-// cannot impersonate.
+// trustedProxyIP reports whether a forwarded header from this peer may be believed.
 func trustedProxyIP(host string) bool {
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
@@ -807,11 +676,9 @@ func logRequests(next http.Handler) http.Handler {
 	})
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // render.go
 // ═════════════════════════════════════════════════════════════════════════════
-
 
 // pages lists every top-level template. Each one defines a "content" block
 // that layout.html renders inside the shared chrome.
@@ -833,10 +700,6 @@ var pages = []string{
 }
 
 // funcs are the helpers available to every template.
-//
-// Formatting money lives here rather than in the templates, so no template can
-// print a raw cent count or use printf "%.2f" on a float and reintroduce the
-// rounding the money package exists to prevent.
 var funcs = template.FuncMap{
 	// money returns "$1,234.56", with the sign outside the symbol.
 	"money": func(c money.Cents) string { return c.Display() },
@@ -881,15 +744,7 @@ var funcs = template.FuncMap{
 		return t.Format("2 Jan 2006")
 	},
 
-	// jsonAttr marshals a value for embedding in a data- attribute.
-	//
-	// The result is a plain string, deliberately NOT template.JS. Charts read
-	// their data from data- attributes and parse it with JSON.parse, so the
-	// value passes through html/template's attribute escaper like any other
-	// string. The old code marshalled chart data and wrapped it in
-	// template.JS, which switches escaping off: a user whose expense category
-	// was </script><script>... could execute arbitrary JavaScript in their own
-	// session, and in any page that ever showed another user's labels.
+	// jsonAttr marshals a value for a data- attribute.
 	"jsonAttr": func(v any) (string, error) {
 		b, err := json.Marshal(v)
 		if err != nil {
@@ -898,9 +753,7 @@ var funcs = template.FuncMap{
 		return string(b), nil
 	},
 
-	// centsFloats converts amounts to dollar floats for a chart axis. Charts
-	// are the one place a float is acceptable, because Chart.js cannot plot
-	// integers-as-cents without a custom scale.
+	// centsFloats converts amounts to dollar floats for a chart axis.
 	"centsFloats": func(cs []money.Cents) []float64 {
 		out := make([]float64, len(cs))
 		for i, c := range cs {
@@ -923,19 +776,14 @@ var funcs = template.FuncMap{
 	},
 	"title": strings.Title, //nolint:staticcheck // ASCII labels only
 
-	// Replaced per-Server in parseTemplates with one that knows the real
-	// fingerprints. Declared here so a template referencing {{asset ...}} still
-	// parses if that wiring is ever missed.
+	// Replaced per-Server in parseTemplates with one that knows the real fingerprints.
 	"asset": func(name string) string { return "/static/" + name },
 }
 
-// parseTemplates parses layout, partials and each page exactly once at
-// startup. An error here stops the program before it serves a request, which
-// is the point: a broken template should fail at boot, not on a user's click.
+// parseTemplates parses layout, partials and each page exactly once at startup.
 func parseTemplates(assets assetFingerprints) (map[string]*template.Template, error) {
-	// Copy the shared map and override "asset" with one bound to the real
-	// fingerprints, so templates can write {{asset "style.css"}} and get a
-	// cache-busted URL.
+	// Copy the shared map and override "asset" with one bound to the real fingerprints, so
+	// templates can write {{asset "style.css"}} and get a cache-busted URL.
 	fm := make(template.FuncMap, len(funcs)+1)
 	for k, v := range funcs {
 		fm[k] = v
@@ -969,11 +817,7 @@ type view struct {
 	Flash     *flash
 	Now       string
 
-	// Household is the budget the page is showing, and Role is what this user
-	// may do to it. Templates consult Role directly -- {{if $.Role.CanEditEntries}}
-	// -- rather than being handed a set of precomputed booleans, so the rule the
-	// UI shows and the rule the middleware enforces are literally the same
-	// method. A button that appears cannot be one the server would refuse.
+	// Household is the budget on screen and Role is what this user may do to it.
 	Household string
 	Role      store.Role
 	Personal  bool
@@ -981,9 +825,7 @@ type view struct {
 	// Households is every budget this user can switch to, for the nav picker.
 	Households []store.Household
 
-	// Invites are unanswered invitations addressed to this user. They surface as
-	// a banner on every page, which is what stands in for the invitation email
-	// this deployment has no way to send.
+	// Invites are unanswered invitations addressed to this user.
 	Invites []store.Invite
 }
 
@@ -991,24 +833,13 @@ type view struct {
 // can stay out of the way for somebody using YABA alone.
 func (v view) Shared() bool { return len(v.Households) > 1 || !v.Personal }
 
-// render writes a page, buffering first.
-//
-// Buffering matters: if template execution fails halfway through, a direct
-// write to the ResponseWriter has already sent a 200 and half a page, so the
-// user sees a truncated document and the error is invisible. Buffering lets a
-// failure become a clean 500.
+// render writes a page, buffering first: a template failure partway through would
+// otherwise have already sent a 200 and half a document.
 func (s *Server) render(w http.ResponseWriter, r *http.Request, page string, data any) {
 	s.renderStatus(w, r, http.StatusOK, page, data)
 }
 
-// renderStatus renders a page with a specific status code.
-//
-// The status is passed in rather than written by the caller because
-// http.ResponseWriter commits every header the moment WriteHeader is called.
-// A caller doing w.WriteHeader(400) and then calling render would silently
-// lose the Content-Type, the CSP and the nosniff header for exactly the
-// responses -- validation failures -- where a browser is most likely to be
-// handed attacker-influenced input.
+// renderStatus renders with a specific status code.
 func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int, page string, data any) {
 	t, ok := s.templates[page]
 	if !ok {
@@ -1028,24 +859,12 @@ func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "same-origin")
 
-	// no-store on every rendered page, for two reasons.
-	//
-	// The visible one: every form embeds a CSRF token tied to the current session.
-	// Signing in rotates the session, so a page the browser had cached still
-	// carries the old token -- and submitting it fails the check with "That form
-	// expired", which is baffling when the user has just loaded the page. Back
-	// navigation after signing in was reliably producing exactly that.
-	//
-	// The quieter one: these pages show someone's finances. A cached copy left in
-	// the browser is readable by the next person to use the machine, and the back
-	// button would happily redisplay the dashboard after signing out.
+	// no-store on every rendered page. Forms embed a CSRF token tied to the session and
+	// signing in rotates it, so a cached page fails the check with a baffling message.
 	w.Header().Set("Cache-Control", "no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
-	// Chart.js is loaded from a CDN, so script-src has to allow it. Everything
-	// else is same-origin. 'unsafe-inline' is required for the small inline
-	// bootstrap scripts in the templates; the chart data they read is JSON in
-	// data- attributes rather than interpolated code, which is what makes that
-	// acceptable.
+	// Chart.js is loaded from a CDN, so script-src allows it; everything else is same-
+	// origin.
 	w.Header().Set("Content-Security-Policy",
 		"default-src 'self'; "+
 			"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "+
@@ -1074,14 +893,8 @@ func (s *Server) baseView(w http.ResponseWriter, r *http.Request, title, nav str
 			v.Household, v.Role, v.Personal = m.Name, m.Role, m.Personal
 		}
 
-		// Two extra indexed reads per page. Both are wanted on every page rather
-		// than only where they are used: the switcher lives in the nav, and an
-		// invitation the user has not answered should be visible wherever they
-		// happen to be, not only if they think to visit a settings page.
-		//
-		// A failure here is logged and swallowed. Neither the switcher nor the
-		// banner is essential to the page being requested, and turning a
-		// degraded nav into a 500 on the dashboard would be a poor trade.
+		// Two extra indexed reads on every page: the switcher is in the nav, and an
+		// unanswered invitation should be visible wherever the user happens to be.
 		if hs, err := s.store.HouseholdsFor(r.Context(), u.ID); err != nil {
 			log.Printf("baseView: households for user=%d: %v", u.ID, err)
 		} else {
@@ -1104,32 +917,22 @@ type forbiddenView struct {
 	Reason string
 }
 
-// renderForbidden shows a proper page for a refused GET, with the reason.
-//
-// http.Error would have been less work and much worse: it produces an unstyled
-// wall of plain text with no navigation, so a viewer who clicks a link they
-// should not have been shown ends up at a dead end with no way back.
+// renderForbidden shows a proper page for a refused GET.
 func (s *Server) renderForbidden(w http.ResponseWriter, r *http.Request, reason string) {
 	v := forbiddenView{view: s.baseView(w, r, "Not permitted", ""), Reason: reason}
 	s.renderStatus(w, r, http.StatusForbidden, "forbidden.html", v)
 }
 
-// serverError logs the real error and shows the user a generic page.
-//
-// The old handlers did the opposite in places -- http.Error(w, err.Error(),
-// 500) put raw SQL text on screen -- and elsewhere logged the error and
-// redirected as though the write had succeeded, so a failed insert looked
-// exactly like a successful one.
+// serverError logs the real error and shows the user a generic page, so raw SQL never
+// reaches the screen and a failed write never looks like a successful one.
 func (s *Server) serverError(w http.ResponseWriter, r *http.Request, err error) {
 	log.Printf("ERROR %s %s: %v", r.Method, r.URL.Path, err)
 	http.Error(w, "Something went wrong on our end. Please try again.",
 		http.StatusInternalServerError)
 }
 
-// writeJSON encodes v as a JSON response.
-//
-// Buffered like render, for the same reason: a marshalling error partway through
-// would otherwise have already sent a 200 and half a document.
+// writeJSON encodes v as a JSON response, buffered like render so a marshalling
+// failure cannot follow half a document.
 func (s *Server) writeJSON(w http.ResponseWriter, r *http.Request, v any) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(v); err != nil {
@@ -1149,27 +952,11 @@ func (s *Server) badRequest(w http.ResponseWriter, msg string) {
 	http.Error(w, msg, http.StatusBadRequest)
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // assets.go
 // ═════════════════════════════════════════════════════════════════════════════
 
-
 // assetFingerprints maps a static filename to a short hash of its contents.
-//
-// This exists because of a real problem the previous version had: static assets
-// were served with `Cache-Control: max-age=300` at a fixed URL. A browser that
-// had already fetched /static/style.css would keep using its cached copy for the
-// next five minutes, so a stylesheet change produced a page rendered with NEW
-// markup and OLD CSS -- which looks exactly like the CSS having failed, and is
-// impossible to distinguish from a genuine bug without a hard refresh.
-//
-// Fingerprinting fixes the cause rather than the symptom. The URL becomes
-// /static/style.css?v=<hash of the file>, so:
-//
-//   - editing the file changes the URL, and the browser fetches it immediately;
-//   - the URL is otherwise stable, so it can be cached for a year rather than
-//     five minutes, which is both faster and less surprising.
 type assetFingerprints map[string]string
 
 // buildFingerprints hashes every embedded static file once, at startup.
@@ -1200,10 +987,6 @@ func buildFingerprints(fsys fs.FS) (assetFingerprints, error) {
 }
 
 // url returns the cache-busted path for one asset.
-//
-// An unknown name is returned unfingerprinted rather than as an error: a typo in
-// a template should degrade to a 404 for that one file, not take down the whole
-// page render.
 func (a assetFingerprints) url(name string) string {
 	name = strings.TrimPrefix(name, "/")
 	name = path.Clean(name)
@@ -1213,11 +996,8 @@ func (a assetFingerprints) url(name string) string {
 	return "/static/" + name
 }
 
-// staticHandler serves the embedded assets with a long cache lifetime.
-//
-// A year plus `immutable` is safe precisely because the URL carries the content
-// hash: a changed file is a different URL, so a stale copy can never be served
-// for the wrong content.
+// staticHandler serves the embedded assets with a long cache lifetime, which is safe
+// because the URL carries the content hash: a changed file is a different URL.
 func staticHandler(fsys fs.FS) http.Handler {
 	files := http.FileServer(http.FS(fsys))
 
@@ -1225,9 +1005,8 @@ func staticHandler(fsys fs.FS) http.Handler {
 		if r.URL.Query().Get("v") != "" {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		} else {
-			// Reached without a fingerprint -- a hand-typed URL, or a stale page
-			// still referencing the old form. Do not allow it to be cached, or
-			// that page's staleness outlives the page itself.
+			// Reached without a fingerprint -- a hand-typed URL, or a stale page still
+			// referencing the old form.
 			w.Header().Set("Cache-Control", "no-cache")
 		}
 		files.ServeHTTP(w, r)

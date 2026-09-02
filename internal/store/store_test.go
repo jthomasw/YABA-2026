@@ -1636,3 +1636,65 @@ func TestMembershipChangesAreRecorded(t *testing.T) {
 		}
 	}
 }
+
+// ── device names ──────────────────────────────────────────────────────────────
+
+// TestDeviceNameIsReadable pins the parsing down, because the ordering of the
+// checks is not obvious and a plausible-looking rearrangement silently breaks it:
+// every Chromium browser claims "Safari", Edge also claims "Chrome", and Chrome on
+// iOS claims both. Android user agents also contain "Linux", and iPhone ones
+// contain "Mac OS X".
+func TestDeviceNameIsReadable(t *testing.T) {
+	tests := []struct {
+		name string
+		ua   string
+		want string
+	}{
+		{
+			"chrome on windows",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+				"(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+			"Chrome on Windows",
+		},
+		{
+			"edge is not chrome, though it says so",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+				"(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.2210.91",
+			"Edge on Windows",
+		},
+		{
+			"safari on iphone, not a mac",
+			"Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) " +
+				"AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+			"Safari on iPhone",
+		},
+		{
+			"chrome on ios is CriOS, and still not safari",
+			"Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) " +
+				"AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1",
+			"Chrome on iPhone",
+		},
+		{
+			"chrome on android, not linux",
+			"Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 " +
+				"(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+			"Chrome on Android",
+		},
+		{
+			"firefox on a mac",
+			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
+			"Firefox on Mac",
+		},
+		{"nothing at all", "", "Unknown device"},
+		{"something that is not a browser", "curl/8.4.0", "Unknown device"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := store.Session{UserAgent: tc.ua}.DeviceName()
+			if got != tc.want {
+				t.Errorf("DeviceName() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

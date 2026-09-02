@@ -1,25 +1,5 @@
-// Package mail sends the two emails this application has to send: an invitation
-// to a shared budget, and a password reset link.
-//
-// Built on net/smtp from the standard library, so it adds no dependency. That is
-// the whole reason for choosing SMTP over a provider's HTTP API: it works with a
-// Gmail app password, with Resend, with Postmark, with a company relay, and with
-// a local test server, and the code does not change between them.
-//
-// Two decisions shape everything here.
-//
-// The first: with no credentials configured, mail is written to the log instead
-// of failing. A development machine has no mail relay, and an application that
-// refuses to invite anybody until SMTP is set up would be unusable locally. The
-// log line contains the whole message, including the reset link, so the flow can
-// be walked end to end without a mail server. It also says clearly that nothing
-// was sent, because a silent no-op here would be indistinguishable from working.
-//
-// The second: links must be absolute. A reset link is clicked from an email
-// client, where a relative path means nothing, so the base URL has to be
-// configured rather than guessed from the request -- guessing from the Host
-// header would let anyone who can reach the server mint a reset link pointing at
-// a host of their choosing.
+// Package mail sends the two emails this application needs: a shared-budget invitation
+// and a password reset link.
 package mail
 
 import (
@@ -47,11 +27,8 @@ type Config struct {
 	BaseURL string
 }
 
-// Message is one outgoing email, in plain text.
-//
-// Plain text only, deliberately. An HTML email needs a text alternative anyway,
-// doubles the templating, and is the part of an email most likely to be mangled
-// or flagged as spam. Nothing being sent here benefits from formatting.
+// Message is one outgoing email. Plain text only: an HTML mail needs a text
+// alternative anyway, and nothing sent here benefits from formatting.
 type Message struct {
 	To      string
 	Subject string
@@ -88,8 +65,7 @@ func New(cfg Config) *Mailer {
 	return m
 }
 
-// Enabled reports whether mail actually leaves the machine. Handlers use it to
-// tell the truth on screen rather than claiming an email was sent.
+// Enabled reports whether mail actually leaves the machine.
 func (m *Mailer) Enabled() bool { return m.enabled }
 
 // BaseURL is the root used for links, exposed so callers can show it.
@@ -101,10 +77,8 @@ func (m *Mailer) Send(ctx context.Context, msg Message) error {
 	if msg.To == "" {
 		return fmt.Errorf("mail: no recipient")
 	}
-	// Header injection: a newline in an address or subject would let the rest of
-	// the header block be rewritten, adding recipients or replacing the sender.
-	// Rejected rather than stripped, because a legitimate address never contains
-	// one and quietly altering it would hide the attempt.
+	// A newline in an address or subject would let the rest of the header block be
+	// rewritten. Rejected rather than stripped, so the attempt is not hidden.
 	for _, field := range []string{msg.To, msg.Subject, m.cfg.From} {
 		if strings.ContainsAny(field, "\r\n") {
 			return fmt.Errorf("mail: header field contains a line break")
@@ -146,11 +120,8 @@ func (m *Mailer) Send(ctx context.Context, msg Message) error {
 	}
 }
 
-// deliver does the SMTP conversation.
-//
-// Port 465 is implicit TLS -- the connection is encrypted before any SMTP is
-// spoken -- while 587 negotiates STARTTLS mid-conversation. smtp.SendMail
-// handles the second and cannot do the first, so both are covered explicitly.
+// deliver does the SMTP conversation. Port 465 is implicit TLS while 587 negotiates
+// STARTTLS mid-conversation, and smtp.SendMail cannot do the first.
 func (m *Mailer) deliver(addr, to string, raw []byte, timeout time.Duration) error {
 	auth := smtp.PlainAuth("", m.cfg.User, m.cfg.Pass, m.cfg.Host)
 	if m.cfg.User == "" {
@@ -275,15 +246,8 @@ func indent(s string) string {
 // ── the two messages ──────────────────────────────────────────────────────────
 
 // Invitation tells someone they have been added to a shared budget.
-//
-// It does not carry an accept link with a token in it. The invitation is keyed to
-// the recipient's email address and is accepted after signing in, so a link that
-// granted access on click would be a bearer credential sitting in an inbox --
-// forwardable, and readable by anyone who ever sees that mailbox. Signing in
-// first means the person who joins is the person who owns the address.
 func (m *Mailer) Invitation(ctx context.Context, to, household, invitedBy, role string,
 	expires time.Duration) error {
-
 	who := invitedBy
 	if strings.TrimSpace(who) == "" {
 		who = "Someone"

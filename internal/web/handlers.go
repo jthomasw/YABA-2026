@@ -1,6 +1,5 @@
 package web
 
-
 import (
 	"context"
 	"crypto/rand"
@@ -24,17 +23,9 @@ import (
 	"github.com/jthomasw/YABA-2026/internal/store"
 )
 
-// landingView backs the landing page, which is both the login form and the
-// signup form.
-//
-// The wireframe describes one form, not two: "When a user clicks login, if the
-// email already exists, then try to login with given password. If the email
-// address does not already exist, then the GUI should ask the user if they want
-// to create a new account and if so, prompt the user to type their password in
-// one more time to confirm it."
-//
-// So there is no separate /register page. Confirming is a second state of the
-// same page, which is what Confirming below switches on.
+// landingView backs the landing page, which is both the login form and the signup
+// form: an address with no account is offered one on a second state of the same page,
+// which is what Confirming switches on. There is no separate /register route.
 type landingView struct {
 	view
 
@@ -45,9 +36,7 @@ type landingView struct {
 	// being asked whether to create an account.
 	Confirming bool
 
-	// NewAccount is set by ?new=1 from the "Sign up" link. It only adds an
-	// explanatory line: the form and the flow are identical either way, because
-	// an unknown address is offered an account regardless of how you arrived.
+	// NewAccount is set by ?new=1 from the "Sign up" link.
 	NewAccount bool
 }
 
@@ -68,9 +57,8 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The landing form is unauthenticated but still carries a token, minted when
-	// the page was rendered. That stops a third-party page from silently signing
-	// a victim into an account the attacker controls.
+	// The landing form is unauthenticated but still carries a token, minted when the page
+	// was rendered.
 	session, err := s.sessions.Get(r, sessionName)
 	if err == nil && !s.checkCSRF(r, session) {
 		s.renderLanding(w, r, http.StatusForbidden, landingView{
@@ -93,14 +81,8 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The address is checked for shape here, before it is looked up, so a value
-	// that is not an email address is rejected whether or not an account happens
-	// to match it.
-	//
-	// This matters because migration 3 backfilled email from the old username
-	// column, so a legacy row can hold a bare name like "kushith". Validating
-	// only on the signup path -- as this did before -- meant such a row could
-	// still be signed into with a value the app would refuse to create today.
+	// The address is checked for shape before it is looked up, so a value that is not an
+	// email is rejected whether or not an account matches it.
 	if msg := validateEmail(email); msg != "" {
 		s.renderLanding(w, r, http.StatusBadRequest, landingView{
 			Email: email, Confirming: creating, Error: msg})
@@ -147,7 +129,6 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Unknown address. First submission asks; second submission creates.
-	// The address itself was already validated above.
 	if !creating {
 		s.renderLanding(w, r, http.StatusOK, landingView{
 			Email:      email,
@@ -203,9 +184,8 @@ func (s *Server) attemptLogin(w http.ResponseWriter, r *http.Request, email, pas
 	}
 
 	if errors.Is(err, store.ErrNotFound) {
-		// Compare against a dummy hash anyway, so an unknown address takes about
-		// as long as a known one. Without this the response time reveals which
-		// addresses have accounts.
+		// Compare against a dummy hash anyway, so an unknown address takes about as long as a
+		// known one.
 		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		s.store.RateFail(r.Context(), rateKey)
 		s.renderLanding(w, r, http.StatusUnauthorized, landingView{
@@ -229,24 +209,15 @@ func (s *Server) attemptLogin(w http.ResponseWriter, r *http.Request, email, pas
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
-// startSession issues a fresh session for a newly authenticated user.
-//
-// A brand-new session rather than reusing the incoming cookie, so the session
-// identifier rotates on privilege change and a token planted before login is
-// useless after it.
-//
-// The session is a ROW now, and the cookie only carries its token. That is what
-// makes a login revocable: deleting the row ends it on the next request. The
-// cookie is still signed, so a token cannot be tampered into a different one.
+// startSession issues a fresh session for a newly authenticated user, so the identifier
+// rotates on privilege change and a token planted before login is useless after it.
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID int64) error {
 	sid, err := s.store.CreateSession(r.Context(), userID, r.UserAgent())
 	if err != nil {
 		return err
 	}
 
-	// Housekeeping, on a path that is already doing a write and is not
-	// latency-sensitive. Failure here is irrelevant to the login, because
-	// SessionUser refuses an expired row regardless of whether it still exists.
+	// Housekeeping, on a path that is already doing a write and is not latency-sensitive.
 	if n, err := s.store.PurgeExpiredSessions(r.Context()); err != nil {
 		log.Printf("auth: purge expired sessions: %v", err)
 	} else if n > 0 {
@@ -261,8 +232,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID int
 		log.Printf("auth: could not mint CSRF token: %v", err)
 	}
 	if err := session.Save(r, w); err != nil {
-		// The row exists but the browser never got its token, so nothing can
-		// present it. Delete it rather than leaving an unreachable row behind.
+		// The row exists but the browser never got its token, so nothing can present it.
 		if delErr := s.store.DeleteSession(r.Context(), userID, sid); delErr != nil {
 			log.Printf("auth: orphaned session %s: %v", sid[:8], delErr)
 		}
@@ -281,10 +251,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete the row, not just the cookie. Clearing the cookie alone would leave
-	// a live session behind: anyone holding a copy of that token -- from a shared
-	// machine, a backup, a proxy log -- could keep using it. Signing out has to
-	// destroy the credential, not merely forget it locally.
+	// Delete the row, not just the cookie. Clearing the cookie leaves a live session that
+	// anyone holding a copy of the token could keep using: signing out has to destroy the
+	// credential, not merely forget it locally.
 	if err == nil {
 		if sid, ok := session.Values[sessionID].(string); ok && sid != "" {
 			if u, uerr := s.store.SessionUser(r.Context(), sid); uerr == nil {
@@ -314,10 +283,6 @@ type sessionsView struct {
 }
 
 // handleSessions lists the account's active logins.
-//
-// Worth showing rather than just supporting: a user who can see "Chrome on
-// Windows, active 3 minutes ago" alongside a device they do not recognise is a
-// user who can act on it. Revocation nobody can see is revocation nobody uses.
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 	current := currentSession(r)
@@ -396,12 +361,9 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "about.html", s.baseView(w, r, "What is YABA?", "about"))
 }
 
-// handleForgot backs the `Forgot password` link.
-//
-// It does not pretend to send an email. Delivering a reset link needs an SMTP
-// service that this project has not been given, and a page that claims "check
-// your inbox" while sending nothing is worse than one that explains the
-// situation -- the user would wait for a message that never arrives.
+// handleForgot backs the Forgot password link. It does not claim to have sent what it
+// could not send: a page saying check your inbox while no mail server is configured
+// leaves the user waiting for a message that never arrives.
 func (s *Server) handleForgot(w http.ResponseWriter, r *http.Request) {
 	// forgotView, not the bare view: the template reads .Sent and .MailEnabled,
 	// and html/template treats a missing field as an execution error rather than
@@ -424,18 +386,7 @@ var dummyHash = func() []byte {
 	return h
 }()
 
-// signedIn reports whether this request carries a session that is still live.
-//
-// It resolves the token against the sessions table rather than trusting the
-// cookie, because a revoked or expired session must not count as signed in --
-// otherwise the landing page would send a stale cookie to /dashboard, which
-// authed would bounce straight back to the login page.
 // issueFormToken mints a one-time token for a form that creates something.
-//
-// A failure here is logged and swallowed rather than failing the page: the token
-// prevents an accidental duplicate, it is not a security control, and refusing
-// to show somebody the Add Expense form because a token could not be issued
-// would be a worse outcome than the duplicate it guards against.
 func (s *Server) issueFormToken(r *http.Request, purpose string) string {
 	user, ok := userFrom(r)
 	if !ok {
@@ -450,16 +401,6 @@ func (s *Server) issueFormToken(r *http.Request, purpose string) string {
 }
 
 // duplicateSubmit reports whether this submission has already been processed.
-//
-// Called after validation and before the insert. Before validation would burn
-// the token on a typo, so correcting the amount would then be refused as a
-// duplicate — which is the opposite of helpful.
-//
-// A request carrying no token at all is allowed through. Every form renders one,
-// so this only covers a page rendered before the feature existed, and refusing
-// those would break a form somebody has open right now for no safety gain: this
-// guards against a double click, not against an attacker, who can simply not
-// send the field.
 func (s *Server) duplicateSubmit(r *http.Request, userID int64) bool {
 	tok := strings.TrimSpace(r.PostFormValue("form_token"))
 	if tok == "" {
@@ -473,15 +414,8 @@ func (s *Server) duplicateSubmit(r *http.Request, userID int64) bool {
 	return !used
 }
 
-// retryPhrase turns a remaining lockout into words.
-//
-// Rounded UP to whole minutes, and never down: telling somebody to come back in
-// 9 minutes when it is really 9 minutes 40 seconds earns them a second refusal
-// and a second helping of annoyance. Rounding up means the stated time works.
-//
-// Minutes only, never seconds. A countdown to the second invites watching it,
-// and the precision is false anyway -- the number is read once, on a page that
-// is not going to refresh itself.
+// retryPhrase turns a remaining lockout into words, rounded up to whole minutes so the
+// time it states actually works.
 func retryPhrase(d time.Duration) string {
 	if d <= 0 {
 		return "now"
@@ -517,13 +451,7 @@ func (s *Server) renderLanding(w http.ResponseWriter, r *http.Request, status in
 	s.renderStatus(w, r, status, "landing.html", v)
 }
 
-// validateEmail checks that the address is plausibly an email address.
-//
-// Deliberately not an RFC 5322 grammar. A full parser is famously not worth
-// writing, and over-strict rules reject real addresses -- which is worse than
-// letting a typo through, because a typo is discovered at the next sign-in
-// whereas a false rejection locks someone out with no recourse. So this catches
-// the things that are definitely wrong and nothing more.
+// validateEmail checks the address is plausibly an email address.
 const emailExample = "you@example.com"
 
 func validateEmail(e string) string {
@@ -592,10 +520,6 @@ func isLetter(r rune) bool {
 }
 
 // validatePassword sets a floor without being obstructive.
-//
-// bcrypt silently truncates at 72 bytes, so anything longer is rejected rather
-// than accepted and quietly shortened: otherwise two different long passwords
-// sharing a 72-byte prefix would both open the account.
 func validatePassword(p string) string {
 	if len(p) < 8 {
 		return "Passwords need at least 8 characters."
@@ -609,12 +533,8 @@ func validatePassword(p string) string {
 	return ""
 }
 
-// validateNewPassword is validatePassword plus a confirmation field.
-//
-// Used wherever the user is choosing a password they cannot immediately test by
-// signing in -- a reset, or a change while already signed in. A typo there locks
-// them out of the account they were trying to secure, so the second box is not
-// ceremony.
+// validateNewPassword is validatePassword plus a confirmation field, for wherever the
+// user cannot immediately test the password by signing in.
 func validateNewPassword(p, confirm string) string {
 	if msg := validatePassword(p); msg != "" {
 		return msg
@@ -625,18 +545,11 @@ func validateNewPassword(p, confirm string) string {
 	return ""
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // dashboard.go
 // ═════════════════════════════════════════════════════════════════════════════
 
-
 // dashboardView is the four-card dashboard the mockup draws.
-//
-// The savings funds live on the Emergency Fund tab: putting money aside IS the
-// emergency fund from the user's point of view, so a separate Savings page was
-// two names for one idea. The insight list and the month-by-month table are still
-// on /reports.
 type dashboardView struct {
 	view
 
@@ -668,14 +581,9 @@ type dashboardView struct {
 	IncomeTotal    money.Cents
 
 	// SpendTotal and IncomeTotal are what actually happened in the period.
-	// The cards lead with these because a figure a user has just entered should
-	// be the one they see -- a forecast range next to a fresh $500 expense reads
-	// as the app having ignored them.
 	SpendTotal money.Cents
 
-	// The needs/wants split, shown under the expenses total. This is the
-	// distinction the presentation calls YABA's differentiator, and the flag has
-	// been collected on every expense since the first pass.
+	// The needs/wants split, shown under the expenses total.
 	Essential money.Cents
 	NonEssent money.Cents
 
@@ -908,10 +816,8 @@ type fundCard struct {
 	Projection insight.Projection
 }
 
-// handleSavingsRedirect keeps the old /savings path working.
-//
-// Savings moved onto the Emergency Fund tab, so rather than 404 a bookmark or an
-// old link, send it to the panel that now does the job.
+// handleSavingsRedirect keeps the old /savings path working, sending a bookmark to the
+// tab that now does the job rather than 404ing it.
 func (s *Server) handleSavingsRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard?tab=emergency", http.StatusMovedPermanently)
 }
@@ -1125,11 +1031,6 @@ func bucketObservations(a store.AllocationSummary, buckets []store.Bucket, r ins
 // ── notifications ─────────────────────────────────────────────────────────────
 
 // handleNotifications is polled by the page to deliver toasts.
-//
-// Read-and-clear, so a message is shown exactly once even with two tabs open.
-// This is what makes "gentle notification ... pops up, lives for a few seconds,
-// then makes itself go away" work for a job that finished while the user was on
-// a different page -- or, because the rows persist, on a different day.
 func (s *Server) handleNotifications(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 
@@ -1161,11 +1062,9 @@ func (s *Server) handleNotifications(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, r, out)
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // transactions.go
 // ═════════════════════════════════════════════════════════════════════════════
-
 
 // transactionsView backs the transaction list.
 type transactionsView struct {
@@ -1340,10 +1239,9 @@ type transactionFormView struct {
 	// because an edit is already protected by the version check.
 	FormToken string
 
-	// ReceiptJobID is a receipt already uploaded and waiting to be described.
-	// Carried through the form in a hidden field so it survives a validation
-	// error -- otherwise correcting a typo in the amount would silently detach
-	// the receipt the user came here to attach.
+	// ReceiptJobID is a receipt already uploaded and waiting to be described, carried in a
+	// hidden field so it survives a validation error: otherwise correcting a typo would
+	// silently detach the receipt the user came here to attach.
 	ReceiptJobID   int64
 	ReceiptName    string
 	ReceiptMissing bool
@@ -1374,10 +1272,8 @@ func (s *Server) handleTransactionForm(w http.ResponseWriter, r *http.Request) {
 		v.FormToken = s.issueFormToken(r, "transaction")
 	}
 
-	// A receipt was uploaded earlier and could not be read automatically, so the
-	// notification sent the user here to finish it by hand. This parameter used
-	// to be ignored, which made every upload a dead end: the file was stored, the
-	// notification arrived, and the link opened an ordinary blank form.
+	// A receipt uploaded earlier that could not be read automatically, whose notification
+	// sent the user here to finish it by hand.
 	if raw := r.URL.Query().Get("receipt"); raw != "" && kind == store.KindExpense {
 		jobID, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
@@ -1387,9 +1283,8 @@ func (s *Server) handleTransactionForm(w http.ResponseWriter, r *http.Request) {
 		job, err := s.store.UnattachedReceipt(r.Context(), sc, jobID)
 		switch {
 		case errors.Is(err, store.ErrNotFound):
-			// Either it belongs to another budget, or somebody already turned it
-			// into an expense. Say so instead of pretending the form is normal,
-			// and do not reveal which.
+			// Either it belongs to another budget, or somebody already turned it into an
+			// expense.
 			v.ReceiptMissing = true
 		case err != nil:
 			s.serverError(w, r, err)
@@ -1477,17 +1372,12 @@ type transactionInput struct {
 	bucketID   *int64
 	items      []store.NewLineItem
 
-	// version is the row version the form was rendered from. Zero means the
-	// submission carried none.
+	// version is the row version the form was rendered from.
 	version int64
 }
 
-// parseTransactionForm validates every field and returns a message suitable
-// for showing the user.
-//
-// The old handlers did strconv.ParseFloat and, on failure, redirected back to
-// an empty form with no explanation and the user's input discarded. Amounts
-// were never checked for sign, so negative income was accepted.
+// parseTransactionForm validates every field and returns a message fit to show the user,
+// rather than redirecting to an empty form with the input discarded.
 func parseTransactionForm(r *http.Request) (transactionInput, string) {
 	kind := store.Kind(r.PostFormValue("kind"))
 	if kind != store.KindIncome && kind != store.KindExpense {
@@ -1496,12 +1386,9 @@ func parseTransactionForm(r *http.Request) (transactionInput, string) {
 	return parseTransactionFormFor(r, kind)
 }
 
-// parseTransactionFormFor validates the form with the kind imposed by the caller
-// rather than read from the request.
-//
-// The dedicated /income and /expense pages use this, which is what makes them
-// genuinely single-purpose: a hand-edited POST cannot submit an expense to the
-// income route and have it stored as income.
+// parseTransactionFormFor validates with the kind imposed by the caller rather than read
+// from the request, which is what makes /income and /expense genuinely separate: a
+// hand-edited POST cannot store an expense as income.
 func parseTransactionFormFor(r *http.Request, kind store.Kind) (transactionInput, string) {
 	var in transactionInput
 	in.kind = kind
@@ -1545,10 +1432,7 @@ func parseTransactionFormFor(r *http.Request, kind store.Kind) (transactionInput
 		in.bucketID = &id
 	}
 
-	// The version the editor was shown, used as a compare-and-swap on save. A
-	// missing or unparseable value becomes 0, which means "do not check" -- the
-	// pre-existing behaviour, so an old bookmarked form still saves rather than
-	// failing in a way nobody could interpret.
+	// The version the editor was shown, used as a compare-and-swap on save.
 	if raw := strings.TrimSpace(r.PostFormValue("version")); raw != "" {
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
 			in.version = v
@@ -1566,11 +1450,6 @@ func parseTransactionFormFor(r *http.Request, kind store.Kind) (transactionInput
 }
 
 // parseLineItems reads the optional breakdown rows.
-//
-// The wireframe asks for "a breakdown on what categories the individual line
-// items in the transaction belong to". Rows are only accepted if they carry an
-// amount, so the blank spare row the form always renders is ignored rather than
-// rejected.
 func parseLineItems(r *http.Request, total money.Cents) ([]store.NewLineItem, string) {
 	descs := r.PostForm["item_description"]
 	cats := r.PostForm["item_category"]
@@ -1602,9 +1481,8 @@ func parseLineItems(r *http.Request, total money.Cents) ([]store.NewLineItem, st
 	if len(items) == 0 {
 		return nil, ""
 	}
-	// Requiring the lines to reconcile is what keeps the category breakdown and
-	// the headline total telling the same story. Letting them disagree would
-	// leave no way to know which figure is right.
+	// Requiring the lines to reconcile is what keeps the category breakdown and the
+	// headline total telling the same story.
 	if sum != total {
 		return nil, fmt.Sprintf("The line items add up to %s but the total is %s.",
 			sum.Display(), total.Display())
@@ -1634,9 +1512,7 @@ func (s *Server) handleTransactionCreate(w http.ResponseWriter, r *http.Request)
 
 	n := in.toNewTransaction()
 
-	// An expense may arrive with a receipt attached in the same submission. This
-	// path is synchronous because the user is already waiting on the form; the
-	// asynchronous queue is for the standalone import flow.
+	// An expense may arrive with a receipt attached in the same submission.
 	if in.kind == store.KindExpense {
 		path, name, err := s.saveReceipt(r, user.ID)
 		if err != nil {
@@ -1646,12 +1522,8 @@ func (s *Server) handleTransactionCreate(w http.ResponseWriter, r *http.Request)
 		n.ReceiptPath, n.ReceiptName = path, name
 	}
 
-	// Or it may be finishing a receipt uploaded earlier. Validate before the
-	// insert so a stolen or already-used id fails without leaving a stray
-	// expense behind.
-	//
-	// A file uploaded in this same submission wins: the user picked it just now,
-	// which is a clearer statement of intent than a hidden field they never saw.
+	// Or it may be finishing a receipt uploaded earlier: validated before the insert, so a
+	// stolen or already-used id fails without leaving a stray expense behind.
 	var attachJobID int64
 	if in.kind == store.KindExpense && n.ReceiptPath == "" {
 		if raw := r.PostFormValue("receipt_job"); raw != "" {
@@ -1686,16 +1558,13 @@ func (s *Server) handleTransactionCreate(w http.ResponseWriter, r *http.Request)
 	if attachJobID != 0 {
 		if err := s.store.AttachReceipt(r.Context(), sc, attachJobID, txID); err != nil {
 			// The expense is saved either way, so this reports rather than fails.
-			// Losing the attachment silently would leave the receipt looking
-			// unused and the expense looking undocumented.
 			s.flashError(w, r, "Saved, but the receipt could not be attached to it.")
 		}
 	}
 
 	if len(in.items) > 0 {
 		if err := s.store.SetLineItems(r.Context(), sc, txID, in.items); err != nil {
-			// The transaction saved; only the breakdown failed. Say so rather
-			// than pretending everything worked.
+			// The transaction saved; only the breakdown failed.
 			s.flashError(w, r, "Saved, but the line items could not be stored: "+err.Error())
 		}
 	}
@@ -1734,11 +1603,7 @@ func (s *Server) handleTransactionUpdate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if errors.Is(err, store.ErrConflict) {
-		// Somebody else saved this row while this form was open. Their version
-		// stands and this one is refused, which is the only choice that cannot
-		// lose work silently: overwriting would discard theirs, and merging two
-		// sets of amounts without asking would invent a third answer neither
-		// person entered.
+		// Somebody else saved this row while the form was open.
 		s.conflictOnUpdate(w, r, sc, id, in)
 		return
 	}
@@ -1776,10 +1641,7 @@ func (s *Server) handleTransactionDelete(w http.ResponseWriter, r *http.Request)
 
 	err = s.store.Delete(r.Context(), sc, id)
 	if errors.Is(err, store.ErrNotFound) {
-		// Covers both "no such row" and "belongs to another user". The old
-		// handler ran DELETE with the id and username in the WHERE clause but
-		// reported nothing either way, so a user could not tell a failed
-		// delete from a successful one.
+		// Covers both no such row and belongs to another household.
 		s.flashError(w, r, "That entry no longer exists.")
 	} else if err != nil {
 		s.serverError(w, r, err)
@@ -1850,9 +1712,7 @@ func (s *Server) rerenderTransactionFormAt(w http.ResponseWriter, r *http.Reques
 	// still good and goes back into the re-rendered form.
 	v.FormToken = strings.TrimSpace(r.PostFormValue("form_token"))
 
-	// Keep the pending receipt across a validation failure. Re-read from the
-	// store rather than echoing a posted filename, so the name shown on the page
-	// is the one on the job and not one somebody typed into the form.
+	// Keep the pending receipt across a validation failure.
 	if raw := r.PostFormValue("receipt_job"); raw != "" {
 		if jobID, err := strconv.ParseInt(raw, 10, 64); err == nil {
 			if job, err := s.store.UnattachedReceipt(r.Context(), sc, jobID); err == nil {
@@ -1917,9 +1777,8 @@ func (s *Server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
 	cw := csv.NewWriter(w)
 	defer cw.Flush()
 
-	// "Added by" is always a column here, unlike in the on-screen table where it
-	// is hidden for a solo user. A CSV is archival and often opened months later
-	// in another tool, so a stable column order is worth more than a tidy one.
+	// "Added by" is always a column here, unlike in the on-screen table where it is hidden
+	// for a solo user.
 	_ = cw.Write([]string{
 		"Date", "Type", "Description", "Amount", "Effect on cash", "Essential",
 		"Fund", "Added by",
@@ -1933,9 +1792,8 @@ func (s *Server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
 				essential = "Non-essential"
 			}
 		}
-		// Amounts are written as plain decimals with no currency symbol or
-		// thousands separator, because a spreadsheet will not parse "$1,234.56"
-		// as a number.
+		// Amounts are written as plain decimals with no currency symbol or thousands
+		// separator, because a spreadsheet will not parse "$1,234.56" as a number.
 		_ = cw.Write([]string{
 			t.OccurredOn,
 			t.Kind.Label(),
@@ -1949,12 +1807,8 @@ func (s *Server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// csvSafe neutralises spreadsheet formula injection.
-//
-// A label like "=1+1" or "@SUM(A1:A9)" is executed as a formula when the file
-// is opened in Excel or Sheets, which is a genuine attack path in any app that
-// lets a user type text and later exports it. Prefixing with an apostrophe
-// makes the cell literal text.
+// csvSafe neutralises spreadsheet formula injection: a label like =1+1 or @SUM(A1:A9)
+// is executed as a formula when the file is opened in Excel or Sheets.
 func csvSafe(s string) string {
 	if s == "" {
 		return s
@@ -1967,10 +1821,6 @@ func csvSafe(s string) string {
 }
 
 // toNewTransaction converts validated form input into the store's input type.
-//
-// Extracted because create and edit both need the identical mapping, and having
-// it in one place is what stops the two paths drifting -- the old code had an
-// edit path that quietly dropped fields the create path saved.
 func (in transactionInput) toNewTransaction() store.NewTransaction {
 	n := store.NewTransaction{
 		Kind:       in.kind,
@@ -1987,36 +1837,24 @@ func (in transactionInput) toNewTransaction() store.NewTransaction {
 		e := in.essential
 		n.Essential = &e
 	} else {
-		// Income has no essential flag and no recurring-expense bucket. Clearing
-		// them here means a form that leaves the fields populated when switching
-		// type cannot write a nonsensical row.
+		// Income has no essential flag and no recurring-expense bucket.
 		n.BucketID = nil
 	}
 	return n
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // entry.go
 // ═════════════════════════════════════════════════════════════════════════════
 
-
 // entryView backs the two dedicated entry pages, /income and /expense.
-//
-// One view type for both, but two templates and two routes. That split is the
-// point: the brief asks that "the user should never feel confused about whether
-// they are adding income or expense", and the surest way to achieve that is for
-// the income page to have no expense fields on it at all -- not hidden ones, not
-// a toggle, none. A shared type keeps the handlers from drifting while the
-// templates stay single-purpose.
 type entryView struct {
 	view
 
 	// Kind is what this page adds. The template does not offer a choice.
 	Kind store.Kind
 
-	// Form state, echoed back after a validation failure so nothing typed is
-	// lost.
+	// Form state, echoed back after a validation failure so nothing typed is lost.
 	Label      string
 	Amount     string
 	OccurredOn string
@@ -2027,16 +1865,12 @@ type entryView struct {
 	BucketID   int64
 	Error      string
 
-	// Step is "choose" or "manual" on the expense page. Empty on income, which
-	// has only one route in.
+	// Step is "choose" or "manual" on the expense page.
 	Step string
 
-	// Suggestions for the label field, and buckets an expense can pay towards.
-	//
-	// Deliberately nothing else. These pages carry the form alone: the doughnut
-	// charts and the recent lists now live on the dashboard's Expected Monthly
-	// Income and Expected Monthly Expenses tabs, so the queries that fed them
-	// here are gone rather than being run and discarded.
+	// Suggestions for the label field, and buckets an expense can pay towards, and
+	// deliberately nothing else: the charts and recent lists live on the dashboard, so the
+	// queries that fed them here are gone rather than run and discarded.
 	Categories []string
 	Buckets    []store.Bucket
 
@@ -2044,13 +1878,7 @@ type entryView struct {
 	// not record the same money twice.
 	FormToken string
 
-	// Waiting are receipts already uploaded and processed that nobody has turned
-	// into an expense yet.
-	//
-	// This list is what stops an upload being a dead end. Until it existed the
-	// only route back to a stored receipt was its notification, and a
-	// notification that is dismissed, cleared on another device or simply
-	// scrolled past left the file unreachable from anywhere in the interface.
+	// Waiting are receipts already processed that nobody has turned into an expense yet.
 	Waiting []store.ReceiptJob
 }
 
@@ -2063,10 +1891,8 @@ func (s *Server) handleIncomePage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "income.html", v)
 }
 
-// handleExpensePage is GET /expense.
-//
-// Opens on the Manual-or-Upload chooser rather than a form, as specified: the
-// user picks how they want to add the expense before seeing any fields.
+// handleExpensePage is GET /expense. It opens on the Manual-or-Upload chooser rather
+// than a form: the user picks how to add the expense before seeing any fields.
 func (s *Server) handleExpensePage(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.buildEntryView(w, r, store.KindExpense, "Add Expense", "expense")
 	if !ok {
@@ -2081,8 +1907,7 @@ func (s *Server) handleExpensePage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "expense.html", v)
 }
 
-// buildEntryView loads everything both pages need. Reports false when it has
-// already written an error response.
+// buildEntryView loads everything both pages need.
 func (s *Server) buildEntryView(w http.ResponseWriter, r *http.Request, kind store.Kind, title, nav string) (entryView, bool) {
 	sc := scopeOf(r)
 	ctx := r.Context()
@@ -2124,11 +1949,8 @@ func (s *Server) handleExpenseCreate(w http.ResponseWriter, r *http.Request) {
 	s.createEntry(w, r, store.KindExpense)
 }
 
-// createEntry saves one entry of a fixed kind.
-//
-// The kind comes from the route, never from the form. That is what makes the two
-// pages genuinely separate: a hand-edited request cannot post an expense to the
-// income page and have it accepted as income.
+// createEntry saves one entry of a fixed kind. The kind comes from the route, never from
+// the form, so a hand-edited request cannot post an expense to the income page.
 func (s *Server) createEntry(w http.ResponseWriter, r *http.Request, kind store.Kind) {
 	user := mustUser(r)
 	sc := scopeOf(r)
@@ -2144,10 +1966,7 @@ func (s *Server) createEntry(w http.ResponseWriter, r *http.Request, kind store.
 		return
 	}
 
-	// Validated, so this is a real submission — spend the token. If it has
-	// already been spent, this is the same form arriving twice: the first one
-	// worked, so send them to the result rather than showing an error for
-	// something that succeeded, and above all do not record the money twice.
+	// Validated, so this is a real submission -- spend the token.
 	if s.duplicateSubmit(r, user.ID) {
 		s.flashSuccess(w, r, "That entry was already saved.")
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
@@ -2156,8 +1975,7 @@ func (s *Server) createEntry(w http.ResponseWriter, r *http.Request, kind store.
 
 	n := in.toNewTransaction()
 
-	// An expense may carry a receipt in the same submission. Income never can,
-	// so the field is not on that page and this branch does not run for it.
+	// An expense may carry a receipt in the same submission.
 	if kind == store.KindExpense {
 		path, name, err := s.saveReceipt(r, user.ID)
 		if err != nil {
@@ -2183,9 +2001,8 @@ func (s *Server) createEntry(w http.ResponseWriter, r *http.Request, kind store.
 		}
 	}
 
-	// Income funds the priority list, and a bucket-attributed expense changes
-	// what a variable bucket costs. Either way the waterfall needs re-pouring,
-	// which is what keeps the dashboard figures correct the moment this returns.
+	// Income funds the priority list, and a bucket-attributed expense changes what a
+	// variable bucket costs.
 	if err := s.store.ReallocateMonthOf(r.Context(), sc, in.occurredOn); err != nil {
 		s.flashError(w, r, "Saved, but the expense funding could not be recalculated.")
 	}
@@ -2238,18 +2055,11 @@ func (s *Server) rerenderEntry(w http.ResponseWriter, r *http.Request, kind stor
 	s.renderStatus(w, r, http.StatusBadRequest, page, v)
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // funds.go
 // ═════════════════════════════════════════════════════════════════════════════
 
-
-// All fund handlers redirect back to the Emergency Fund tab, so the user lands
-// where they were rather than at the top of the dashboard.
-//
-// A query parameter rather than a fragment: a fragment is never sent to the
-// server, so the tab would have to be restored by JavaScript alone. ?tab= means
-// the correct panel is chosen server-side and is right even with scripting off.
+// Fund handlers redirect back to the Emergency Fund tab.
 const savingsAnchor = "/dashboard?tab=emergency"
 
 func (s *Server) handleFundCreate(w http.ResponseWriter, r *http.Request) {
@@ -2359,10 +2169,7 @@ func (s *Server) handleFundDeposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Note what is NOT read from this form: the fund's balance. The store
-	// derives it. The old delete-fund handler read a fund_balance form field
-	// and credited it as income, which is how the live database ended up with a
-	// 50,000,000 deposit.
+	// Note what is NOT read from this form: the fund's balance.
 	err = s.store.Deposit(r.Context(), sc, fundID, amount, date)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -2547,11 +2354,9 @@ func trimSentinel(err, sentinel error) string {
 	return msg
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // buckets.go
 // ═════════════════════════════════════════════════════════════════════════════
-
 
 // expensesTab is where every bucket action returns the user, so they land back
 // on the list they were editing rather than at the top of the dashboard.
@@ -2606,10 +2411,7 @@ func (s *Server) handleBucketCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A new expense changes what the month requires, so the waterfall has to be
-	// re-poured. Every mutation below does the same; the recalculation is
-	// idempotent, so doing it unconditionally is safe and means no code path can
-	// forget.
+	// A new expense changes what the month requires, so the waterfall is re-poured.
 	s.reallocateNow(w, r)
 
 	s.flashSuccess(w, r, fmt.Sprintf("%q added to your recurring expenses.", n.Name))
@@ -2655,10 +2457,8 @@ func (s *Server) handleBucketDown(w http.ResponseWriter, r *http.Request) {
 	s.moveBucket(w, r, false)
 }
 
-// moveBucket reorders the priority list.
-//
-// Reordering is not cosmetic here: priority decides which expense gets funded
-// first when income arrives, so a move has to re-run the allocation.
+// moveBucket reorders the priority list. Not cosmetic: priority decides which expense
+// is funded first when income arrives, so a move has to re-run the allocation.
 func (s *Server) moveBucket(w http.ResponseWriter, r *http.Request, up bool) {
 	sc := scopeOf(r)
 	id, ok := s.pathID(w, r)
@@ -2701,12 +2501,6 @@ func (s *Server) handleBucketArchive(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleReallocate lets the user force a recalculation.
-//
-// Nothing should normally need it, since every mutation recalculates. It exists
-// because the allocation depends on the calendar month, so a month rolling over
-// while the user was away leaves last month's figures on screen until something
-// happens -- and having a button is friendlier than having to add an income to
-// refresh the view.
 func (s *Server) handleReallocate(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
 	month := strings.TrimSpace(r.PostFormValue("month"))
@@ -2719,28 +2513,20 @@ func (s *Server) handleReallocate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, expensesTab, http.StatusSeeOther)
 }
 
-// reallocateNow re-pours the waterfall for the current month, reporting a
-// failure to the user rather than leaving the page silently stale.
-// The scope is resolved from the request rather than passed in. It used to take
-// a userID, which is now the wrong type entirely; taking nothing at all is better
-// than taking a Scope, because there is then no way for a caller to hand it a
-// household other than the one the request is operating on.
+// reallocateNow re-pours the waterfall for the current month and reports a failure
+// rather than leaving the page silently stale.
 func (s *Server) reallocateNow(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.Reallocate(r.Context(), scopeOf(r), ""); err != nil {
-		// Not fatal: the change the user asked for did happen. But the funding
-		// figures they are about to look at are now wrong, so say so.
+		// Not fatal: the change the user asked for did happen.
 		s.flashError(w, r, "Saved, but the expense funding could not be recalculated. Try the Recalculate button.")
 	}
 }
-
 
 // ═════════════════════════════════════════════════════════════════════════════
 // receipts.go
 // ═════════════════════════════════════════════════════════════════════════════
 
-
-// allowedReceiptTypes maps a detected MIME type to the extension it is stored
-// with. An allowlist, not a blocklist: anything not named here is refused.
+// allowedReceiptTypes maps a detected MIME type to the extension it is stored with.
 var allowedReceiptTypes = map[string]string{
 	"image/jpeg": ".jpg",
 	"image/png":  ".png",
@@ -2757,28 +2543,7 @@ func (s *Server) maxUploadBytes() int64 {
 	return mb << 20
 }
 
-// saveReceipt stores an uploaded receipt and returns its path and original
-// name. An absent file is not an error: the field is optional.
-//
-// The old handler had four separate problems, all fixed here:
-//
-//  1. filename := timestamp + "_" + user + "_" + handler.Filename, then
-//     filepath.Join("./uploads", filename). handler.Filename is attacker
-//     controlled, so a name containing path separators escaped the uploads
-//     directory. Names are now generated from crypto/rand and the user's
-//     original name is only ever stored in a database column.
-//
-//  2. No type check at all, so any file at all could be uploaded and later
-//     served back. Now the content is sniffed and matched against an
-//     allowlist -- the declared Content-Type is not trusted, since the client
-//     chooses it.
-//
-//  3. It inserted a $0 expense whose category was the filename, which put a
-//     junk slice into the spending pie chart for every receipt uploaded. The
-//     receipt now attaches to a real expense with a real amount.
-//
-//  4. Files were written under a directory later exposed by a plain file
-//     server. Receipts are now served only through handleReceipt.
+// saveReceipt stores an uploaded receipt and returns its path and original name.
 func (s *Server) saveReceipt(r *http.Request, userID int64) (path, original string, err error) {
 	if r.MultipartForm == nil {
 		// Not a multipart submission, so no file was attached.
@@ -2836,9 +2601,7 @@ func (s *Server) saveReceipt(r *http.Request, userID int64) (path, original stri
 	}
 	full := filepath.Join(dir, name)
 
-	// O_EXCL means a name collision fails rather than overwriting an existing
-	// receipt. With 16 random bytes a collision is not realistic, but silently
-	// overwriting someone's file would be the worst possible outcome.
+	// O_EXCL means a name collision fails rather than overwriting an existing receipt.
 	dst, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
 	if err != nil {
 		return "", "", fmt.Errorf("could not store the receipt")
@@ -2853,38 +2616,21 @@ func (s *Server) saveReceipt(r *http.Request, userID int64) (path, original stri
 	}
 
 	// Stored with forward slashes whatever the local separator is.
-	//
-	// filepath.Join uses the OS separator, so a database written on Windows held
-	// `uploads\16\abc.png`, which the same application on Linux cannot open --
-	// there the backslashes are ordinary filename characters, so the whole thing
-	// is one file that does not exist. One canonical form in the database,
-	// converted back only when a file is actually opened.
 	return filepath.ToSlash(full), cleanOriginalName(header.Filename), nil
 }
 
-// receiptFile turns a stored path back into one the local filesystem understands.
-//
-// The inverse of the ToSlash above. On Linux it is a no-op; on Windows it turns
-// the stored uploads/16/abc.png into uploads\16\abc.png.
+// receiptFile turns a stored path back into one the local filesystem understands: a
+// no-op on Linux, and the inverse of the ToSlash above on Windows.
 func receiptFile(stored string) string {
 	return filepath.FromSlash(stored)
 }
 
 // handleImportRedirect keeps the old /import path working.
-//
-// The Manual-or-Upload chooser moved onto /expense, so rather than 404 any
-// bookmark or in-page link that still points here, send them to the page that
-// now does the job.
 func (s *Server) handleImportRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/expense", http.StatusMovedPermanently)
 }
 
-// handleReceiptUpload stores the image and queues it, then returns immediately.
-//
-// This is the asynchronous path the wireframe specifies: "Picture gets put into
-// a queue server side for processing and the user can go about the rest of their
-// business." Nothing is parsed here, so the response time is the time to write
-// one file and one row -- however slow processing later turns out to be.
+// handleReceiptUpload stores the image, queues it and returns immediately.
 func (s *Server) handleReceiptUpload(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 
@@ -2905,8 +2651,7 @@ func (s *Server) handleReceiptUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Nudge the worker so it starts now rather than on its next tick. This never
-	// blocks, so a busy worker cannot slow the upload response down.
+	// Nudge the worker so it starts now rather than on its next tick.
 	s.wakeWorker()
 
 	s.flashSuccess(w, r,
@@ -2915,7 +2660,6 @@ func (s *Server) handleReceiptUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleReceipt serves a stored receipt to the user who owns it.
-// handleReceiptDiscard throws away an uploaded receipt nobody wants.
 func (s *Server) handleReceiptDiscard(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
 
@@ -2936,10 +2680,8 @@ func (s *Server) handleReceiptDiscard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The row is gone, so the file is now unreachable either way. Removing it is
-	// housekeeping, not correctness, which is why a failure here is logged rather
-	// than shown -- telling someone their receipt was discarded "but the file
-	// could not be deleted" invites a worry they cannot act on.
+	// The row is gone, so the file is unreachable either way and removing it is
+	// housekeeping rather than correctness.
 	if path != "" {
 		if err := os.Remove(receiptFile(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			log.Printf("receipts: discarded job %d but could not delete %s: %v", id, path, err)
@@ -2973,8 +2715,7 @@ func (s *Server) handleReceipt(w http.ResponseWriter, r *http.Request) {
 
 	f, err := os.Open(receiptFile(t.ReceiptPath))
 	if err != nil {
-		// The row survives even if the file is gone, so this is a 404 rather
-		// than a 500.
+		// The row survives even if the file is gone, so this is a 404 rather than a 500.
 		http.NotFound(w, r)
 		return
 	}
@@ -2986,10 +2727,9 @@ func (s *Server) handleReceipt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Content-Disposition: attachment, plus nosniff, means a stored file is
-	// downloaded rather than rendered in the origin. That matters because an
-	// SVG or HTML file rendered inline would run script with access to this
-	// site's cookies -- the reason those types are not in the allowlist either.
+	// Content-Disposition attachment plus nosniff means a stored file is downloaded rather
+	// than rendered in this origin, where an SVG or HTML file would run script with access
+	// to the site's cookies.
 	w.Header().Set("Content-Disposition",
 		`attachment; filename="`+safeDownloadName(t.ReceiptName, t.ReceiptPath)+`"`)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -3013,16 +2753,7 @@ func randomFilename(ext string) (string, error) {
 	return hex.EncodeToString(b) + ext, nil
 }
 
-// cleanOriginalName keeps a readable version of the uploaded name for display
-// only. It never touches the filesystem, but it is still stripped of path
-// separators and control characters so it cannot mislead in the UI or break a
-// Content-Disposition header.
 // receiptLabel turns an uploaded filename into a first guess at a description.
-//
-// A guess, not an answer: "IMG_4821" tells nobody anything, so anything that
-// looks like a camera's automatic name is left blank rather than filled with
-// noise the user then has to delete. A name someone actually chose is usually
-// worth offering.
 func receiptLabel(original string) string {
 	name := cleanOriginalName(original)
 	name = strings.TrimSuffix(name, filepath.Ext(name))
@@ -3075,17 +2806,11 @@ func safeDownloadName(original, storedPath string) string {
 	return filepath.Base(storedPath)
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // household.go
 // ═════════════════════════════════════════════════════════════════════════════
 
-
-// Shared budgeting: the settings page, and the actions on it.
-//
-// Every handler here follows the same shape as the rest of the application --
-// validate, act, flash, redirect -- so a failure is always visible to the user
-// rather than logged and redirected as though it had worked.
+// Shared budgeting: the settings page and the actions on it.
 
 // householdView backs /household.
 type householdView struct {
@@ -3095,22 +2820,17 @@ type householdView struct {
 	Pending []store.Invite
 
 	// Roles are the roles an owner may assign, for the per-member selector.
-	// Built from the store's constants rather than written out in the template,
-	// so adding a role cannot leave the UI out of step with the model.
 	Roles []store.Role
 
 	// Activity is the household's recent history: who changed what, and when.
 	Activity []store.AuditEntry
 
 	// MailEnabled drives what the page says about delivery.
-	//
-	// It exists because the page used to state, in two hardcoded places, that
-	// nothing is ever emailed -- which stopped being true the moment SMTP was
-	// configured, and produced a page carrying a red "the email could not be
-	// sent" beside a blue "nothing is emailed". Both cannot be right. Asking the
-	// mailer means neither can drift from what the server actually does.
 	MailEnabled bool
 }
+
+// recentActivityLimit is how many history entries the sharing page shows.
+const recentActivityLimit = 3
 
 // assignableRoles excludes nothing: an owner may promote another member to
 // owner, which is how ownership is handed over before somebody leaves.
@@ -3118,11 +2838,8 @@ func assignableRoles() []store.Role {
 	return []store.Role{store.RoleOwner, store.RoleEditor, store.RoleViewer}
 }
 
-// handleHousehold shows who can see this budget.
-//
-// Readable by every member, including a viewer. Knowing who else has access to
-// your finances is not a privilege -- somebody who can see the numbers should be
-// able to see who else can.
+// handleHousehold shows who can see this budget, readable by every member including a
+// viewer: somebody who can see the numbers should be able to see who else can.
 func (s *Server) handleHousehold(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 	hh := mustMembership(r)
@@ -3139,9 +2856,8 @@ func (s *Server) handleHousehold(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pending invitations are the owner's business: a viewer has no action to
-	// take on them, and the addresses of people who have not yet accepted are
-	// not theirs to read.
+	// Pending invitations are the owner's business: a viewer has no action to take on
+	// them, and the addresses of people who have not yet accepted are not theirs to read.
 	if hh.Role.CanManageMembers() {
 		if v.Pending, err = s.store.PendingInvites(r.Context(), hh.ID); err != nil {
 			s.serverError(w, r, err)
@@ -3149,13 +2865,8 @@ func (s *Server) handleHousehold(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The history is for every member, not only the owner: "who deleted the rent
-	// entry?" is exactly the question an editor needs answered, and they can
-	// already see all of this household's money.
-	//
-	// Invitation entries are the one exception, filtered out for anyone who
-	// cannot manage members — for the same reason the pending list above is
-	// hidden from them. An address that has not accepted yet is not theirs.
+	// The history is for every member, not only the owner: who deleted the rent entry is
+	// exactly what an editor needs answered.
 	activity, err := s.store.AuditLog(r.Context(), scopeOf(r), 40)
 	if err != nil {
 		s.serverError(w, r, err)
@@ -3166,6 +2877,9 @@ func (s *Server) handleHousehold(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		v.Activity = append(v.Activity, e)
+		if len(v.Activity) == recentActivityLimit {
+			break
+		}
 	}
 
 	s.render(w, r, "household.html", v)
@@ -3192,10 +2906,6 @@ func (s *Server) handleHouseholdCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleHouseholdSwitch changes which budget the user is looking at.
-//
-// The id is validated by SwitchHousehold, whose UPDATE carries the membership
-// test in its WHERE clause, so a hand-edited form cannot switch into a household
-// the user does not belong to.
 func (s *Server) handleHouseholdSwitch(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 
@@ -3309,8 +3019,7 @@ func (s *Server) handleInviteCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Inviting a personal budget makes no sense: it is one person's private
-	// space. Offer the fix rather than just refusing.
+	// Inviting a personal budget makes no sense: it is one person's private space.
 	if hh.Personal {
 		s.flashError(w, r,
 			"This is your own private budget. Create a shared budget below, then invite people to that.")
@@ -3362,11 +3071,6 @@ func (s *Server) handleInviteRevoke(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleInviteAccept joins the household an invitation names.
-//
-// Not behind canManage: the user is not a member of that household yet, so a
-// role check against their *current* household would be meaningless. Authority
-// comes from the invitation matching their own email address, which AcceptInvite
-// verifies inside its transaction.
 func (s *Server) handleInviteAccept(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 
@@ -3378,9 +3082,7 @@ func (s *Server) handleInviteAccept(w http.ResponseWriter, r *http.Request) {
 
 	switch err := s.store.AcceptInvite(r.Context(), id, user.ID, user.Email); {
 	case errors.Is(err, store.ErrInviteExpired):
-		// Distinguished from "no longer available" on purpose. The recipient did
-		// nothing wrong and there is a specific thing that fixes it, so saying
-		// "expired, ask them to send another" is more use than a dead end.
+		// Distinguished from "no longer available" on purpose.
 		s.flashError(w, r,
 			"That invitation has expired. Ask them to send it again — invitations last 24 hours.")
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
@@ -3467,9 +3169,6 @@ func (s *Server) handleMemberRole(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleMemberRemove takes somebody out of the household.
-//
-// Their entries stay: the rows belong to the household and user_id is only
-// attribution, so removing a member does not rewrite the budget's history.
 func (s *Server) handleMemberRemove(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 	hh := mustMembership(r)
@@ -3504,15 +3203,8 @@ func (s *Server) handleMemberRemove(w http.ResponseWriter, r *http.Request) {
 // ── invitation delivery ───────────────────────────────────────────────────────
 
 // sendInvitation emails the invitation and reports honestly what happened.
-//
-// Three outcomes, three different messages. The old code always said "there is
-// no email, so let them know", which was true then and would be a lie now; and
-// claiming "invitation sent" when SMTP is not configured would leave an owner
-// waiting for a delivery that was never attempted. The owner needs to know
-// whether they still have to tell the person themselves.
 func (s *Server) sendInvitation(w http.ResponseWriter, r *http.Request,
 	email, household, invitedBy string, role store.Role) {
-
 	roleWord := strings.ToLower(role.Label())
 
 	if !s.mail.Enabled() {
@@ -3526,9 +3218,8 @@ func (s *Server) sendInvitation(w http.ResponseWriter, r *http.Request,
 	err := s.mail.Invitation(r.Context(), email, household, invitedBy,
 		string(role), store.InviteTTL)
 	if err != nil {
-		// The invitation row exists and is perfectly usable, so this is not a
-		// failure of the invitation -- only of its delivery. Saying so lets the
-		// owner fall back to telling them directly instead of assuming it worked.
+		// The invitation row exists and is perfectly usable, so this is not a failure of the
+		// invitation -- only of its delivery.
 		log.Printf("mail: invitation to %s failed: %v", email, err)
 		s.flashError(w, r, fmt.Sprintf(
 			"%s is invited as a %s, but the email could not be sent. "+
@@ -3611,16 +3302,9 @@ type forgotView struct {
 	MailEnabled bool
 }
 
-// handleForgotRequest starts a password reset.
-//
-// The response is identical whether or not the address has an account. That is
-// the whole security property of this endpoint: a different message, a different
-// status code or a noticeably different response time would turn it into an
-// oracle for which addresses are registered.
-//
-// So the work is deliberately arranged to be uniform. The token is created and
-// the mail is sent in a goroutine, and the handler always renders the same
-// "check your inbox" page immediately.
+// handleForgotRequest starts a password reset. The response is identical whether or not
+// the address has an account -- a different message, status code or response time would
+// make this an oracle for which addresses are registered.
 func (s *Server) handleForgotRequest(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		s.badRequest(w, "Could not read that form.")
@@ -3640,9 +3324,7 @@ func (s *Server) handleForgotRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rate limited on IP alone, not on the address. Keying on the address would
-	// let anyone lock a known user out of their own reset, and the thing being
-	// limited here is a stranger asking for links, not a user proving anything.
+	// Rate limited on IP alone, not on the address.
 	key := "reset|" + clientIP(r)
 	retryIn, err := s.store.RateRetryIn(r.Context(), key)
 	if err != nil {
@@ -3658,9 +3340,8 @@ func (s *Server) handleForgotRequest(w http.ResponseWriter, r *http.Request) {
 		log.Printf("reset: could not record the attempt: %v", err)
 	}
 
-	// Detached from the request context on purpose: this outlives the response,
-	// which is what keeps the timing uniform. A context cancelled when the
-	// handler returns would abort the send.
+	// Detached from the request context on purpose: this outlives the response, which is
+	// what keeps the timing uniform.
 	go s.deliverReset(email)
 
 	v.Sent = true
@@ -3701,9 +3382,7 @@ type resetView struct {
 	Token string
 	Email string
 
-	// Invalid means the link is expired, already used, or was never real. The
-	// page then shows an explanation and a link to ask for another, rather than a
-	// form that is guaranteed to fail.
+	// Invalid means the link is expired, already used, or was never real.
 	Invalid bool
 	Error   string
 }
@@ -3757,9 +3436,8 @@ func (s *Server) handleResetSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ConsumeReset burns the token, sets the hash and deletes every session for
-	// the account in one transaction. Signing out all devices is the point: a
-	// reset usually means somebody else may have had the old password.
+	// ConsumeReset burns the token, sets the hash and deletes every session for the
+	// account in one transaction.
 	if _, err := s.store.ConsumeReset(r.Context(), token, string(hash)); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			// Lost a race with another submission of the same link.
@@ -3819,9 +3497,7 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	password := r.PostFormValue("password")
 	confirm := r.PostFormValue("confirm")
 
-	// The current password is required even though the session already proves who
-	// this is. A session can be a borrowed laptop; knowing the old password is
-	// what makes this the account holder rather than whoever sat down at it.
+	// The current password is required even though the session already proves who this is.
 	_, hash, err := s.store.CredentialsFor(r.Context(), user.Email)
 	if err != nil {
 		s.serverError(w, r, err)
@@ -3859,10 +3535,8 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Keeping this session and dropping the others: signing someone out of the
-	// page they are looking at, moments after they proved they know the password,
-	// would be gratuitous. Every other device goes, which is the half that
-	// matters.
+	// This session is kept and the others dropped: signing someone out of the page they are
+	// looking at, moments after they proved they know the password, would be gratuitous.
 	if err := s.store.ChangePassword(r.Context(), user.ID, string(newHash), currentSession(r)); err != nil {
 		s.serverError(w, r, err)
 		return
@@ -3873,15 +3547,10 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/sessions", http.StatusSeeOther)
 }
 
-// conflictOnUpdate re-renders the edit form after a losing race.
-//
-// It shows what the other person saved next to what this user typed, and carries
-// the new version forward so that saving again succeeds. That last part matters:
-// a conflict page that cannot be resolved by pressing the button again is just a
-// dead end with extra words.
+// conflictOnUpdate re-renders the edit form after a losing race, showing what the other
+// person saved and carrying the new version forward so that saving again succeeds.
 func (s *Server) conflictOnUpdate(w http.ResponseWriter, r *http.Request,
 	sc store.Scope, id int64, in transactionInput) {
-
 	current, err := s.store.ByID(r.Context(), sc, id)
 	if err != nil {
 		// It was there a moment ago -- the row has since gone entirely.

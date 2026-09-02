@@ -16,31 +16,49 @@
       <span class="auth-wordmark">YABA</span>
     </div>
 
+    <h1 class="auth-title">Sign in</h1>
+    <p class="auth-sub">Track what comes in, plan what goes out.</p>
+
+    {{/*
+      One red banner, three jobs: a wrong password, a malformed address, and
+      "that address has no account". They are all answers to the same click on
+      the same button, so they belong in the same place on the page rather than
+      in a panel of their own — the eye is already there.
+
+      role="alert" so a screen reader is told without having to go looking.
+    */}}
     {{if .Confirming}}
-    <h1 class="auth-title">Create your account</h1>
-    <p class="auth-sub">
-      <strong>{{.Email}}</strong> doesn't have an account yet.
-      Choose a password to finish.
-    </p>
-
-    {{with .Error}}
     <p class="auth-error" role="alert">
-      <span class="auth-error-mark" aria-hidden="true">!</span>{{.}}
+      <span class="auth-error-mark" aria-hidden="true">!</span>
+      <span>
+        {{/* Kept on one line deliberately: the rendered page is what tests and
+             screen readers read, and a line break lands in the middle of the
+             sentence as whitespace. */}}
+        {{if .Error}}{{.Error}}{{else}}<strong>{{.Email}}</strong> doesn't have an account yet.
+        Choose a password below to create one.{{end}}
+      </span>
     </p>
-    {{end}}
+    {{else}}{{with .Error}}
+    <p class="auth-error" role="alert">
+      <span class="auth-error-mark" aria-hidden="true">!</span><span>{{.}}</span>
+    </p>
+    {{end}}{{end}}
 
+    {{if .Confirming}}
+    {{/*
+      The password step. Reached only by clicking Login with an address that has
+      no account, so the question has already been answered by getting here and a
+      second confirmation would be a click for its own sake.
+
+      The address travels in a hidden field rather than being retyped: it is the
+      thing that was just checked, and offering it as an editable box invites an
+      edit that would silently create an account for somebody else's address.
+    */}}
     <form method="POST" action="/auth" novalidate>
       {{template "csrf" .}}
       <input type="hidden" name="create" value="yes">
       <input type="hidden" name="email" value="{{.Email}}">
 
-      {{/*
-        Floating label. The input carries placeholder=" " — a single space, not
-        empty — because :placeholder-shown is the only way to detect "this field
-        is empty" in CSS alone, and it needs a placeholder to be showing. The
-        <label> stays a real label throughout, so screen readers and password
-        managers see a properly labelled field; only its position is decorative.
-      */}}
       <div class="float-field">
         <input id="new-password" name="password" type="password" placeholder=" "
                autocomplete="new-password" required minlength="8" maxlength="72"
@@ -69,15 +87,6 @@
     <p class="auth-alt"><a href="/">Use a different email</a></p>
 
     {{else}}
-    <h1 class="auth-title">Sign in</h1>
-    <p class="auth-sub">Track what comes in, plan what goes out.</p>
-
-    {{with .Error}}
-    <p class="auth-error" role="alert">
-      <span class="auth-error-mark" aria-hidden="true">!</span>{{.}}
-    </p>
-    {{end}}
-
     {{/* One form serves both signing in and signing up: an address with no
          account is offered one on the next step. The button says "Login" because
          that is what the user came here to do; the signup path is a branch off

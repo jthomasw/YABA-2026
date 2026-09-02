@@ -1,11 +1,5 @@
-// Package insight turns stored figures into the sentences a user actually
-// wants to read.
-//
-// Nothing here touches a database or an http.Request: every function takes
-// plain values and returns plain values, which is what makes this the one
-// package in the app that is cheap to test exhaustively.
+// Package insight turns stored figures into the sentences a user reads.
 package insight
-
 
 import (
 	"fmt"
@@ -16,14 +10,9 @@ import (
 	"github.com/jthomasw/YABA-2026/internal/store"
 )
 
-// Projection answers "when will I reach this goal, at the rate I am going?".
-//
-// The old schema had a months_target column for exactly this and the form
-// wrote to it, but no code ever read it back, so the user's answer changed
-// nothing on screen.
+// Projection answers when a fund will reach its goal at the current rate.
 type Projection struct {
-	// Reachable is false when there is no goal, or no savings rate to
-	// extrapolate from.
+	// Reachable is false when there is no goal, or no savings rate to extrapolate from.
 	Reachable bool
 	// Months is the whole number of months until the goal is met.
 	Months int
@@ -38,10 +27,6 @@ type Projection struct {
 }
 
 // ProjectFund estimates when a fund reaches its goal.
-//
-// avgPerMonth is the observed recent contribution rate. When it is zero the
-// function falls back to the fund's own required rate so the UI can still say
-// something useful ("you would need $X a month") rather than going blank.
 func ProjectFund(f store.Fund, avgPerMonth money.Cents, now time.Time) Projection {
 	remaining := f.Remaining()
 
@@ -110,9 +95,8 @@ func ProjectFund(f store.Fund, avgPerMonth money.Cents, now time.Time) Projectio
 	return p
 }
 
-// AverageMonthlyDeposit is the mean contribution across the months that had
-// any activity, which is a fairer rate than dividing by the calendar span
-// when a user only started saving recently.
+// AverageMonthlyDeposit is the mean contribution across months that had activity,
+// which is fairer than dividing by the calendar span for someone who started late.
 func AverageMonthlyDeposit(deposits money.Cents, activeMonths int) money.Cents {
 	if activeMonths <= 0 || deposits <= 0 {
 		return 0
@@ -140,13 +124,8 @@ type Observation struct {
 	Text     string
 }
 
-// Observations derives the dashboard's feedback list.
-//
-// Ordering matters: alerts first, so the one thing that needs attention is not
-// buried under congratulations. Every branch is guarded against the zero case,
-// because a brand-new account has no income, no spending and no history, and
-// the old dashboard rendered blank cards and an empty chart with no
-// explanation of what to do next.
+// Observations derives the dashboard's feedback list, alerts first so the thing needing
+// attention is not buried.
 func Observations(t store.Totals, essential, nonEssential money.Cents, budgets []store.Budget, months []store.MonthPoint) []Observation {
 	var alerts, warns, goods, infos []Observation
 
@@ -249,17 +228,10 @@ func plural(n int, word string) string {
 	return fmt.Sprintf("%d %ss", n, word)
 }
 
+// ── forecast ──────────────────────────────────────────────────────────────────
 
-// ═════════════════════════════════════════════════════════════════════════════
-// forecast.go
-// ═════════════════════════════════════════════════════════════════════════════
-
-
-// IncomeRange is an estimate of what next month's income will be.
-//
-// The wireframe asks for exactly this: "Monthly Income ... should be derived
-// from the income transactions that get entered. It should represent a range,
-// perhaps a confidence interval of 90-95%?"
+// IncomeRange estimates next month's income as a range, because a single figure
+// is misleading when income varies.
 type IncomeRange struct {
 	// Months is how many months of history the estimate is based on.
 	Months int
@@ -280,26 +252,13 @@ type IncomeRange struct {
 func (r IncomeRange) Spread() money.Cents { return r.High - r.Low }
 
 // zFor90 is the two-sided normal critical value for 90% confidence.
-//
-// A z value rather than a t value is a deliberate simplification: the correct
-// statistic for a small sample with an estimated variance is Student's t, which
-// would need a table or an incomplete beta function. With the handful of months
-// a personal budget actually has, the interval is dominated by the genuine
-// variability of the user's income, not by the choice of critical value -- and
-// presenting it as "roughly" in the note is more honest than implying a
-// precision the data cannot support.
 const zFor90 = 1.645
 
-// minMonthsForInterval is the fewest months that can produce a spread. With one
-// month there is no variance to measure; with two, a single unusual month
-// dominates the estimate entirely, so three is the floor.
+// minMonthsForInterval is the fewest months that can produce a spread: one has no
+// variance to measure, and with two a single unusual month dominates it.
 const minMonthsForInterval = 3
 
 // EstimateMonthlyIncome derives an expected-income range from monthly history.
-//
-// Months with no income at all are excluded rather than counted as zero. A user
-// who started using the app in March should not have January and February drag
-// their expected salary down to a third of reality.
 func EstimateMonthlyIncome(months []store.MonthPoint) IncomeRange {
 	var vals []float64
 	for _, m := range months {
@@ -336,9 +295,8 @@ func EstimateMonthlyIncome(months []store.MonthPoint) IncomeRange {
 		return r
 	}
 
-	// Sample variance, dividing by n-1 rather than n. With a small sample the
-	// population formula understates the spread, which would make the interval
-	// look tighter than the data justifies -- the opposite of useful here.
+	// Sample variance divides by n-1: with a small sample the population formula
+	// understates the spread and makes the interval look tighter than the data allows.
 	var ss float64
 	for _, v := range vals {
 		d := v - mean
@@ -369,11 +327,8 @@ func EstimateMonthlyIncome(months []store.MonthPoint) IncomeRange {
 	return r
 }
 
-// ExpenseRange is what the recurring expenses are expected to cost.
-//
-// The mockup shows this card as a range ("1234$-2345$") rather than a single
-// figure, and it is right to: rent is exact, but a water bill is not, so one
-// number would be false precision.
+// ExpenseRange is what recurring expenses are expected to cost, as a range: rent is
+// exact but a water bill is not, so a single number would be false precision.
 type ExpenseRange struct {
 	Low, High money.Cents
 	// Expected is the figure the funding waterfall actually works to.
@@ -393,10 +348,6 @@ func (r ExpenseRange) Exact() bool { return r.Low == r.High }
 func (r ExpenseRange) Spread() money.Cents { return r.High - r.Low }
 
 // EstimateMonthlyExpenses brackets the monthly recurring cost.
-//
-// Fixed buckets contribute their exact amount to both ends. Variable ones
-// contribute their cheapest observed month to the low end and their dearest to
-// the high end, so the range widens only as much as the user's actual bills vary.
 func EstimateMonthlyExpenses(buckets []store.Bucket) ExpenseRange {
 	var r ExpenseRange
 
@@ -414,9 +365,7 @@ func EstimateMonthlyExpenses(buckets []store.Bucket) ExpenseRange {
 		r.High += b.High
 	}
 
-	// The expected figure must sit inside the range. It can fall outside when a
-	// variable bucket's current month already exceeds every previous one, or when
-	// a brand-new bucket has an estimate but no history.
+	// The expected figure must sit inside the range.
 	if r.Expected < r.Low {
 		r.Low = r.Expected
 	}
@@ -455,15 +404,7 @@ type Trend struct {
 	OK bool
 }
 
-// FitTrend fits a trend line through a running-balance series.
-//
-// The wireframe asks for it on the Current Funds chart: "A trend line might
-// also be helpful to give to see the overall trend for the given time period".
-//
-// x is the point index rather than the actual date. Using real dates would
-// weight a cluster of transactions in one week against a quiet month correctly,
-// but the chart's x-axis is already evenly spaced by point, so a date-weighted
-// line would not lie along the data the user can see.
+// FitTrend fits a least-squares line through a running-balance series.
 func FitTrend(points []store.Point) Trend {
 	n := len(points)
 	if n < 2 {
@@ -544,18 +485,8 @@ type Runway struct {
 // fund, used when the user has not set their own target.
 const DefaultEmergencyMonths = 3
 
-// AssessEmergencyFund evaluates the emergency fund.
-//
-// Two different questions get answered, because they have different answers and
-// the wireframe asks for the first while the user needs the second:
-//
-//   - "How long will the emergency fund last at the current rate of
-//     utilization?" -- balance divided by observed withdrawals.
-//   - "How many months of essential expenses does it cover?" -- balance divided
-//     by the essential recurring total.
-//
-// A fund nobody has touched has an infinite runway by the first measure and may
-// still be badly underfunded by the second.
+// AssessEmergencyFund answers two different questions: how long the fund lasts at the
+// observed withdrawal rate, and how many months of essential expenses it covers.
 func AssessEmergencyFund(fund store.Fund, withdrawals []store.MonthPoint, essentialMonthly money.Cents) Runway {
 	r := Runway{
 		Balance:          fund.Balance,
@@ -567,9 +498,7 @@ func AssessEmergencyFund(fund store.Fund, withdrawals []store.MonthPoint, essent
 	}
 	r.Target = essentialMonthly * money.Cents(r.TargetMonths)
 
-	// Burn rate: mean of the months that actually saw a withdrawal. Averaging
-	// across quiet months too would report a comfortable runway for someone who
-	// drained the fund in one go last month.
+	// Burn rate is the mean of the months that saw a withdrawal.
 	var total money.Cents
 	active := 0
 	for _, m := range withdrawals {
