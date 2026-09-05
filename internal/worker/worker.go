@@ -21,13 +21,54 @@ type Processor interface {
 	Process(ctx context.Context, job store.ReceiptJob) (Draft, error)
 }
 
-// Draft is what a processor managed to extract.
+// Draft is what a processor managed to extract. It is a proposal and never a
+// fact: nothing here reaches the ledger until a person has seen it beside the
+// photograph and pressed Save.
+//
+// That is the answer to the objection this package was written with, recorded in
+// worker_test.go: a misread amount is dangerous precisely because it is
+// silently believed, entering the month's total, the category breakdown, the
+// trend line and the emergency-fund projection with nothing on screen admitting
+// it was a guess. A draft cannot do any of that. It is shown, labelled as read
+// from the receipt, and confirmed or corrected before it becomes a transaction.
 type Draft struct {
 	Label  string
 	Payee  string
 	Place  string
 	Amount store.Cents
 	Date   string
+
+	// Everything below is what OCR adds over the older, amount-only contract.
+	Category   string
+	Subtotal   store.Cents
+	Tax        store.Cents
+	Tip        store.Cents
+	Items      []store.DraftItem
+	Confidence float64
+	Text       string
+}
+
+// Empty reports whether a draft carries nothing worth storing, so a receipt that
+// yielded literally nothing does not write a row of blanks.
+func (d Draft) Empty() bool {
+	return d.Amount == 0 && d.Label == "" && d.Payee == "" &&
+		d.Date == "" && d.Text == "" && len(d.Items) == 0
+}
+
+// toStore converts a processor's draft into the form the database holds.
+func (d Draft) toStore() store.ReceiptDraft {
+	return store.ReceiptDraft{
+		Merchant:   d.Payee,
+		Category:   d.Label,
+		Date:       d.Date,
+		Total:      d.Amount,
+		Subtotal:   d.Subtotal,
+		Tax:        d.Tax,
+		Tip:        d.Tip,
+		Items:      d.Items,
+		Confidence: d.Confidence,
+		Text:       d.Text,
+	}
 }
 
 // ErrNeedsReview means the receipt was readable as a file but its contents
@@ -133,77 +174,78 @@ func (w *Worker) processNext(ctx context.Context) bool {
 
 	switch {
 	case errors.Is(err, ErrNeedsReview):
-		w.finishNeedsReview(ctx, job)
+		// Not a failure. The file was fine; its contents were not legible enough
+		// to propose an amount, and whatever else was read is still worth keeping.
+		w.finishNeedsReview(ctx, job, draft)
 
 	case err != nil:
 		w.finishFailed(ctx, job, err)
 
 	default:
-		w.finishExtracted(ctx, job, draft)
+		w.finishDraft(ctx, job, draft)
 	}
 	return true
 }
 
-// finishExtracted records a transaction built from a successful extraction.
-func (w *Worker) finishExtracted(ctx context.Context, job store.ReceiptJob, d Draft) {
-	if d.Amount <= 0 {
-		// A processor that reports success with no amount is buggy; treat it as
-		// needing review rather than writing a zero expense.
-		w.finishNeedsReview(ctx, job)
+// saveDraft records the proposal against the job, if there is one worth
+// recording. A failure here is logged rather than fatal: the receipt image is
+// stored and the user can still enter it by hand, which is exactly the outcome
+// they had before any of this existed.
+func (w *Worker) saveDraft(ctx context.Context, job store.ReceiptJob, d Draft) {
+	if d.Empty() {
 		return
 	}
-	if d.Date == "" {
-		d.Date = store.Today()
+	if err := w.store.SaveReceiptDraft(ctx, job.ID, d.toStore()); err != nil {
+		log.Printf("worker: could not save the draft for receipt job %d: %v", job.ID, err)
 	}
-	if d.Label == "" {
-		d.Label = "Scanned receipt"
-	}
-
-	// The scope comes off the job, not the uploader's current household: they may have
-	// switched budgets since, and the expense belongs to the one they were looking at.
-	sc := store.Scope{HouseholdID: job.HouseholdID, UserID: job.UserID}
-
-	essential := true
-	txID, err := w.store.Add(ctx, sc, store.NewTransaction{
-		Kind:        store.KindExpense,
-		Label:       d.Label,
-		Amount:      d.Amount,
-		OccurredOn:  d.Date,
-		Essential:   &essential,
-		Payee:       d.Payee,
-		Place:       d.Place,
-		Note:        "Imported from receipt " + job.OriginalName,
-		ReceiptPath: job.Path,
-		ReceiptName: job.OriginalName,
-	})
-	if err != nil {
-		w.finishFailed(ctx, job, fmt.Errorf("could not save the expense: %w", err))
-		return
-	}
-
-	if err := w.store.CompleteReceiptJob(ctx, job.ID, &txID); err != nil {
-		log.Printf("worker: could not mark job %d done: %v", job.ID, err)
-	}
-	// Recurring-expense funding depends on the month's expenses, so a new one
-	// has to trigger a recalculation.
-	if err := w.store.ReallocateMonthOf(ctx, sc, d.Date); err != nil {
-		log.Printf("worker: reallocate after receipt %d: %v", job.ID, err)
-	}
-
-	w.notify(ctx, job.UserID, "success",
-		fmt.Sprintf("Receipt %s imported as %s.", job.OriginalName, d.Amount.Display()),
-		fmt.Sprintf("/transactions/%d/edit", txID))
 }
 
-// finishNeedsReview stores the image against a draft the user completes.
-func (w *Worker) finishNeedsReview(ctx context.Context, job store.ReceiptJob) {
+// finishDraft records a successful reading and invites the user to confirm it.
+//
+// Note what this function does NOT do, and what an earlier version of it did: it
+// does not call store.Add. No transaction is created, no allocation is
+// recalculated and no total on any page moves. OCR is good enough to save
+// somebody typing and nowhere near good enough to be trusted unattended -- on a
+// hard photograph it will read $45.78 for a $45.70 receipt, which is wrong in a
+// way that looks entirely reasonable and would never be noticed again.
+func (w *Worker) finishDraft(ctx context.Context, job store.ReceiptJob, d Draft) {
+	if d.Amount <= 0 {
+		// A processor reporting success with no amount has nothing to propose.
+		w.finishNeedsReview(ctx, job, d)
+		return
+	}
+
+	w.saveDraft(ctx, job, d)
+	if err := w.store.CompleteReceiptJob(ctx, job.ID, nil); err != nil {
+		log.Printf("worker: could not mark job %d done: %v", job.ID, err)
+	}
+
+	where := ""
+	if d.Payee != "" {
+		where = " from " + d.Payee
+	}
+	w.notify(ctx, job.UserID, "success",
+		fmt.Sprintf("Read %s%s off %s. Tap to check it and save.",
+			d.Amount.Display(), where, job.OriginalName),
+		w.confirmLink(job.ID))
+}
+
+// finishNeedsReview stores whatever was read against a form the user completes.
+func (w *Worker) finishNeedsReview(ctx context.Context, job store.ReceiptJob, d Draft) {
+	w.saveDraft(ctx, job, d)
 	if err := w.store.CompleteReceiptJob(ctx, job.ID, nil); err != nil {
 		log.Printf("worker: could not mark job %d done: %v", job.ID, err)
 	}
 	w.notify(ctx, job.UserID, "info",
 		fmt.Sprintf("Receipt %s is ready, but the amount could not be read. Tap to enter it.",
 			job.OriginalName),
-		"/transactions/new?type=expense&receipt="+fmt.Sprint(job.ID))
+		w.confirmLink(job.ID))
+}
+
+// confirmLink is where every processed receipt sends the user: the expense form,
+// prefilled with whatever was read and showing the image beside it.
+func (w *Worker) confirmLink(jobID int64) string {
+	return "/transactions/new?type=expense&receipt=" + fmt.Sprint(jobID)
 }
 
 // finishFailed retries, then gives up and tells the user.

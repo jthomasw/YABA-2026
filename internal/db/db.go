@@ -205,8 +205,8 @@ func migrations() []Migration {
 
 		sqlMigration(8, "transaction version for optimistic concurrency", `
 			ALTER TABLE transactions ADD COLUMN version INTEGER NOT NULL DEFAULT 1`,
-			// Two members opening the same expense both saved, and the second write discarded
-			// the first. A version every UPDATE must match turns that into a visible refusal.
+		// Two members opening the same expense both saved, and the second write discarded
+		// the first. A version every UPDATE must match turns that into a visible refusal.
 		),
 
 		sqlMigration(9, "login attempts survive a restart", `
@@ -256,6 +256,28 @@ func migrations() []Migration {
 			)`,
 			// The only query it serves: this household's history, newest first.
 			`CREATE INDEX idx_audit_household ON audit_log(household_id, id DESC)`,
+		),
+
+		// Migration 13: what OCR read off a receipt, before anyone has agreed to
+		// it. This is a draft, not a transaction -- nothing here has touched the
+		// ledger, and nothing will until the user presses Save on a form filled
+		// in from these columns.
+		sqlMigration(13, "parsed receipt drafts", `
+			ALTER TABLE receipt_jobs ADD COLUMN parsed_total_cents INTEGER NOT NULL DEFAULT 0`,
+			// A column of its own rather than a field inside the JSON below,
+			// because the "waiting for details" list shows the amount against
+			// every pending receipt and sorting on it should not mean decoding
+			// a document per row.
+			`ALTER TABLE receipt_jobs ADD COLUMN parsed_confidence REAL NOT NULL DEFAULT 0`,
+			// The rest of the draft -- merchant, category, tax, tip and the line
+			// items -- as one JSON document. It is written once by the worker and
+			// read once by the form, never queried across, and modelling a
+			// throwaway draft as five more columns and a child table would leave
+			// rows to garbage-collect for no benefit.
+			`ALTER TABLE receipt_jobs ADD COLUMN parsed_json TEXT NOT NULL DEFAULT ''`,
+			// The raw OCR text, kept so a user can see what was actually read and
+			// so a parser bug is reproducible from the database alone.
+			`ALTER TABLE receipt_jobs ADD COLUMN ocr_text TEXT NOT NULL DEFAULT ''`,
 		),
 	}
 }
@@ -498,8 +520,6 @@ var canonicalSchema = []string{
 		CHECK ((kind IN ('fund_deposit','fund_withdrawal')) = (fund_id IS NOT NULL))
 	)`,
 
-	// The old schema had no indexes at all: every dashboard load was a full
-	// table scan per chart.
 	`CREATE INDEX idx_tx_user_date    ON transactions(user_id, occurred_on DESC)`,
 	`CREATE INDEX idx_tx_user_created ON transactions(user_id, created_at DESC, id DESC)`,
 	`CREATE INDEX idx_tx_user_kind    ON transactions(user_id, kind)`,
@@ -714,9 +734,9 @@ func legacyCreatedExpr(tx *sql.Tx, table string) (string, error) {
 		return "", err
 	}
 	alias := map[string]string{
-		"legacy_expense":            "le",
-		"legacy_fund_transactions":  "lft",
-		"legacy_income":             "li",
+		"legacy_expense":           "le",
+		"legacy_fund_transactions": "lft",
+		"legacy_income":            "li",
 	}[table]
 	if !ok || alias == "" {
 		return `'1970-01-01 00:00:00'`, nil

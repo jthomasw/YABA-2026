@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/jthomasw/YABA-2026/internal/insight"
 	"github.com/jthomasw/YABA-2026/internal/money"
+	"github.com/jthomasw/YABA-2026/internal/ocr"
 	"github.com/jthomasw/YABA-2026/internal/store"
 )
 
@@ -52,8 +54,7 @@ func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
 
 // handleAuth is the single entry point for both signing in and signing up.
 func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
@@ -96,11 +97,8 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rate limit on address and IP together. Keying on IP alone would let one
-	// attacker lock out a shared network; on the address alone, anyone could
-	// lock a known user out of their own account.
-	key := clientIP(r) + "|" + store.NormalizeEmail(email)
-	retryIn, err := s.store.RateRetryIn(r.Context(), key)
+	limit := newLoginLimit(r, email)
+	retryIn, err := s.retryIn(r.Context(), limit)
 	if err != nil {
 		s.serverError(w, r, err)
 		return
@@ -124,7 +122,7 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 			// back to an old confirm form. Either way, sign in instead.
 			log.Printf("auth: confirm step for an address that now exists")
 		}
-		s.attemptLogin(w, r, email, password, key)
+		s.attemptLogin(w, r, email, password, limit)
 		return
 	}
 
@@ -158,7 +156,7 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	userID, err := s.store.CreateUser(r.Context(), email, string(hash))
 	if errors.Is(err, store.ErrEmailTaken) {
 		// Lost a race with another signup for the same address.
-		s.attemptLogin(w, r, email, password, key)
+		s.attemptLogin(w, r, email, password, limit)
 		return
 	}
 	if err != nil {
@@ -171,12 +169,50 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	s.flashSuccess(w, r, "Welcome to YABA. Add some income to get started.")
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	s.redirectSuccess(w, r, "/dashboard", "Welcome to YABA. Add some income to get started.")
+}
+
+// loginLimit is the pair of counters guarding one password attempt.
+//
+// The account counter is keyed on address and IP together: on IP alone one
+// attacker could lock out a shared network, on the address alone anyone could
+// lock a known user out of their own account. But that key changes with every
+// address tried, so on its own it stops nobody from working through a list of
+// addresses at ten guesses each from a single machine. The ip counter is what
+// closes that, at a budget high enough (store.RateBurstTries) that ordinary
+// mistyping on a shared network never reaches it.
+type loginLimit struct {
+	account string
+	ip      string
+}
+
+func newLoginLimit(r *http.Request, email string) loginLimit {
+	ip := clientIP(r)
+	return loginLimit{
+		account: ip + "|" + store.NormalizeEmail(email),
+		ip:      "ip|" + ip,
+	}
+}
+
+// retryIn reports how long before another password may be tried, zero if now.
+func (s *Server) retryIn(ctx context.Context, l loginLimit) (time.Duration, error) {
+	wait, err := s.store.RateRetryIn(ctx, l.account)
+	if err != nil || wait > 0 {
+		return wait, err
+	}
+	return s.store.RateRetryInMax(ctx, l.ip, store.RateBurstTries)
+}
+
+// rateFail charges a failure to both counters. Only the account counter is
+// cleared on a successful sign-in: an attacker who owns one account on the box
+// would otherwise reset the spray counter at will, simply by logging in.
+func (s *Server) rateFail(ctx context.Context, l loginLimit) {
+	s.store.RateFail(ctx, l.account)
+	s.store.RateFail(ctx, l.ip)
 }
 
 // attemptLogin verifies a password for a known address.
-func (s *Server) attemptLogin(w http.ResponseWriter, r *http.Request, email, password, rateKey string) {
+func (s *Server) attemptLogin(w http.ResponseWriter, r *http.Request, email, password string, limit loginLimit) {
 	user, hash, err := s.store.CredentialsFor(r.Context(), email)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.serverError(w, r, err)
@@ -187,20 +223,20 @@ func (s *Server) attemptLogin(w http.ResponseWriter, r *http.Request, email, pas
 		// Compare against a dummy hash anyway, so an unknown address takes about as long as a
 		// known one.
 		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
-		s.store.RateFail(r.Context(), rateKey)
+		s.rateFail(r.Context(), limit)
 		s.renderLanding(w, r, http.StatusUnauthorized, landingView{
 			Email: email, Error: "That email and password do not match."})
 		return
 	}
 
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
-		s.store.RateFail(r.Context(), rateKey)
+		s.rateFail(r.Context(), limit)
 		s.renderLanding(w, r, http.StatusUnauthorized, landingView{
 			Email: email, Error: "That email and password do not match."})
 		return
 	}
 
-	s.store.RateReset(r.Context(), rateKey)
+	s.store.RateReset(r.Context(), limit.account)
 	if err := s.startSession(w, r, user.ID); err != nil {
 		s.serverError(w, r, err)
 		return
@@ -224,7 +260,16 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID int
 		log.Printf("auth: purged %d expired session(s)", n)
 	}
 
-	session, _ := s.sessions.New(r, sessionName)
+	// Get, not New. Get registers the session for this request, so a flash set
+	// later in the same handler lands on this session and is saved with the sid.
+	// With New it was a second, unregistered session: the flash re-saved the
+	// pre-login cookie and its Set-Cookie came last, so a browser kept a session
+	// with no sid and every new account bounced straight back to the login page.
+	// Every pre-login value is cleared, which is the rotation New provided.
+	session, _ := s.sessions.Get(r, sessionName)
+	for k := range session.Values {
+		delete(session.Values, k)
+	}
 	session.Values[sessionID] = sid
 	if tok, err := randomToken(32); err == nil {
 		session.Values[sessionCSRFToken] = tok
@@ -309,8 +354,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSessionRevoke(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 	target := r.PostFormValue("session_id")
@@ -318,8 +362,7 @@ func (s *Server) handleSessionRevoke(w http.ResponseWriter, r *http.Request) {
 	// Revoking the session you are using is just a logout, and saying so is
 	// kinder than silently ending the request with a redirect that fails auth.
 	if target == currentSession(r) {
-		s.flashError(w, r, "That is this device. Use Log out instead.")
-		http.Redirect(w, r, "/sessions", http.StatusSeeOther)
+		s.redirectError(w, r, "/sessions", "That is this device. Use Log out instead.")
 		return
 	}
 
@@ -623,14 +666,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
 	ctx := r.Context()
 
-	month := r.URL.Query().Get("month")
-	if month != "" {
-		if _, err := time.Parse(store.MonthLayout, month); err != nil {
-			// An unparseable month from a hand-edited URL falls back to all time
-			// rather than erroring the whole page.
-			month = ""
-		}
-	}
+	month := parseMonth(r.URL.Query().Get("month"))
 
 	tab := r.URL.Query().Get("tab")
 	if !validTabs[tab] {
@@ -657,97 +693,127 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		budgetMonth = v.ThisMonth
 	}
 
+	if err := s.loadDashboard(ctx, sc, month, budgetMonth, &v); err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+
+	v.Charts = buildDashboardCharts(v)
+	s.render(w, r, "dashboard.html", v)
+}
+
+// loadDashboard fills the view, one card at a time and in order: the emergency
+// fund's runway is measured against the buckets the expenses card reads, so it
+// cannot run before it. Straight-line calls rather than a list of loaders,
+// because that ordering is real and a slice would hide it.
+func (s *Server) loadDashboard(ctx context.Context, sc store.Scope, month, budgetMonth string, v *dashboardView) error {
 	var err error
 	if v.Months, err = s.store.Months(ctx, sc); err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
+	if err := s.loadCurrentFunds(ctx, sc, v); err != nil {
+		return err
+	}
+	if err := s.loadIncome(ctx, sc, month, v); err != nil {
+		return err
+	}
+	if err := s.loadExpenses(ctx, sc, month, budgetMonth, v); err != nil {
+		return err
+	}
+	if err := s.loadEmergencyFund(ctx, sc, v); err != nil {
+		return err
+	}
+	if err := s.loadSavingsGrid(ctx, sc, v); err != nil {
+		return err
+	}
+	v.PendingReceipts, err = s.store.PendingReceiptCount(ctx, sc)
+	return err
+}
 
-	// ── Card 1: Current Funds ──────────────────────────────────────────────
-	// Cash is a balance, not a flow, so it is all-time however the period filter
-	// is set. Scoping a balance to one month would simply be wrong.
+// loadCurrentFunds fills card 1. Cash is a balance, not a flow, so it is
+// all-time however the period filter is set: scoping a balance to one month
+// would simply be wrong.
+func (s *Server) loadCurrentFunds(ctx context.Context, sc store.Scope, v *dashboardView) error {
+	var err error
 	if v.Cash, err = s.store.Cash(ctx, sc); err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
 	if v.Balance, err = s.store.BalanceSeries(ctx, sc); err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
 	v.Trend = insight.FitTrend(v.Balance)
+	return nil
+}
 
-	// ── Card 3: Expected Monthly Income ────────────────────────────────────
+// loadIncome fills card 3, plus the actual totals for the selected period.
+func (s *Server) loadIncome(ctx context.Context, sc store.Scope, month string, v *dashboardView) error {
+	var err error
 	if v.Monthly, err = s.store.MonthlySeries(ctx, sc, 12); err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
 	v.IncomeRange = insight.EstimateMonthlyIncome(v.Monthly)
 	if v.IncomeBySource, err = s.store.Breakdown(ctx, sc, store.KindIncome, month); err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
 
-	// Actual totals for the selected period.
 	periodTotals, err := s.store.Totals(ctx, sc, month)
 	if err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
 	v.IncomeTotal, v.SpendTotal = periodTotals.Income, periodTotals.Expense
 
-	if v.Essential, v.NonEssent, err = s.store.EssentialSplit(ctx, sc, month); err != nil {
-		s.serverError(w, r, err)
-		return
-	}
+	v.Essential, v.NonEssent, err = s.store.EssentialSplit(ctx, sc, month)
+	return err
+}
 
-	// ── Card 4: Expected Monthly Expenses ──────────────────────────────────
+// loadExpenses fills card 4. Buckets is the most expensive read on the page and
+// is taken exactly once here: everything else that needs it -- the estimate, the
+// allocation summary, and the emergency fund's essential cost -- is handed the
+// slice rather than querying again.
+func (s *Server) loadExpenses(ctx context.Context, sc store.Scope, month, budgetMonth string, v *dashboardView) error {
+	var err error
 	if v.Buckets, err = s.store.Buckets(ctx, sc, budgetMonth); err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
 	v.ExpenseRange = insight.EstimateMonthlyExpenses(v.Buckets)
 	// CategoryBreakdown rather than Breakdown, so a split transaction reports
 	// each of its line items under its own category.
 	if v.SpendByCategory, err = s.store.CategoryBreakdown(ctx, sc, month); err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
-	if v.Allocation, err = s.store.AllocationsFor(ctx, sc, budgetMonth); err != nil {
-		s.serverError(w, r, err)
-		return
-	}
+	v.Allocation, err = s.store.AllocationsFor(ctx, sc, budgetMonth, v.Buckets)
+	return err
+}
 
-	// ── Card 2: Emergency Fund ─────────────────────────────────────────────
+// loadEmergencyFund fills card 2. Runs after loadExpenses, whose buckets decide
+// how much a month of essentials costs and therefore how long the fund lasts.
+func (s *Server) loadEmergencyFund(ctx context.Context, sc store.Scope, v *dashboardView) error {
+	var err error
 	if v.EmergencyFund, err = s.store.EmergencyFund(ctx, sc); err != nil {
-		s.serverError(w, r, err)
-		return
-	}
-	essentialMonthly, err := s.store.EssentialMonthlyCost(ctx, sc, budgetMonth)
-	if err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
 	withdrawals, err := s.store.FundWithdrawalHistory(ctx, sc, v.EmergencyFund.ID)
 	if err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
-	v.Runway = insight.AssessEmergencyFund(v.EmergencyFund, withdrawals, essentialMonthly)
+	v.Runway = insight.AssessEmergencyFund(v.EmergencyFund, withdrawals, store.EssentialCost(v.Buckets))
+	return nil
+}
 
-	// Every fund, with its own projection, for the grid on this tab.
+// loadSavingsGrid fills every fund with its own projection, for the grid on the
+// savings tab.
+func (s *Server) loadSavingsGrid(ctx context.Context, sc store.Scope, v *dashboardView) error {
+	var err error
 	if v.Totals, err = s.store.Totals(ctx, sc, ""); err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
 	funds, err := s.store.ListFunds(ctx, sc)
 	if err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
 	rates, err := s.store.DepositRates(ctx, sc)
 	if err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
 	now := time.Now()
 	for _, f := range funds {
@@ -757,23 +823,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			Projection: insight.ProjectFund(f, insight.AverageMonthlyDeposit(rate.Total, rate.Months), now),
 		})
 	}
-
-	if v.PendingReceipts, err = s.store.PendingReceiptCount(ctx, sc); err != nil {
-		s.serverError(w, r, err)
-		return
-	}
-
-	v.Charts = buildDashboardCharts(v)
-	s.render(w, r, "dashboard.html", v)
+	return nil
 }
 
 func buildDashboardCharts(v dashboardView) chartData {
-	c := chartData{
-		BalanceLabels: []string{}, BalanceValues: []float64{}, TrendValues: []float64{},
-		MonthLabels: []string{}, MonthIncome: []float64{}, MonthExpense: []float64{},
-		IncomeLabels: []string{}, IncomeValues: []float64{},
-		SpendLabels: []string{}, SpendValues: []float64{},
-	}
+	c := chartData{BalanceLabels: []string{}, BalanceValues: []float64{}, TrendValues: []float64{}}
 	for _, p := range v.Balance {
 		c.BalanceLabels = append(c.BalanceLabels, p.Date)
 		c.BalanceValues = append(c.BalanceValues, p.Balance.Float())
@@ -781,33 +835,41 @@ func buildDashboardCharts(v dashboardView) chartData {
 	if v.Trend.OK {
 		c.TrendValues = v.Trend.Values
 	}
-	for _, m := range v.Monthly {
-		if t, err := time.Parse(store.MonthLayout, m.Month); err == nil {
-			c.MonthLabels = append(c.MonthLabels, t.Format("Jan 06"))
-		} else {
-			c.MonthLabels = append(c.MonthLabels, m.Month)
-		}
-		c.MonthIncome = append(c.MonthIncome, m.Income.Float())
-		c.MonthExpense = append(c.MonthExpense, m.Expense.Float())
-	}
+	c.MonthLabels, c.MonthIncome, c.MonthExpense = monthAxis(v.Monthly)
 	// Blank labels are grouped rather than drawn as an unnamed slice.
-	for _, lt := range v.IncomeBySource {
-		label := lt.Label
-		if label == "" {
-			label = "Unlabelled"
-		}
-		c.IncomeLabels = append(c.IncomeLabels, label)
-		c.IncomeValues = append(c.IncomeValues, lt.Total.Float())
-	}
-	for _, lt := range v.SpendByCategory {
-		label := lt.Label
-		if label == "" {
-			label = "Unlabelled"
-		}
-		c.SpendLabels = append(c.SpendLabels, label)
-		c.SpendValues = append(c.SpendValues, lt.Total.Float())
-	}
+	c.IncomeLabels, c.IncomeValues = labelAxis(v.IncomeBySource, "Unlabelled")
+	c.SpendLabels, c.SpendValues = labelAxis(v.SpendByCategory, "Unlabelled")
 	return c
+}
+
+// monthAxis and labelAxis turn a series into the parallel arrays Chart.js wants.
+// The slices are never nil: encoding/json renders nil as null, which makes
+// Chart.js throw, whereas an empty array draws nothing.
+func monthAxis(months []store.MonthPoint) (labels []string, income, expense []float64) {
+	labels, income, expense = []string{}, []float64{}, []float64{}
+	for _, m := range months {
+		label := m.Month
+		if t, err := time.Parse(store.MonthLayout, m.Month); err == nil {
+			label = t.Format("Jan 06")
+		}
+		labels = append(labels, label)
+		income = append(income, m.Income.Float())
+		expense = append(expense, m.Expense.Float())
+	}
+	return labels, income, expense
+}
+
+func labelAxis(totals []store.LabelTotal, blank string) (labels []string, values []float64) {
+	labels, values = []string{}, []float64{}
+	for _, lt := range totals {
+		label := lt.Label
+		if label == "" {
+			label = blank
+		}
+		labels = append(labels, label)
+		values = append(values, lt.Total.Float())
+	}
+	return labels, values
 }
 
 // fundCard pairs a savings fund with its projection.
@@ -866,12 +928,7 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
 	ctx := r.Context()
 
-	month := r.URL.Query().Get("month")
-	if month != "" {
-		if _, err := time.Parse(store.MonthLayout, month); err != nil {
-			month = ""
-		}
-	}
+	month := parseMonth(r.URL.Query().Get("month"))
 
 	v := reportsView{
 		view:       s.baseView(w, r, "Reports", "reports"),
@@ -929,7 +986,7 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	alloc, err := s.store.AllocationsFor(ctx, sc, store.Today()[:7])
+	alloc, err := s.store.AllocationsFor(ctx, sc, store.Today()[:7], buckets)
 	if err != nil {
 		s.serverError(w, r, err)
 		return
@@ -939,17 +996,12 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	essential, err := s.store.EssentialMonthlyCost(ctx, sc, store.Today()[:7])
-	if err != nil {
-		s.serverError(w, r, err)
-		return
-	}
 	wd, err := s.store.FundWithdrawalHistory(ctx, sc, ef.ID)
 	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
-	runway := insight.AssessEmergencyFund(ef, wd, essential)
+	runway := insight.AssessEmergencyFund(ef, wd, store.EssentialCost(buckets))
 
 	v.Observations = insight.Observations(v.Totals, v.Essential, v.NonEssent, v.Budgets, v.Monthly)
 	v.Observations = append(v.Observations, bucketObservations(alloc, buckets, runway)...)
@@ -959,29 +1011,10 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request) {
 }
 
 func buildReportCharts(v reportsView) reportCharts {
-	c := reportCharts{
-		IncomeLabels: []string{}, IncomeValues: []float64{},
-		SpendLabels: []string{}, SpendValues: []float64{},
-		MonthLabels: []string{}, MonthIncome: []float64{}, MonthExpense: []float64{},
-		EssentialLabels: []string{}, EssentialValues: []float64{},
-	}
-	for _, lt := range v.IncomeBySource {
-		c.IncomeLabels = append(c.IncomeLabels, lt.Label)
-		c.IncomeValues = append(c.IncomeValues, lt.Total.Float())
-	}
-	for _, lt := range v.SpendByCategory {
-		c.SpendLabels = append(c.SpendLabels, lt.Label)
-		c.SpendValues = append(c.SpendValues, lt.Total.Float())
-	}
-	for _, m := range v.Monthly {
-		if t, err := time.Parse(store.MonthLayout, m.Month); err == nil {
-			c.MonthLabels = append(c.MonthLabels, t.Format("Jan 06"))
-		} else {
-			c.MonthLabels = append(c.MonthLabels, m.Month)
-		}
-		c.MonthIncome = append(c.MonthIncome, m.Income.Float())
-		c.MonthExpense = append(c.MonthExpense, m.Expense.Float())
-	}
+	c := reportCharts{EssentialLabels: []string{}, EssentialValues: []float64{}}
+	c.IncomeLabels, c.IncomeValues = labelAxis(v.IncomeBySource, "")
+	c.SpendLabels, c.SpendValues = labelAxis(v.SpendByCategory, "")
+	c.MonthLabels, c.MonthIncome, c.MonthExpense = monthAxis(v.Monthly)
 	if v.Essential > 0 || v.NonEssent > 0 {
 		c.EssentialLabels = append(c.EssentialLabels, "Essential", "Non-essential")
 		c.EssentialValues = append(c.EssentialValues, v.Essential.Float(), v.NonEssent.Float())
@@ -1073,8 +1106,6 @@ type transactionsView struct {
 	Transactions []store.Transaction
 	Filter       store.Filter
 
-	// Pagination. The old page had none: it selected every row the user had
-	// ever created and rendered all of them.
 	Page       int
 	TotalPages int
 	Total      int
@@ -1098,33 +1129,14 @@ func (s *Server) handleTransactions(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
 	q := r.URL.Query()
 
-	kind := store.Kind(q.Get("type"))
-	if kind != "" && !kind.Valid() {
-		// An unknown value in the query string shows everything rather than
-		// erroring; the old code fell through its switch to the combined view,
-		// so this keeps the same forgiving behaviour deliberately.
-		kind = ""
-	}
-
-	month := q.Get("month")
-	if month != "" {
-		if _, err := time.Parse(store.MonthLayout, month); err != nil {
-			month = ""
-		}
-	}
-
 	page, _ := strconv.Atoi(q.Get("page"))
 	if page < 1 {
 		page = 1
 	}
 
-	f := store.Filter{
-		Kind:   kind,
-		Month:  month,
-		Search: q.Get("q"),
-		Limit:  store.DefaultPageSize,
-		Offset: (page - 1) * store.DefaultPageSize,
-	}
+	f := listFilter(q)
+	f.Limit = store.DefaultPageSize
+	f.Offset = (page - 1) * store.DefaultPageSize
 
 	txs, total, err := s.store.List(r.Context(), sc, f)
 	if err != nil {
@@ -1176,7 +1188,7 @@ func (s *Server) handleTransactions(w http.ResponseWriter, r *http.Request) {
 		{string(store.KindFundWithdrawal), "From savings"},
 	} {
 		v.Kinds = append(v.Kinds, kindOption{
-			Value: k.v, Label: k.l, Selected: k.v == string(kind),
+			Value: k.v, Label: k.l, Selected: k.v == string(f.Kind),
 		})
 	}
 
@@ -1206,6 +1218,41 @@ func urlEscape(s string) string {
 
 // ── create and edit ───────────────────────────────────────────────────────────
 
+// formFields is the state of an income or expense form: the wireframe's five Ws
+// (What, When, Who, Where, Why) plus amount, essential flag and recurring
+// bucket. Shared by the dedicated entry pages and the add/edit form, and echoed
+// back after a validation failure so nothing typed is lost.
+type formFields struct {
+	Label      string // What?
+	Amount     string
+	OccurredOn string // When?
+	Essential  bool
+	Payee      string // Who?
+	Place      string // Where?
+	Note       string // Why?
+	BucketID   int64
+}
+
+// echoForm reads the submitted values back for re-rendering.
+func echoForm(r *http.Request, in transactionInput) formFields {
+	f := formFields{
+		Label:      r.PostFormValue("label"),
+		Amount:     r.PostFormValue("amount"),
+		OccurredOn: r.PostFormValue("date"),
+		Essential:  r.PostFormValue("essential") != "no",
+		Payee:      r.PostFormValue("payee"),
+		Place:      r.PostFormValue("place"),
+		Note:       r.PostFormValue("note"),
+	}
+	if in.bucketID != nil {
+		f.BucketID = *in.bucketID
+	}
+	if f.OccurredOn == "" {
+		f.OccurredOn = store.Today()
+	}
+	return f
+}
+
 // transactionFormView backs the shared add/edit form.
 type transactionFormView struct {
 	view
@@ -1215,19 +1262,9 @@ type transactionFormView struct {
 	ID      int64
 	Action  string
 
-	Kind       store.Kind
-	Label      string // What?
-	Amount     string
-	OccurredOn string // When?
-	Essential  bool
-
-	// The rest of the wireframe's five Ws.
-	Payee string // Who?
-	Place string // Where?
-	Note  string // Why?
-
-	BucketID int64
-	Buckets  []store.Bucket
+	Kind store.Kind
+	formFields
+	Buckets []store.Bucket
 
 	// Items backs the optional line-item breakdown.
 	Items []store.LineItem
@@ -1246,6 +1283,11 @@ type transactionFormView struct {
 	ReceiptName    string
 	ReceiptMissing bool
 
+	// Draft is what OCR read off that receipt, or nil. The template uses it to
+	// say where the prefilled figures came from and how sure the reading was, so
+	// the user knows which fields to check rather than trusting the form.
+	Draft *store.ReceiptDraft
+
 	// Version is the row version this form was built from, submitted back as a
 	// hidden field so a save can be refused if the row moved on meanwhile.
 	Version int64
@@ -1262,8 +1304,7 @@ func (s *Server) handleTransactionForm(w http.ResponseWriter, r *http.Request) {
 	v := transactionFormView{
 		view:       s.baseView(w, r, "Add entry", "transactions"),
 		Kind:       kind,
-		OccurredOn: store.Today(),
-		Essential:  true,
+		formFields: formFields{OccurredOn: store.Today(), Essential: true},
 		Action:     "/transactions/new",
 	}
 	// Only the create path needs one. An edit cannot duplicate anything: it
@@ -1297,6 +1338,34 @@ func (s *Server) handleTransactionForm(w http.ResponseWriter, r *http.Request) {
 			if v.Label == "" {
 				v.Label = receiptLabel(job.OriginalName)
 			}
+			// Everything OCR read. Each field is only filled in when it was
+			// actually recovered, so a partial reading prefills what it found and
+			// leaves the rest blank rather than inventing a plausible default.
+			if d := job.Draft; d != nil {
+				v.Draft = d
+				if d.Total > 0 {
+					v.Amount = d.Total.Input()
+				}
+				if d.Date != "" {
+					v.OccurredOn = d.Date
+				}
+				if d.Merchant != "" {
+					v.Payee = d.Merchant
+				}
+				if d.Category != "" {
+					// The guessed category beats the filename guess above: it
+					// came from the receipt's contents rather than from whatever
+					// the camera happened to name the file.
+					v.Label = d.Category
+				}
+				for i, it := range d.Items {
+					v.Items = append(v.Items, store.LineItem{
+						Description: it.Description,
+						Amount:      it.Amount,
+						Position:    i,
+					})
+				}
+			}
 		}
 	}
 
@@ -1321,8 +1390,7 @@ func (s *Server) handleTransactionForm(w http.ResponseWriter, r *http.Request) {
 		if t.Kind.IsTransfer() {
 			// Transfers are not editable here: changing one would desynchronise
 			// the fund balance it contributes to.
-			s.flashError(w, r, "Savings transfers can't be edited. Withdraw from the fund instead.")
-			http.Redirect(w, r, "/transactions", http.StatusSeeOther)
+			s.redirectError(w, r, "/transactions", "Savings transfers can't be edited. Withdraw from the fund instead.")
 			return
 		}
 
@@ -1493,8 +1561,7 @@ func parseLineItems(r *http.Request, total money.Cents) ([]store.NewLineItem, st
 func (s *Server) handleTransactionCreate(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 	sc := scopeOf(r)
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
@@ -1505,8 +1572,7 @@ func (s *Server) handleTransactionCreate(w http.ResponseWriter, r *http.Request)
 	}
 
 	if s.duplicateSubmit(r, user.ID) {
-		s.flashSuccess(w, r, "That entry was already saved.")
-		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		s.redirectSuccess(w, r, "/dashboard", "That entry was already saved.")
 		return
 	}
 
@@ -1555,39 +1621,88 @@ func (s *Server) handleTransactionCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	ws := s.finishSave(r, sc, txID, in, in.occurredOn)
 	if attachJobID != 0 {
 		if err := s.store.AttachReceipt(r.Context(), sc, attachJobID, txID); err != nil {
 			// The expense is saved either way, so this reports rather than fails.
-			s.flashError(w, r, "Saved, but the receipt could not be attached to it.")
+			ws.add("The receipt could not be attached to it.")
 		}
 	}
+	s.redirectSaved(w, r, "/dashboard", ws,
+		in.kind.Label()+" of "+in.amount.Display()+" saved.")
+}
 
+// warnings are the things that went wrong after the row was already written.
+//
+// They are collected rather than flashed as they happen because there is one
+// flash slot per redirect: a warning set here would be overwritten by the
+// success message the handler sets a moment later, and the user would be told
+// everything worked while the line items, the receipt or the month's funding
+// were quietly missing.
+type warnings []string
+
+func (ws *warnings) add(format string, a ...any) {
+	*ws = append(*ws, fmt.Sprintf(format, a...))
+}
+
+// fold combines the warnings with the message the handler wanted to show. A
+// partial failure is reported as an error, because it is one.
+func (ws warnings) fold(success string) (kind, text string) {
+	if len(ws) == 0 {
+		return "success", success
+	}
+	return "error", success + " " + strings.Join(ws, " ")
+}
+
+// redirectSaved sends the user on with a single message covering both what was
+// saved and anything that did not survive the save.
+func (s *Server) redirectSaved(w http.ResponseWriter, r *http.Request, to string, ws warnings, success string) {
+	kind, text := ws.fold(success)
+	s.setFlash(w, r, kind, text)
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+// finishSave stores the optional line-item breakdown and re-pours the funding
+// waterfall: income funds the priority list, and a bucket-attributed expense
+// changes what a variable bucket costs. The transaction is already saved, so a
+// failure here is reported alongside the success rather than instead of it.
+//
+// Every month named is recalculated. An edit that moves an entry passes two --
+// the month it left and the month it joined -- because the waterfall is stored
+// per month and re-pouring only the new one leaves the old holding allocations
+// against money that is no longer in it.
+func (s *Server) finishSave(r *http.Request, sc store.Scope, txID int64, in transactionInput, months ...string) warnings {
+	var ws warnings
 	if len(in.items) > 0 {
 		if err := s.store.SetLineItems(r.Context(), sc, txID, in.items); err != nil {
-			// The transaction saved; only the breakdown failed.
-			s.flashError(w, r, "Saved, but the line items could not be stored: "+err.Error())
+			ws.add("The line items could not be stored: %s", err)
 		}
 	}
+	ws.addReallocations(r, s.store, sc, months...)
+	return ws
+}
 
-	// Income funds the priority list, and a bucket-attributed expense changes
-	// what a variable bucket costs. Either way the waterfall needs re-pouring.
-	if err := s.store.ReallocateMonthOf(r.Context(), sc, in.occurredOn); err != nil {
-		s.flashError(w, r, "Saved, but the expense funding could not be recalculated.")
+// addReallocations re-pours each distinct month named, ignoring blanks.
+func (ws *warnings) addReallocations(r *http.Request, st *store.Store, sc store.Scope, months ...string) {
+	done := map[string]bool{}
+	for _, m := range months {
+		if len(m) < 7 || done[m[:7]] {
+			continue
+		}
+		done[m[:7]] = true
+		if err := st.ReallocateMonthOf(r.Context(), sc, m); err != nil {
+			ws.add("The expense funding for %s could not be recalculated.", m[:7])
+		}
 	}
-
-	s.flashSuccess(w, r, fmt.Sprintf("%s of %s saved.", in.kind.Label(), in.amount.Display()))
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
 func (s *Server) handleTransactionUpdate(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
+	id, ok := s.pathID(w, r)
+	if !ok {
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
@@ -1597,7 +1712,16 @@ func (s *Server) handleTransactionUpdate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	err = s.store.Update(r.Context(), sc, id, in.toNewTransaction())
+	// The month the entry is leaving, read before the write. An edit can move an
+	// entry between months and the funding waterfall is stored per month, so
+	// both have to be re-poured -- handleTransactionDelete reads the date first
+	// for the same reason.
+	wasOn := ""
+	if t, e := s.store.ByID(r.Context(), sc, id); e == nil {
+		wasOn = t.OccurredOn
+	}
+
+	err := s.store.Update(r.Context(), sc, id, in.toNewTransaction())
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -1614,22 +1738,19 @@ func (s *Server) handleTransactionUpdate(w http.ResponseWriter, r *http.Request)
 
 	// Passing an empty slice clears the breakdown, which is how a user removes
 	// line items: they blank the rows and save.
+	var ws warnings
 	if err := s.store.SetLineItems(r.Context(), sc, id, in.items); err != nil {
-		s.flashError(w, r, "Updated, but the line items could not be stored: "+err.Error())
+		ws.add("The line items could not be stored: %s", err)
 	}
-	if err := s.store.ReallocateMonthOf(r.Context(), sc, in.occurredOn); err != nil {
-		s.flashError(w, r, "Updated, but the expense funding could not be recalculated.")
-	}
+	ws.addReallocations(r, s.store, sc, wasOn, in.occurredOn)
 
-	s.flashSuccess(w, r, "Entry updated.")
-	http.Redirect(w, r, "/transactions", http.StatusSeeOther)
+	s.redirectSaved(w, r, "/transactions", ws, "Entry updated.")
 }
 
 func (s *Server) handleTransactionDelete(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
+	id, ok := s.pathID(w, r)
+	if !ok {
 		return
 	}
 
@@ -1639,7 +1760,7 @@ func (s *Server) handleTransactionDelete(w http.ResponseWriter, r *http.Request)
 		month = t.OccurredOn
 	}
 
-	err = s.store.Delete(r.Context(), sc, id)
+	err := s.store.Delete(r.Context(), sc, id)
 	if errors.Is(err, store.ErrNotFound) {
 		// Covers both no such row and belongs to another household.
 		s.flashError(w, r, "That entry no longer exists.")
@@ -1686,19 +1807,10 @@ func (s *Server) rerenderTransactionFormAt(w http.ResponseWriter, r *http.Reques
 		Editing:    editing,
 		ID:         id,
 		Kind:       kind,
-		Label:      r.PostFormValue("label"),
-		Amount:     r.PostFormValue("amount"),
-		OccurredOn: r.PostFormValue("date"),
-		Essential:  r.PostFormValue("essential") != "no",
-		Payee:      r.PostFormValue("payee"),
-		Place:      r.PostFormValue("place"),
-		Note:       r.PostFormValue("note"),
+		formFields: echoForm(r, in),
 		Error:      msg,
 		Action:     "/transactions/new",
 		Version:    version,
-	}
-	if in.bucketID != nil {
-		v.BucketID = *in.bucketID
 	}
 	// Echo the submitted line items back so a validation failure does not throw
 	// away rows the user typed.
@@ -1708,16 +1820,27 @@ func (s *Server) rerenderTransactionFormAt(w http.ResponseWriter, r *http.Reques
 			Amount: it.Amount, Position: i,
 		})
 	}
-	// The token is not consumed until validation passes, so the same one is
-	// still good and goes back into the re-rendered form.
-	v.FormToken = strings.TrimSpace(r.PostFormValue("form_token"))
+	// A fresh token, not the one that was posted. Form validation does fail
+	// before the token is spent, but three later refusals do not: an unusable
+	// receipt, a receipt id already attached to something else, and a bucket
+	// deleted since the page was opened. Echoing the spent token back meant the
+	// user's corrected resubmit was answered with "That entry was already
+	// saved." while recording nothing -- losing the entry and denying it in the
+	// same breath. A new token per rendered page is the invariant that stops a
+	// double submit anyway; reusing one was never what made it work.
+	if !editing {
+		v.FormToken = s.issueFormToken(r, "transaction")
+	}
 
-	// Keep the pending receipt across a validation failure.
+	// Keep the pending receipt across a validation failure, along with what OCR
+	// read from it: losing the image and the reading because a date was mistyped
+	// would send the user back to find the receipt again.
 	if raw := r.PostFormValue("receipt_job"); raw != "" {
 		if jobID, err := strconv.ParseInt(raw, 10, 64); err == nil {
 			if job, err := s.store.UnattachedReceipt(r.Context(), sc, jobID); err == nil {
 				v.ReceiptJobID = job.ID
 				v.ReceiptName = job.OriginalName
+				v.Draft = job.Draft
 			}
 		}
 	}
@@ -1725,9 +1848,6 @@ func (s *Server) rerenderTransactionFormAt(w http.ResponseWriter, r *http.Reques
 	if editing {
 		v.Action = fmt.Sprintf("/transactions/%d/edit", id)
 		v.Title = "Edit entry"
-	}
-	if v.OccurredOn == "" {
-		v.OccurredOn = store.Today()
 	}
 	if cats, err := s.store.SpendCategories(r.Context(), sc); err == nil {
 		v.Categories = cats
@@ -1745,23 +1865,9 @@ func (s *Server) rerenderTransactionFormAt(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
 	q := r.URL.Query()
+	month := parseMonth(q.Get("month"))
 
-	kind := store.Kind(q.Get("type"))
-	if kind != "" && !kind.Valid() {
-		kind = ""
-	}
-	month := q.Get("month")
-	if month != "" {
-		if _, err := time.Parse(store.MonthLayout, month); err != nil {
-			month = ""
-		}
-	}
-
-	txs, err := s.store.All(r.Context(), sc, store.Filter{
-		Kind:   kind,
-		Month:  month,
-		Search: q.Get("q"),
-	})
+	txs, err := s.store.All(r.Context(), sc, listFilter(q))
 	if err != nil {
 		s.serverError(w, r, err)
 		return
@@ -1854,16 +1960,8 @@ type entryView struct {
 	// Kind is what this page adds. The template does not offer a choice.
 	Kind store.Kind
 
-	// Form state, echoed back after a validation failure so nothing typed is lost.
-	Label      string
-	Amount     string
-	OccurredOn string
-	Payee      string
-	Place      string
-	Note       string
-	Essential  bool
-	BucketID   int64
-	Error      string
+	formFields
+	Error string
 
 	// Step is "choose" or "manual" on the expense page.
 	Step string
@@ -1915,8 +2013,7 @@ func (s *Server) buildEntryView(w http.ResponseWriter, r *http.Request, kind sto
 	v := entryView{
 		view:       s.baseView(w, r, title, nav),
 		Kind:       kind,
-		OccurredOn: store.Today(),
-		Essential:  true,
+		formFields: formFields{OccurredOn: store.Today(), Essential: true},
 		FormToken:  s.issueFormToken(r, "entry"),
 	}
 
@@ -1955,8 +2052,7 @@ func (s *Server) createEntry(w http.ResponseWriter, r *http.Request, kind store.
 	user := mustUser(r)
 	sc := scopeOf(r)
 
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
@@ -1968,8 +2064,7 @@ func (s *Server) createEntry(w http.ResponseWriter, r *http.Request, kind store.
 
 	// Validated, so this is a real submission -- spend the token.
 	if s.duplicateSubmit(r, user.ID) {
-		s.flashSuccess(w, r, "That entry was already saved.")
-		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		s.redirectSuccess(w, r, "/dashboard", "That entry was already saved.")
 		return
 	}
 
@@ -1995,31 +2090,14 @@ func (s *Server) createEntry(w http.ResponseWriter, r *http.Request, kind store.
 		return
 	}
 
-	if len(in.items) > 0 {
-		if err := s.store.SetLineItems(r.Context(), sc, txID, in.items); err != nil {
-			s.flashError(w, r, "Saved, but the line items could not be stored: "+err.Error())
-		}
-	}
+	ws := s.finishSave(r, sc, txID, in, in.occurredOn)
 
-	// Income funds the priority list, and a bucket-attributed expense changes what a
-	// variable bucket costs.
-	if err := s.store.ReallocateMonthOf(r.Context(), sc, in.occurredOn); err != nil {
-		s.flashError(w, r, "Saved, but the expense funding could not be recalculated.")
-	}
-
-	verb := "Income"
-	if kind == store.KindExpense {
-		verb = "Expense"
-	}
-	s.flashSuccess(w, r, verb+" of "+in.amount.Display()+" saved.")
-
-	// Back to the same page, so the chart and the recent list visibly update and
-	// another entry can be added without navigating.
+	// Back to the same page, so another entry can be added without navigating.
+	back := "/expense?step=manual"
 	if kind == store.KindIncome {
-		http.Redirect(w, r, "/income", http.StatusSeeOther)
-		return
+		back = "/income"
 	}
-	http.Redirect(w, r, "/expense?step=manual", http.StatusSeeOther)
+	s.redirectSaved(w, r, back, ws, kind.Label()+" of "+in.amount.Display()+" saved.")
 }
 
 // rerenderEntry redisplays the page with an error and the submitted values.
@@ -2035,19 +2113,7 @@ func (s *Server) rerenderEntry(w http.ResponseWriter, r *http.Request, kind stor
 	}
 
 	v.Error = msg
-	v.Label = r.PostFormValue("label")
-	v.Amount = r.PostFormValue("amount")
-	v.OccurredOn = r.PostFormValue("date")
-	v.Payee = r.PostFormValue("payee")
-	v.Place = r.PostFormValue("place")
-	v.Note = r.PostFormValue("note")
-	v.Essential = r.PostFormValue("essential") != "no"
-	if in.bucketID != nil {
-		v.BucketID = *in.bucketID
-	}
-	if v.OccurredOn == "" {
-		v.OccurredOn = store.Today()
-	}
+	v.formFields = echoForm(r, in)
 	if kind == store.KindExpense {
 		v.Step = "manual"
 	}
@@ -2064,40 +2130,34 @@ const savingsAnchor = "/dashboard?tab=emergency"
 
 func (s *Server) handleFundCreate(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
 	name := strings.TrimSpace(r.PostFormValue("name"))
 	if name == "" {
-		s.flashError(w, r, "Give the fund a name.")
-		http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+		s.redirectError(w, r, savingsAnchor, "Give the fund a name.")
 		return
 	}
 
 	// A goal is optional, so an empty field is zero rather than an error.
 	goal, msg := optionalAmount(r.PostFormValue("goal"), "goal")
 	if msg != "" {
-		s.flashError(w, r, msg)
-		http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+		s.redirectError(w, r, savingsAnchor, msg)
 		return
 	}
 	months, msg := optionalMonths(r.PostFormValue("target_months"))
 	if msg != "" {
-		s.flashError(w, r, msg)
-		http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+		s.redirectError(w, r, savingsAnchor, msg)
 		return
 	}
 
 	if _, err := s.store.CreateFund(r.Context(), sc, name, goal, months); err != nil {
-		s.flashError(w, r, err.Error())
-		http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+		s.redirectError(w, r, savingsAnchor, err.Error())
 		return
 	}
 
-	s.flashSuccess(w, r, fmt.Sprintf("Fund %q created.", name))
-	http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+	s.redirectSuccess(w, r, savingsAnchor, fmt.Sprintf("Fund %q created.", name))
 }
 
 func (s *Server) handleFundGoal(w http.ResponseWriter, r *http.Request) {
@@ -2106,21 +2166,18 @@ func (s *Server) handleFundGoal(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
 	goal, msg := optionalAmount(r.PostFormValue("goal"), "goal")
 	if msg != "" {
-		s.flashError(w, r, msg)
-		http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+		s.redirectError(w, r, savingsAnchor, msg)
 		return
 	}
 	months, msg := optionalMonths(r.PostFormValue("target_months"))
 	if msg != "" {
-		s.flashError(w, r, msg)
-		http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+		s.redirectError(w, r, savingsAnchor, msg)
 		return
 	}
 
@@ -2128,8 +2185,7 @@ func (s *Server) handleFundGoal(w http.ResponseWriter, r *http.Request) {
 	if name := strings.TrimSpace(r.PostFormValue("name")); name != "" {
 		if err := s.store.RenameFund(r.Context(), sc, fundID, name); err != nil &&
 			!errors.Is(err, store.ErrNotFound) {
-			s.flashError(w, r, err.Error())
-			http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+			s.redirectError(w, r, savingsAnchor, err.Error())
 			return
 		}
 	}
@@ -2146,81 +2202,61 @@ func (s *Server) handleFundGoal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFundDeposit(w http.ResponseWriter, r *http.Request) {
-	sc := scopeOf(r)
-	fundID, ok := s.pathID(w, r)
-	if !ok {
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
-		return
-	}
-
-	amount, err := money.ParsePositive(r.PostFormValue("amount"))
-	if err != nil {
-		s.flashError(w, r, "Enter an amount greater than zero to move into the fund.")
-		http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
-		return
-	}
-	date, err := store.ParseDate(strings.TrimSpace(r.PostFormValue("date")))
-	if err != nil {
-		s.flashError(w, r, "Enter a date in YYYY-MM-DD form.")
-		http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
-		return
-	}
-
-	// Note what is NOT read from this form: the fund's balance.
-	err = s.store.Deposit(r.Context(), sc, fundID, amount, date)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		s.flashError(w, r, "That fund no longer exists.")
-	case errors.Is(err, store.ErrInsufficientCash):
-		// The store's message already names the available balance.
-		s.flashError(w, r, "Not enough available cash. "+trimSentinel(err, store.ErrInsufficientCash))
-	case err != nil:
-		s.serverError(w, r, err)
-		return
-	default:
-		s.flashSuccess(w, r, fmt.Sprintf("%s moved into savings.", amount.Display()))
-	}
-	http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+	s.moveFund(w, r, true)
 }
 
 func (s *Server) handleFundWithdraw(w http.ResponseWriter, r *http.Request) {
+	s.moveFund(w, r, false)
+}
+
+// moveFund is the shared body of deposit and withdrawal. Note what is NOT read
+// from the form: the fund's balance. The store re-derives it inside the
+// transaction, which is what makes an over-withdrawal impossible.
+func (s *Server) moveFund(w http.ResponseWriter, r *http.Request, deposit bool) {
 	sc := scopeOf(r)
 	fundID, ok := s.pathID(w, r)
-	if !ok {
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !ok || !s.parseForm(w, r) {
 		return
 	}
 
+	direction := "to take out of the fund"
+	if deposit {
+		direction = "to move into the fund"
+	}
 	amount, err := money.ParsePositive(r.PostFormValue("amount"))
 	if err != nil {
-		s.flashError(w, r, "Enter an amount greater than zero to take out of the fund.")
-		http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+		s.redirectError(w, r, savingsAnchor, "Enter an amount greater than zero "+direction+".")
 		return
 	}
 	date, err := store.ParseDate(strings.TrimSpace(r.PostFormValue("date")))
 	if err != nil {
-		s.flashError(w, r, "Enter a date in YYYY-MM-DD form.")
-		http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+		s.redirectError(w, r, savingsAnchor, "Enter a date in YYYY-MM-DD form.")
 		return
 	}
 
-	err = s.store.Withdraw(r.Context(), sc, fundID, amount, date)
+	var short error
+	var shortText, done string
+	if deposit {
+		err = s.store.Deposit(r.Context(), sc, fundID, amount, date)
+		short, shortText = store.ErrInsufficientCash, "Not enough available cash. "
+		done = fmt.Sprintf("%s moved into savings.", amount.Display())
+	} else {
+		err = s.store.Withdraw(r.Context(), sc, fundID, amount, date)
+		short, shortText = store.ErrInsufficientFund, "Not enough in that fund. "
+		done = fmt.Sprintf("%s returned to available cash.", amount.Display())
+	}
+
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		s.flashError(w, r, "That fund no longer exists.")
-	case errors.Is(err, store.ErrInsufficientFund):
-		s.flashError(w, r, "Not enough in that fund. "+trimSentinel(err, store.ErrInsufficientFund))
+	case errors.Is(err, short):
+		// The store's message already names the available balance.
+		s.flashError(w, r, shortText+trimSentinel(err, short))
 	case err != nil:
 		s.serverError(w, r, err)
 		return
 	default:
-		s.flashSuccess(w, r, fmt.Sprintf("%s returned to available cash.", amount.Display()))
+		s.flashSuccess(w, r, done)
 	}
 	http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
 }
@@ -2252,22 +2288,19 @@ func (s *Server) handleFundClose(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBudgetSet(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
 	category := strings.TrimSpace(r.PostFormValue("category"))
 	if category == "" {
-		s.flashError(w, r, "Choose a category to budget.")
-		http.Redirect(w, r, "/dashboard#budgets", http.StatusSeeOther)
+		s.redirectError(w, r, "/dashboard#budgets", "Choose a category to budget.")
 		return
 	}
 
 	limit, err := money.ParsePositive(r.PostFormValue("limit"))
 	if err != nil {
-		s.flashError(w, r, "Enter a monthly limit greater than zero.")
-		http.Redirect(w, r, "/dashboard#budgets", http.StatusSeeOther)
+		s.redirectError(w, r, "/dashboard#budgets", "Enter a monthly limit greater than zero.")
 		return
 	}
 
@@ -2300,12 +2333,68 @@ func (s *Server) handleBudgetDelete(w http.ResponseWriter, r *http.Request) {
 
 // ── shared helpers ────────────────────────────────────────────────────────────
 
+// parseForm reads the body, answering 400 if it cannot be read.
+func (s *Server) parseForm(w http.ResponseWriter, r *http.Request) bool {
+	if err := r.ParseForm(); err != nil {
+		s.badRequest(w, "Could not read that form.")
+		return false
+	}
+	return true
+}
+
+// redirectError flashes a failure and sends the user back to the page the
+// action lives on. redirectSuccess is the same for a success.
+func (s *Server) redirectError(w http.ResponseWriter, r *http.Request, to, msg string) {
+	s.flashError(w, r, msg)
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+func (s *Server) redirectSuccess(w http.ResponseWriter, r *http.Request, to, msg string) {
+	s.flashSuccess(w, r, msg)
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+// parseMonth validates a ?month= value. Anything unparseable means all time
+// rather than an error, so a hand-edited URL degrades instead of failing.
+func parseMonth(raw string) string {
+	if _, err := time.Parse(store.MonthLayout, raw); err != nil {
+		return ""
+	}
+	return raw
+}
+
+// listFilter reads the type, month and search filters shared by the
+// transaction list and its CSV export. An unknown type shows everything rather
+// than erroring, deliberately.
+func listFilter(q url.Values) store.Filter {
+	kind := store.Kind(q.Get("type"))
+	if !kind.Valid() {
+		kind = ""
+	}
+	return store.Filter{
+		Kind:   kind,
+		Month:  parseMonth(q.Get("month")),
+		Search: q.Get("q"),
+	}
+}
+
 // pathID parses the {id} path segment, writing a 404 and returning false when
 // it is not a number.
 func (s *Server) pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		http.NotFound(w, r)
+		return 0, false
+	}
+	return id, true
+}
+
+// pathIDOrBadRequest is pathID for the household routes, which answer 400 rather
+// than 404 to a malformed id and say what kind of id was expected.
+func (s *Server) pathIDOrBadRequest(w http.ResponseWriter, r *http.Request, what string) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		s.badRequest(w, "That is not "+what+".")
 		return 0, false
 	}
 	return id, true
@@ -2393,29 +2482,25 @@ func parseBucketForm(r *http.Request) (store.NewBucket, string) {
 
 func (s *Server) handleBucketCreate(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
 	n, msg := parseBucketForm(r)
 	if msg != "" {
-		s.flashError(w, r, msg)
-		http.Redirect(w, r, expensesTab, http.StatusSeeOther)
+		s.redirectError(w, r, expensesTab, msg)
 		return
 	}
 
 	if _, err := s.store.CreateBucket(r.Context(), sc, n); err != nil {
-		s.flashError(w, r, err.Error())
-		http.Redirect(w, r, expensesTab, http.StatusSeeOther)
+		s.redirectError(w, r, expensesTab, err.Error())
 		return
 	}
 
 	// A new expense changes what the month requires, so the waterfall is re-poured.
 	s.reallocateNow(w, r)
 
-	s.flashSuccess(w, r, fmt.Sprintf("%q added to your recurring expenses.", n.Name))
-	http.Redirect(w, r, expensesTab, http.StatusSeeOther)
+	s.redirectSuccess(w, r, expensesTab, fmt.Sprintf("%q added to your recurring expenses.", n.Name))
 }
 
 func (s *Server) handleBucketUpdate(w http.ResponseWriter, r *http.Request) {
@@ -2424,15 +2509,13 @@ func (s *Server) handleBucketUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
 	n, msg := parseBucketForm(r)
 	if msg != "" {
-		s.flashError(w, r, msg)
-		http.Redirect(w, r, expensesTab, http.StatusSeeOther)
+		s.redirectError(w, r, expensesTab, msg)
 		return
 	}
 
@@ -2509,8 +2592,7 @@ func (s *Server) handleReallocate(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	s.flashSuccess(w, r, "Income re-allocated down the priority list.")
-	http.Redirect(w, r, expensesTab, http.StatusSeeOther)
+	s.redirectSuccess(w, r, expensesTab, "Income re-allocated down the priority list.")
 }
 
 // reallocateNow re-pours the waterfall for the current month and reports a failure
@@ -2526,13 +2608,21 @@ func (s *Server) reallocateNow(w http.ResponseWriter, r *http.Request) {
 // receipts.go
 // ═════════════════════════════════════════════════════════════════════════════
 
-// allowedReceiptTypes maps a detected MIME type to the extension it is stored with.
-var allowedReceiptTypes = map[string]string{
-	"image/jpeg": ".jpg",
-	"image/png":  ".png",
-	"image/webp": ".webp",
-	"image/gif":  ".gif",
-	"application/pdf": ".pdf",
+// allowedReceiptKinds are the formats a receipt may be uploaded in.
+//
+// The types are decided by ocr.Sniff rather than http.DetectContentType, which
+// cannot recognise HEIC at all: it reports it as application/octet-stream, so
+// the old allowlist silently rejected the format every recent iPhone
+// photographs in by default -- which is to say, the single most likely thing
+// somebody would try to upload a receipt as.
+var allowedReceiptKinds = map[ocr.Kind]bool{
+	ocr.KindJPEG: true,
+	ocr.KindPNG:  true,
+	ocr.KindWebP: true,
+	ocr.KindGIF:  true,
+	ocr.KindHEIC: true,
+	ocr.KindAVIF: true,
+	ocr.KindPDF:  true,
 }
 
 func (s *Server) maxUploadBytes() int64 {
@@ -2578,10 +2668,12 @@ func (s *Server) saveReceipt(r *http.Request, userID int64) (path, original stri
 		return "", "", fmt.Errorf("could not read the attached file")
 	}
 
-	ext, ok := allowedReceiptTypes[normaliseMIME(http.DetectContentType(head))]
-	if !ok {
-		return "", "", fmt.Errorf("receipts must be a JPEG, PNG, WebP, GIF or PDF")
+	kind := ocr.Sniff(head)
+	if !allowedReceiptKinds[kind] {
+		return "", "", fmt.Errorf(
+			"receipts must be a photo or a PDF — JPEG, PNG, HEIC, WebP, GIF or PDF")
 	}
+	ext := kind.Ext()
 
 	dir := s.cfg.UploadDir
 	if dir == "" {
@@ -2636,13 +2728,11 @@ func (s *Server) handleReceiptUpload(w http.ResponseWriter, r *http.Request) {
 
 	path, name, err := s.saveReceipt(r, user.ID)
 	if err != nil {
-		s.flashError(w, r, err.Error())
-		http.Redirect(w, r, "/expense", http.StatusSeeOther)
+		s.redirectError(w, r, "/expense", err.Error())
 		return
 	}
 	if path == "" {
-		s.flashError(w, r, "Choose a receipt image or PDF to upload.")
-		http.Redirect(w, r, "/expense", http.StatusSeeOther)
+		s.redirectError(w, r, "/expense", "Choose a receipt image or PDF to upload.")
 		return
 	}
 
@@ -2663,16 +2753,14 @@ func (s *Server) handleReceiptUpload(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleReceiptDiscard(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
 
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
+	id, ok := s.pathID(w, r)
+	if !ok {
 		return
 	}
 
 	path, err := s.store.DiscardReceipt(r.Context(), sc, id)
 	if errors.Is(err, store.ErrNotFound) {
-		s.flashError(w, r, "That receipt has already been used or is no longer there.")
-		http.Redirect(w, r, "/expense", http.StatusSeeOther)
+		s.redirectError(w, r, "/expense", "That receipt has already been used or is no longer there.")
 		return
 	}
 	if err != nil {
@@ -2688,16 +2776,89 @@ func (s *Server) handleReceiptDiscard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.flashSuccess(w, r, "Receipt discarded.")
-	http.Redirect(w, r, "/expense", http.StatusSeeOther)
+	s.redirectSuccess(w, r, "/expense", "Receipt discarded.")
+}
+
+// handleReceiptPreview serves the image of a receipt that has not yet become an
+// expense, so the confirmation form can show the photograph beside the figures
+// read off it. Checking a number against the picture is the whole point of
+// confirming, and it cannot be done from memory.
+//
+// This is the one place in the application that serves a stored file inline
+// rather than as an attachment, so it is worth being explicit about why that is
+// safe here. handleReceipt below sends Content-Disposition: attachment because
+// an HTML or SVG file rendered in this origin could run script with access to
+// the session cookie. Here the bytes are sniffed first and only ever labelled
+// with a raster image type this server recognised itself -- never a type taken
+// from the upload -- and X-Content-Type-Options: nosniff stops the browser
+// second-guessing that label. A JPEG cannot execute anything, and anything that
+// is not one of the four raster formats is refused rather than served.
+func (s *Server) handleReceiptPreview(w http.ResponseWriter, r *http.Request) {
+	sc := scopeOf(r)
+
+	id, ok := s.pathID(w, r)
+	if !ok {
+		return
+	}
+
+	// Scoped to the household, so a guessed id returns 404 rather than somebody
+	// else's shopping.
+	job, err := s.store.UnattachedReceipt(r.Context(), sc, id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+
+	f, err := os.Open(receiptFile(job.Path))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+
+	head := make([]byte, 32)
+	n, _ := f.Read(head)
+	kind := ocr.Sniff(head[:n])
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+
+	// Only formats a browser will draw in an <img>, and only ones whose type
+	// this server determined for itself.
+	switch kind {
+	case ocr.KindJPEG, ocr.KindPNG, ocr.KindGIF, ocr.KindWebP:
+	default:
+		// A PDF or a HEIC is a perfectly good receipt but not a previewable one,
+		// and guessing would either fail silently or serve a type that is not
+		// what the bytes are.
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", string(kind))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// A receipt is one person's shopping. Private stops a shared proxy caching
+	// it, and the URL is only reachable by a member of the household anyway.
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	http.ServeContent(w, r, filepath.Base(job.Path), info.ModTime(), f)
 }
 
 func (s *Server) handleReceipt(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
 
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
+	id, ok := s.pathID(w, r)
+	if !ok {
 		return
 	}
 
@@ -2734,15 +2895,6 @@ func (s *Server) handleReceipt(w http.ResponseWriter, r *http.Request) {
 		`attachment; filename="`+safeDownloadName(t.ReceiptName, t.ReceiptPath)+`"`)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, filepath.Base(t.ReceiptPath), info.ModTime(), f)
-}
-
-// normaliseMIME strips any parameters from a detected content type, so
-// "text/plain; charset=utf-8" compares as "text/plain".
-func normaliseMIME(s string) string {
-	if i := strings.IndexByte(s, ';'); i >= 0 {
-		s = s[:i]
-	}
-	return strings.TrimSpace(strings.ToLower(s))
 }
 
 func randomFilename(ext string) (string, error) {
@@ -2889,28 +3041,24 @@ func (s *Server) handleHousehold(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHouseholdCreate(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
 	name := strings.TrimSpace(r.PostFormValue("name"))
 	if _, err := s.store.CreateSharedHousehold(r.Context(), user.ID, name); err != nil {
-		s.flashError(w, r, err.Error())
-		http.Redirect(w, r, "/household", http.StatusSeeOther)
+		s.redirectError(w, r, "/household", err.Error())
 		return
 	}
 
-	s.flashSuccess(w, r, fmt.Sprintf("Created %q. Invite someone to join it.", name))
-	http.Redirect(w, r, "/household", http.StatusSeeOther)
+	s.redirectSuccess(w, r, "/household", fmt.Sprintf("Created %q. Invite someone to join it.", name))
 }
 
 // handleHouseholdSwitch changes which budget the user is looking at.
 func (s *Server) handleHouseholdSwitch(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
@@ -2938,8 +3086,7 @@ func (s *Server) handleHouseholdSwitch(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHouseholdRename(w http.ResponseWriter, r *http.Request) {
 	hh := mustMembership(r)
 
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
@@ -2957,16 +3104,14 @@ func (s *Server) handleHouseholdDelete(w http.ResponseWriter, r *http.Request) {
 
 	switch err := s.store.DeleteHousehold(r.Context(), hh.ID); {
 	case errors.Is(err, store.ErrPersonalHousehold):
-		s.flashError(w, r, "This is your own budget, so it cannot be deleted.")
-		http.Redirect(w, r, "/household", http.StatusSeeOther)
+		s.redirectError(w, r, "/household", "This is your own budget, so it cannot be deleted.")
 		return
 	case err != nil:
 		s.serverError(w, r, err)
 		return
 	}
 
-	s.flashSuccess(w, r, fmt.Sprintf("Deleted %q. You are back in your own budget.", hh.Name))
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	s.redirectSuccess(w, r, "/dashboard", fmt.Sprintf("Deleted %q. You are back in your own budget.", hh.Name))
 }
 
 // handleHouseholdLeave is a member removing themselves from a shared budget.
@@ -2976,8 +3121,7 @@ func (s *Server) handleHouseholdLeave(w http.ResponseWriter, r *http.Request) {
 
 	switch err := s.store.LeaveHousehold(r.Context(), hh.ID, user.ID); {
 	case errors.Is(err, store.ErrPersonalHousehold):
-		s.flashError(w, r, "This is your own budget, so there is nothing to leave.")
-		http.Redirect(w, r, "/household", http.StatusSeeOther)
+		s.redirectError(w, r, "/household", "This is your own budget, so there is nothing to leave.")
 		return
 	case errors.Is(err, store.ErrLastOwner):
 		// Deliberately specific. "You cannot leave" would be baffling; the user
@@ -2992,8 +3136,7 @@ func (s *Server) handleHouseholdLeave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.flashSuccess(w, r, fmt.Sprintf("You have left %q.", hh.Name))
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	s.redirectSuccess(w, r, "/dashboard", fmt.Sprintf("You have left %q.", hh.Name))
 }
 
 // ── invitations ───────────────────────────────────────────────────────────────
@@ -3003,8 +3146,7 @@ func (s *Server) handleInviteCreate(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 	hh := mustMembership(r)
 
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
@@ -3014,8 +3156,7 @@ func (s *Server) handleInviteCreate(w http.ResponseWriter, r *http.Request) {
 	// The same address validation the login form uses, so "kushith" is rejected
 	// here for the same reason and with the same wording it is rejected there.
 	if msg := validateEmail(email); msg != "" {
-		s.flashError(w, r, msg)
-		http.Redirect(w, r, "/household", http.StatusSeeOther)
+		s.redirectError(w, r, "/household", msg)
 		return
 	}
 
@@ -3028,8 +3169,7 @@ func (s *Server) handleInviteCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if store.NormalizeEmail(email) == store.NormalizeEmail(user.Email) {
-		s.flashError(w, r, "You are already in this budget.")
-		http.Redirect(w, r, "/household", http.StatusSeeOther)
+		s.redirectError(w, r, "/household", "You are already in this budget.")
 		return
 	}
 
@@ -3050,9 +3190,8 @@ func (s *Server) handleInviteCreate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleInviteRevoke(w http.ResponseWriter, r *http.Request) {
 	hh := mustMembership(r)
 
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		s.badRequest(w, "That is not an invitation id.")
+	id, ok := s.pathIDOrBadRequest(w, r, "an invitation id")
+	if !ok {
 		return
 	}
 
@@ -3074,9 +3213,8 @@ func (s *Server) handleInviteRevoke(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleInviteAccept(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		s.badRequest(w, "That is not an invitation id.")
+	id, ok := s.pathIDOrBadRequest(w, r, "an invitation id")
+	if !ok {
 		return
 	}
 
@@ -3090,25 +3228,22 @@ func (s *Server) handleInviteAccept(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrNotFound):
 		// Same message whether the invitation never existed, was withdrawn, or
 		// belongs to somebody else -- a probing user learns nothing either way.
-		s.flashError(w, r, "That invitation is no longer available.")
-		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		s.redirectError(w, r, "/dashboard", "That invitation is no longer available.")
 		return
 	case err != nil:
 		s.serverError(w, r, err)
 		return
 	}
 
-	s.flashSuccess(w, r, "You have joined. This is the shared budget.")
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	s.redirectSuccess(w, r, "/dashboard", "You have joined. This is the shared budget.")
 }
 
 // handleInviteDecline refuses an invitation.
 func (s *Server) handleInviteDecline(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		s.badRequest(w, "That is not an invitation id.")
+	id, ok := s.pathIDOrBadRequest(w, r, "an invitation id")
+	if !ok {
 		return
 	}
 
@@ -3118,8 +3253,7 @@ func (s *Server) handleInviteDecline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.flashSuccess(w, r, "Invitation declined.")
-	http.Redirect(w, r, backTo(r), http.StatusSeeOther)
+	s.redirectSuccess(w, r, backTo(r), "Invitation declined.")
 }
 
 // ── members ───────────────────────────────────────────────────────────────────
@@ -3129,21 +3263,18 @@ func (s *Server) handleMemberRole(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 	hh := mustMembership(r)
 
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 
-	target, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		s.badRequest(w, "That is not a member id.")
+	target, ok := s.pathIDOrBadRequest(w, r, "a member id")
+	if !ok {
 		return
 	}
 
 	role := store.Role(r.PostFormValue("role"))
 	if !role.Valid() {
-		s.flashError(w, r, "Choose Owner, Editor or Viewer.")
-		http.Redirect(w, r, "/household", http.StatusSeeOther)
+		s.redirectError(w, r, "/household", "Choose Owner, Editor or Viewer.")
 		return
 	}
 
@@ -3173,9 +3304,8 @@ func (s *Server) handleMemberRemove(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 	hh := mustMembership(r)
 
-	target, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		s.badRequest(w, "That is not a member id.")
+	target, ok := s.pathIDOrBadRequest(w, r, "a member id")
+	if !ok {
 		return
 	}
 
@@ -3238,9 +3368,8 @@ func (s *Server) handleInviteResend(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 	hh := mustMembership(r)
 
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		s.badRequest(w, "That is not an invitation id.")
+	id, ok := s.pathIDOrBadRequest(w, r, "an invitation id")
+	if !ok {
 		return
 	}
 
@@ -3248,8 +3377,7 @@ func (s *Server) handleInviteResend(w http.ResponseWriter, r *http.Request) {
 	// invitation belonging to another.
 	inv, err := s.store.ResendInvite(r.Context(), hh.ID, id)
 	if errors.Is(err, store.ErrNotFound) {
-		s.flashError(w, r, "That invitation is no longer waiting for an answer.")
-		http.Redirect(w, r, "/household", http.StatusSeeOther)
+		s.redirectError(w, r, "/household", "That invitation is no longer waiting for an answer.")
 		return
 	}
 	if err != nil {
@@ -3266,9 +3394,8 @@ func (s *Server) handleTransferOwnership(w http.ResponseWriter, r *http.Request)
 	user := mustUser(r)
 	hh := mustMembership(r)
 
-	target, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		s.badRequest(w, "That is not a member id.")
+	target, ok := s.pathIDOrBadRequest(w, r, "a member id")
+	if !ok {
 		return
 	}
 
@@ -3306,8 +3433,7 @@ type forgotView struct {
 // the address has an account -- a different message, status code or response time would
 // make this an oracle for which addresses are registered.
 func (s *Server) handleForgotRequest(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 	email := strings.TrimSpace(r.PostFormValue("email"))
@@ -3404,8 +3530,7 @@ func (s *Server) handleResetForm(w http.ResponseWriter, r *http.Request) {
 
 // handleResetSubmit sets the new password.
 func (s *Server) handleResetSubmit(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 	token := r.PostFormValue("token")
@@ -3450,8 +3575,7 @@ func (s *Server) handleResetSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("reset: password changed for user %d, all sessions revoked", user.ID)
-	s.flashSuccess(w, r, "Password changed. Please sign in with your new password.")
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	s.redirectSuccess(w, r, "/", "Password changed. Please sign in with your new password.")
 }
 
 // ── changing your own password ────────────────────────────────────────────────
@@ -3489,8 +3613,7 @@ func (s *Server) renderPasswordForm(w http.ResponseWriter, r *http.Request, stat
 func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 
-	if err := r.ParseForm(); err != nil {
-		s.badRequest(w, "Could not read that form.")
+	if !s.parseForm(w, r) {
 		return
 	}
 	current := r.PostFormValue("current")
@@ -3543,8 +3666,7 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("auth: user %d changed their password; other sessions revoked", user.ID)
-	s.flashSuccess(w, r, "Password changed. Any other device has been signed out.")
-	http.Redirect(w, r, "/sessions", http.StatusSeeOther)
+	s.redirectSuccess(w, r, "/sessions", "Password changed. Any other device has been signed out.")
 }
 
 // conflictOnUpdate re-renders the edit form after a losing race, showing what the other

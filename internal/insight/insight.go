@@ -70,7 +70,12 @@ func ProjectFund(f store.Fund, avgPerMonth money.Cents, now time.Time) Projectio
 		}
 	}
 
-	eta := now.AddDate(0, months, 0)
+	// Anchored on the first of the month: AddDate normalises an impossible date
+	// forwards, so from 31 January "one month" is 3 March, and the projection
+	// would name the wrong month for the last three days of most months. Only
+	// the month is ever shown, so the day is not information being discarded.
+	firstOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	eta := firstOfMonth.AddDate(0, months, 0)
 	p := Projection{
 		Reachable: true,
 		Months:    months,
@@ -169,8 +174,6 @@ func Observations(t store.Totals, essential, nonEssential money.Cents, budgets [
 		}
 	}
 
-	// The essential flag was collected on every expense form in the old app
-	// and displayed nowhere. This is the payoff for having stored it.
 	if spend := essential + nonEssential; spend > 0 {
 		share := float64(nonEssential) / float64(spend) * 100
 		switch {

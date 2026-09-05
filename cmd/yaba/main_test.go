@@ -57,9 +57,9 @@ func add(t *testing.T, sqlDB *sql.DB, kind string, cents int64, date string) int
 func TestOrdinaryActivityIsNotFlagged(t *testing.T) {
 	sqlDB := newLedger(t)
 
-	add(t, sqlDB, "income", 100000, "2026-01-01")       // $1,000 in
-	add(t, sqlDB, "expense", 20000, "2026-01-02")       //   $200 out
-	add(t, sqlDB, "fund_deposit", 50000, "2026-01-03")  //   $500 saved
+	add(t, sqlDB, "income", 100000, "2026-01-01")         // $1,000 in
+	add(t, sqlDB, "expense", 20000, "2026-01-02")         //   $200 out
+	add(t, sqlDB, "fund_deposit", 50000, "2026-01-03")    //   $500 saved
 	add(t, sqlDB, "fund_withdrawal", 50000, "2026-01-04") // and taken back
 
 	found, err := findAnomalies(sqlDB)

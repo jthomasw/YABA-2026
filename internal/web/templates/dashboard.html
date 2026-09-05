@@ -711,15 +711,18 @@
 </div>
 
 {{/*
-  Chart.js is pinned to an exact version rather than a bare "chart.js" URL, which
-  resolved to whatever the latest release happened to be.
+  Chart.js is served from /static rather than a CDN. Subresource integrity was
+  the other option, but the URL this used to load — jsdelivr's ".min.js" — is
+  minified by jsdelivr on request rather than shipped by the project, so its
+  bytes are jsdelivr's to change and no honest hash can be pinned to them.
+  Serving the file ourselves needs no hash, no third-party TLS handshake on
+  every page, and no charts silently disappearing when a CDN is unreachable.
 
-  TODO(kushith): add integrity="sha384-..." here. It needs the real hash of this
-  exact file, computed from the downloaded asset — an invented value would block
-  the script and silently kill every chart. Get it from https://www.srihash.org/
-  or vendor the file into /static.
+  The file is dist/chart.umd.js from the chart.js@4.4.1 npm package, unmodified
+  apart from a dangling sourceMappingURL comment. To upgrade: npm pack
+  chart.js@<version>, copy dist/chart.umd.js over internal/web/static, drop that
+  last comment line.
 */}}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
-        crossorigin="anonymous"></script>
+<script src="{{asset "chart.umd.js"}}"></script>
 <script src="{{asset "dashboard.js"}}" defer></script>
 {{end}}

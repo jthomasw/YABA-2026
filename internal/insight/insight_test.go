@@ -1,6 +1,5 @@
 package insight
 
-
 import (
 	"math"
 	"strings"
@@ -84,7 +83,7 @@ func TestProjectFundAbsurdHorizonIsSuppressed(t *testing.T) {
 	f := store.Fund{Name: "Slow", Goal: 100000000, Balance: 0}
 	p := ProjectFund(f, 1, now)
 	if p.Reachable {
-			t.Error("century-long projections should not be presented as reachable")
+		t.Error("century-long projections should not be presented as reachable")
 	}
 	if !strings.Contains(p.Note, "century") {
 		t.Errorf("note = %q", p.Note)
@@ -128,8 +127,8 @@ func TestObservationsEmptyAccountStillGuidesTheUser(t *testing.T) {
 func TestObservationsPutsAlertsFirst(t *testing.T) {
 	totals := store.Totals{Income: 100000, Expense: 150000}
 	budgets := []store.Budget{
-		{Category: "Food", Limit: 10000, Spent: 15000},  // over  -> alert
-		{Category: "Fuel", Limit: 10000, Spent: 8500},   // 85%   -> warn
+		{Category: "Food", Limit: 10000, Spent: 15000}, // over  -> alert
+		{Category: "Fuel", Limit: 10000, Spent: 8500},  // 85%   -> warn
 	}
 	obs := Observations(totals, 100000, 50000, budgets, nil)
 
@@ -313,11 +312,9 @@ func containsText(obs []Observation, sub string) bool {
 	return false
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // forecast_test.go
 // ═════════════════════════════════════════════════════════════════════════════
-
 
 func months(vals ...money.Cents) []store.MonthPoint {
 	out := make([]store.MonthPoint, len(vals))
@@ -593,7 +590,7 @@ func TestAssessEmergencyFundBurnRateIgnoresQuietMonths(t *testing.T) {
 }
 
 func TestAssessEmergencyFundWarnsBelowOneMonthOfCover(t *testing.T) {
-	fund := store.Fund{Balance: 50000} // $500
+	fund := store.Fund{Balance: 50000}          // $500
 	r := AssessEmergencyFund(fund, nil, 200000) // $2,000 essential
 	if r.CoverMonths >= 1 {
 		t.Fatalf("fixture should be under one month: %v", r.CoverMonths)

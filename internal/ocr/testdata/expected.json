@@ -1,0 +1,413 @@
+[
+ {
+  "name": "grocery_l0",
+  "level": 0,
+  "merchant": "WHOLE FOODS MARKET",
+  "date": "2026-03-14",
+  "total": 4719,
+  "subtotal": 4280,
+  "tax": 439,
+  "items": [
+   [
+    "BANANAS ORGANIC",
+    349
+   ],
+   [
+    "WHOLE MILK 1GAL",
+    499
+   ],
+   [
+    "SOURDOUGH LOAF",
+    550
+   ],
+   [
+    "CHICKEN BREAST",
+    1284
+   ],
+   [
+    "OLIVE OIL 500ML",
+    1199
+   ],
+   [
+    "SPINACH BAG",
+    399
+   ]
+  ]
+ },
+ {
+  "name": "grocery_l1",
+  "level": 1,
+  "merchant": "WHOLE FOODS MARKET",
+  "date": "2026-03-14",
+  "total": 4719,
+  "subtotal": 4280,
+  "tax": 439,
+  "items": [
+   [
+    "BANANAS ORGANIC",
+    349
+   ],
+   [
+    "WHOLE MILK 1GAL",
+    499
+   ],
+   [
+    "SOURDOUGH LOAF",
+    550
+   ],
+   [
+    "CHICKEN BREAST",
+    1284
+   ],
+   [
+    "OLIVE OIL 500ML",
+    1199
+   ],
+   [
+    "SPINACH BAG",
+    399
+   ]
+  ]
+ },
+ {
+  "name": "grocery_l2",
+  "level": 2,
+  "merchant": "WHOLE FOODS MARKET",
+  "date": "2026-03-14",
+  "total": 4719,
+  "subtotal": 4280,
+  "tax": 439,
+  "items": [
+   [
+    "BANANAS ORGANIC",
+    349
+   ],
+   [
+    "WHOLE MILK 1GAL",
+    499
+   ],
+   [
+    "SOURDOUGH LOAF",
+    550
+   ],
+   [
+    "CHICKEN BREAST",
+    1284
+   ],
+   [
+    "OLIVE OIL 500ML",
+    1199
+   ],
+   [
+    "SPINACH BAG",
+    399
+   ]
+  ]
+ },
+ {
+  "name": "cafe_l0",
+  "level": 0,
+  "merchant": "The Daily Grind",
+  "date": "2026-02-28",
+  "total": 1288,
+  "subtotal": 1000,
+  "tax": 88,
+  "items": [
+   [
+    "Large Latte",
+    525
+   ],
+   [
+    "Almond Croissant",
+    475
+   ]
+  ]
+ },
+ {
+  "name": "cafe_l1",
+  "level": 1,
+  "merchant": "The Daily Grind",
+  "date": "2026-02-28",
+  "total": 1288,
+  "subtotal": 1000,
+  "tax": 88,
+  "items": [
+   [
+    "Large Latte",
+    525
+   ],
+   [
+    "Almond Croissant",
+    475
+   ]
+  ]
+ },
+ {
+  "name": "cafe_l2",
+  "level": 2,
+  "merchant": "The Daily Grind",
+  "date": "2026-02-28",
+  "total": 1288,
+  "subtotal": 1000,
+  "tax": 88,
+  "items": [
+   [
+    "Large Latte",
+    525
+   ],
+   [
+    "Almond Croissant",
+    475
+   ]
+  ]
+ },
+ {
+  "name": "hardware_l0",
+  "level": 0,
+  "merchant": "ACE HARDWARE #2213",
+  "date": "2026-01-14",
+  "total": 5879,
+  "subtotal": 5443,
+  "tax": 436,
+  "items": [
+   [
+    "SCREWDRIVER SET",
+    2499
+   ],
+   [
+    "AA BATTERY 4PK",
+    798
+   ],
+   [
+    "DUCT TAPE",
+    649
+   ],
+   [
+    "WOOD SCREW BOX",
+    1497
+   ]
+  ]
+ },
+ {
+  "name": "hardware_l1",
+  "level": 1,
+  "merchant": "ACE HARDWARE #2213",
+  "date": "2026-01-14",
+  "total": 5879,
+  "subtotal": 5443,
+  "tax": 436,
+  "items": [
+   [
+    "SCREWDRIVER SET",
+    2499
+   ],
+   [
+    "AA BATTERY 4PK",
+    798
+   ],
+   [
+    "DUCT TAPE",
+    649
+   ],
+   [
+    "WOOD SCREW BOX",
+    1497
+   ]
+  ]
+ },
+ {
+  "name": "hardware_l2",
+  "level": 2,
+  "merchant": "ACE HARDWARE #2213",
+  "date": "2026-01-14",
+  "total": 5879,
+  "subtotal": 5443,
+  "tax": 436,
+  "items": [
+   [
+    "SCREWDRIVER SET",
+    2499
+   ],
+   [
+    "AA BATTERY 4PK",
+    798
+   ],
+   [
+    "DUCT TAPE",
+    649
+   ],
+   [
+    "WOOD SCREW BOX",
+    1497
+   ]
+  ]
+ },
+ {
+  "name": "pharmacy_l0",
+  "level": 0,
+  "merchant": "WALGREENS",
+  "date": "2025-12-05",
+  "total": 3093,
+  "subtotal": 2877,
+  "tax": 216,
+  "items": [
+   [
+    "IBUPROFEN 200MG",
+    849
+   ],
+   [
+    "VITAMIN D3",
+    1399
+   ],
+   [
+    "TOOTHPASTE 2PK",
+    629
+   ]
+  ]
+ },
+ {
+  "name": "pharmacy_l1",
+  "level": 1,
+  "merchant": "WALGREENS",
+  "date": "2025-12-05",
+  "total": 3093,
+  "subtotal": 2877,
+  "tax": 216,
+  "items": [
+   [
+    "IBUPROFEN 200MG",
+    849
+   ],
+   [
+    "VITAMIN D3",
+    1399
+   ],
+   [
+    "TOOTHPASTE 2PK",
+    629
+   ]
+  ]
+ },
+ {
+  "name": "pharmacy_l2",
+  "level": 2,
+  "merchant": "WALGREENS",
+  "date": "2025-12-05",
+  "total": 3093,
+  "subtotal": 2877,
+  "tax": 216,
+  "items": [
+   [
+    "IBUPROFEN 200MG",
+    849
+   ],
+   [
+    "VITAMIN D3",
+    1399
+   ],
+   [
+    "TOOTHPASTE 2PK",
+    629
+   ]
+  ]
+ },
+ {
+  "name": "restaurant_l0",
+  "level": 0,
+  "merchant": "LOU MALNATI'S PIZZERIA",
+  "date": "2026-03-02",
+  "total": 4570,
+  "subtotal": 4145,
+  "tax": 425,
+  "items": [
+   [
+    "DEEP DISH LG",
+    2695
+   ],
+   [
+    "CAESAR SALAD",
+    950
+   ],
+   [
+    "SODA X2",
+    500
+   ]
+  ]
+ },
+ {
+  "name": "restaurant_l1",
+  "level": 1,
+  "merchant": "LOU MALNATI'S PIZZERIA",
+  "date": "2026-03-02",
+  "total": 4570,
+  "subtotal": 4145,
+  "tax": 425,
+  "items": [
+   [
+    "DEEP DISH LG",
+    2695
+   ],
+   [
+    "CAESAR SALAD",
+    950
+   ],
+   [
+    "SODA X2",
+    500
+   ]
+  ]
+ },
+ {
+  "name": "restaurant_l2",
+  "level": 2,
+  "merchant": "LOU MALNATI'S PIZZERIA",
+  "date": "2026-03-02",
+  "total": 4570,
+  "subtotal": 4145,
+  "tax": 425,
+  "items": [
+   [
+    "DEEP DISH LG",
+    2695
+   ],
+   [
+    "CAESAR SALAD",
+    950
+   ],
+   [
+    "SODA X2",
+    500
+   ]
+  ]
+ },
+ {
+  "name": "gas_l0",
+  "level": 0,
+  "merchant": "SHELL",
+  "date": "2026-01-22",
+  "total": 3903,
+  "subtotal": 0,
+  "tax": 0,
+  "items": []
+ },
+ {
+  "name": "gas_l1",
+  "level": 1,
+  "merchant": "SHELL",
+  "date": "2026-01-22",
+  "total": 3903,
+  "subtotal": 0,
+  "tax": 0,
+  "items": []
+ },
+ {
+  "name": "gas_l2",
+  "level": 2,
+  "merchant": "SHELL",
+  "date": "2026-01-22",
+  "total": 3903,
+  "subtotal": 0,
+  "tax": 0,
+  "items": []
+ }
+]

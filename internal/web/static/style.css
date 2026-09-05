@@ -90,8 +90,6 @@
   color-scheme: light;
 }
 
-
-
 *, *::before, *::after { box-sizing: border-box; }
 
 body {
@@ -242,13 +240,7 @@ a:hover { text-decoration: underline; }
   color: var(--text-muted);
   font-weight: 600;
 }
-.stat-value {
-  margin: .25rem 0;
-  font-size: 1.75rem;
-  font-weight: 700;
-  /* Tabular figures keep columns of money vertically aligned. */
-  font-variant-numeric: tabular-nums;
-}
+
 .stat-note { margin: 0; font-size: .85rem; color: var(--text-muted); }
 
 .is-positive { color: var(--positive); }
@@ -367,7 +359,7 @@ a:hover { text-decoration: underline; }
 .btn-danger:hover { filter: brightness(1.2); }
 
 .btn-small { padding: .3rem .6rem; font-size: .85rem; min-height: 32px; }
-.btn-block { width: 100%; }
+
 .btn-disabled { opacity: .5; cursor: not-allowed; }
 
 /* ── forms ───────────────────────────────────────────────────────────────── */
@@ -625,7 +617,6 @@ a:hover { text-decoration: underline; }
 @media (max-width: 640px) {
   .container { padding: 1rem .75rem; }
   h1 { font-size: 1.35rem; }
-  .stat-value { font-size: 1.5rem; }
 
   .topbar { padding: .6rem .75rem; }
   .mainnav { order: 3; width: 100%; }
@@ -671,7 +662,6 @@ a:hover { text-decoration: underline; }
 /* Only the custom properties change. Every rule above is written against them,
    which is the whole reason this is short. */
 
-
 /* Respect a user's request for less motion. */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
@@ -696,21 +686,6 @@ a:hover { text-decoration: underline; }
 
 .landing { text-align: center; }
 .landing .field, .landing .radio-row { text-align: left; }
-.landing-title { font-size: 1.5rem; margin-bottom: .25rem; }
-.landing-sub { margin: 0 0 1.25rem; }
-.landing-hint { margin-top: 1rem; text-align: center; }
-
-/* The "create an account?" step of the combined login/signup form. */
-.confirm-box {
-  text-align: left;
-  padding: .8rem 1rem;
-  margin-bottom: 1rem;
-  border-radius: var(--radius-sm);
-  background: var(--info-bg);
-  border-left: 4px solid var(--brand);
-}
-.confirm-box p { margin: 0 0 .35rem; font-size: .92rem; }
-.confirm-box p:last-child { margin-bottom: 0; }
 
 /* ── prose pages (About, Forgot) ─────────────────────────────────────────── */
 
@@ -782,7 +757,6 @@ a:hover { text-decoration: underline; }
 }
 .tab-icon svg { width: 1.05rem; height: 1.05rem; }
 
-
 .tab-card .tab-label {
   font-size: .74rem;
   font-weight: 700;
@@ -800,7 +774,7 @@ a:hover { text-decoration: underline; }
   letter-spacing: -.01em;
   line-height: 1.15;
 }
-.tab-card .tab-range { font-size: 1.05rem; }
+
 .tab-card .tab-sub {
   font-size: .74rem;
   color: var(--text-muted);
@@ -912,12 +886,6 @@ a:hover { text-decoration: underline; }
   text-align: center;
 }
 
-.panel-scroll {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  max-height: 30rem;
-}
-
 @media (max-width: 640px) {
   .panel-frame { border-radius: var(--radius); padding: 1rem; min-height: 0; }
 }
@@ -941,23 +909,6 @@ a:hover { text-decoration: underline; }
 }
 .actionbar .btn:hover { background: var(--surface-2); border-color: var(--brand); }
 .pending-note { text-align: center; }
-
-/* ── expected monthly income range ───────────────────────────────────────── */
-
-.range-display {
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
-  gap: .75rem;
-  flex-wrap: wrap;
-  padding: 1rem 0 .5rem;
-}
-.range-low, .range-high {
-  font-size: 1.6rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-.range-sep { color: var(--text-muted); font-size: .9rem; }
 
 /* ── recurring expense priority list ─────────────────────────────────────── */
 
@@ -1027,33 +978,6 @@ a:hover { text-decoration: underline; }
 
 .tag-essential { background: var(--alert-bg); color: var(--negative); }
 .tag-bucket    { background: var(--info-bg); color: var(--brand); }
-
-/* ── import chooser ──────────────────────────────────────────────────────── */
-
-.import-options {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: var(--gap);
-  margin-top: .75rem;
-}
-
-.import-option {
-  display: flex;
-  flex-direction: column;
-  gap: .3rem;
-  padding: 1rem;
-  text-align: left;
-  font: inherit;
-  color: var(--text);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.import-option:hover { background: var(--surface); border-color: var(--brand); text-decoration: none; }
-.import-option.is-disabled { opacity: .55; cursor: not-allowed; }
-.import-option-name { font-weight: 600; }
-.import-option-desc { font-size: .87rem; color: var(--text-muted); }
 
 .callout {
   padding: .8rem 1rem;
@@ -1127,11 +1051,6 @@ a:hover { text-decoration: underline; }
      across the row and away from Enter details. */
   .waiting-actions .inline-form { width: auto; }
 }
-
-.tag-job-queued     { background: var(--info-bg);  color: var(--text-muted); }
-.tag-job-processing { background: var(--info-bg);   color: var(--brand); }
-.tag-job-done       { background: var(--good-bg);  color: var(--positive); }
-.tag-job-failed     { background: var(--alert-bg); color: var(--negative); }
 
 /* ── line items ──────────────────────────────────────────────────────────── */
 
@@ -1259,13 +1178,10 @@ a:hover { text-decoration: underline; }
 
   .toasts { left: 1rem; right: 1rem; max-width: none; }
 
-  .range-low, .range-high { font-size: 1.3rem; }
 }
 
-
-
 @media print {
-  .toasts, .actionbar, .bucket-rank, .import-options { display: none !important; }
+  .toasts, .actionbar, .bucket-rank{ display: none !important; }
 }
 
 /* ── sign-in page ────────────────────────────────────────────────────────── */
@@ -1515,24 +1431,6 @@ a:hover { text-decoration: underline; }
 .auth-foot a { color: var(--text-muted); }
 .auth-foot a:hover { color: var(--brand); }
 
-/* ── figures shown as a range, as the mockup does for income and expenses ── */
-
-.tab-card .tab-range {
-  font-size: .95rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-}
-
-/* ── emergency fund figures ──────────────────────────────────────────────── */
-
-.runway-note {
-  margin: 0;
-  font-size: 1.05rem;
-  max-width: 42rem;
-  color: var(--text);
-}
-
 /* A definition list rather than a table: these are four labelled figures, not
    rows and columns, and dl is what that means semantically. */
 .figure-row {
@@ -1574,10 +1472,6 @@ a:hover { text-decoration: underline; }
 }
 .alloc-summary strong { color: var(--text); font-variant-numeric: tabular-nums; }
 
-/* The bucket list scrolls inside the panel, as the mockup's "scroll list"
-   annotation asks, instead of growing the page indefinitely. */
-.bucket-list.panel-scroll { margin: 0; padding-right: .25rem; }
-
 .bucket-add summary {
   cursor: pointer;
   font-weight: 600;
@@ -1585,7 +1479,6 @@ a:hover { text-decoration: underline; }
   color: var(--brand);
   padding: .35rem 0;
 }
-.bucket-add-open { border-top: 1px solid var(--border); padding-top: 1rem; }
 
 .chart-box-tall { height: 320px; }
 @media (max-width: 640px) { .chart-box-tall { height: 240px; } }
@@ -1594,32 +1487,10 @@ a:hover { text-decoration: underline; }
    tab refers to it specifically. */
 .fund-emergency { border-color: var(--card-emergency-edge); }
 
-/* ============================================================================
-   Entry pages (/income and /expense)
-   ========================================================================= */
-
-/* Form on the left, the page's own chart and recent list on the right. Collapses
-   to one column before the form gets too narrow to use. */
-.entry-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  gap: var(--gap);
-  align-items: start;
-}
-@media (max-width: 980px) { .entry-grid { grid-template-columns: 1fr; } }
-
-.entry-side { display: flex; flex-direction: column; gap: var(--gap); }
-
-.cards-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-@media (max-width: 420px) { .cards-2 { grid-template-columns: 1fr; } }
-
 /* A coloured top edge is enough to tell the two pages apart at a glance without
    tinting the whole form and hurting contrast on the inputs. */
 .card-accent-income  { border-top: 3px solid var(--income); }
 .card-accent-expense { border-top: 3px solid var(--expense); }
-
-.stat-income { border-left: 3px solid var(--income); }
-.stat-expense { border-left: 3px solid var(--expense); }
 
 .card-head {
   display: flex;
@@ -1720,32 +1591,6 @@ a:hover { text-decoration: underline; }
   letter-spacing: .08em;
 }
 
-/* ── compact lists and empty states ─────────────────────────────────────── */
-
-.mini-list { list-style: none; margin: 0; padding: 0; }
-.mini-list li {
-  display: flex;
-  align-items: center;
-  gap: .6rem;
-  padding: .55rem 0;
-  border-bottom: 1px solid var(--border);
-}
-.mini-list li:last-child { border-bottom: 0; }
-.mini-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
-.mini-date { font-size: .78rem; color: var(--text-muted); }
-.mini-amount { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.mini-edit {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  width: 1.9rem;
-  height: 1.9rem;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-}
-.mini-edit:hover { background: var(--surface-3); color: var(--brand); }
-.mini-more { margin: .6rem 0 0; font-size: .88rem; }
-
 /* An honest empty state, rather than a chart drawn from invented numbers. */
 .empty-state {
   display: flex;
@@ -1803,18 +1648,6 @@ a:hover { text-decoration: underline; }
   border-color: var(--expense);
 }
 
-/* The stat cards on the entry pages use spans rather than <h2>/<p>, because they
-   are labelled figures inside a card, not headings. These rules were lost when
-   the tab-card block replaced the old clickable-card block. */
-.stat-label {
-  display: block;
-  font-size: .74rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .05em;
-  color: var(--text-muted);
-}
-span.stat-value { display: block; margin: .2rem 0 0; }
 span.stat-note  { display: block; }
 
 /* ── entry pages, form only ──────────────────────────────────────────────── */
@@ -2348,7 +2181,60 @@ dialog::backdrop {
 
 /* A browser's self-description is long and low-value; let it wrap small rather
    than push the action column off a narrow screen. */
-.table-transactions .tx-agent,
+
 .is-current-session strong,
 .table td strong { overflow-wrap: anywhere; }
 
+/* ── receipt preview and OCR readings ──────────────────────────────────────────
+   The photograph shown beside a prefilled expense form. Checking a number
+   against the receipt is the whole point of confirming a reading, so the image
+   has to be big enough to read and bounded enough not to push the Save button
+   off the screen on a phone. */
+.receipt-preview {
+  margin: .75rem 0 1rem;
+  padding: .5rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.receipt-preview img {
+  display: block;
+  width: 100%;
+  /* Receipts are tall and narrow. Capping the height rather than the width
+     keeps a long one from filling several screens, and object-fit: contain
+     means it is letterboxed rather than cropped -- a cropped receipt could hide
+     the very total the user is here to check. */
+  max-height: 60vh;
+  object-fit: contain;
+  object-position: top center;
+  background: var(--surface);
+  border-radius: 4px;
+}
+
+.receipt-preview figcaption {
+  margin: .4rem 0 0;
+  text-align: center;
+}
+
+/* The amount read off a receipt, on the waiting list. */
+.waiting-amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* A reading nothing cross-checks is shown in the warning colour, so the list
+   distinguishes "this adds up" from "have a proper look at this one". */
+.waiting-amount.is-uncertain {
+  color: var(--warn);
+}
+
+.waiting-amount.is-uncertain::after {
+  content: " ?";
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .receipt-preview img { transition: max-height .2s ease; }
+}

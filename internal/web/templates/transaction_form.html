@@ -206,13 +206,66 @@
       {{if .ReceiptJobID}}
       <div class="field" data-expense-only {{if eq .Kind "income"}}hidden{{end}}>
         <input type="hidden" name="receipt_job" value="{{.ReceiptJobID}}">
+
+        {{with .Draft}}
+        {{/*
+          What was read off the photograph, and how sure the reading was.
+
+          The wording is graded rather than decorative. OCR is good enough to
+          save typing and nowhere near good enough to be trusted unattended: on
+          a poor photograph it will read $45.78 for a $45.70 receipt, which is
+          wrong in a way that looks perfectly reasonable. So a low-confidence
+          reading asks to be checked in plain words, and every reading is shown
+          next to the image it came from rather than presented as fact.
+        */}}
+        {{if .HasTotal}}
+        <p class="callout callout-{{if eq .Certainty "high"}}info{{else}}warn{{end}}" role="status">
+          Read <strong>{{money .Total}}</strong>
+          {{with .Merchant}}from <strong>{{.}}</strong>{{end}}
+          {{with .Date}}on {{dateName .}}{{end}} off <strong>{{$.ReceiptName}}</strong>.
+          {{if eq .Certainty "high"}}
+            The figures on the receipt add up, so this is very likely right —
+            but please check it against the picture before saving.
+          {{else if eq .Certainty "medium"}}
+            Nothing on the receipt cross-checks that amount, so please compare it
+            with the picture before saving.
+          {{else}}
+            The photo was hard to read and this amount may well be wrong. Please
+            check every field against the picture.
+          {{end}}
+        </p>
+        {{else}}
+        <p class="callout callout-warn" role="status">
+          <strong>{{$.ReceiptName}}</strong> is uploaded, but no amount could be
+          read from it. Type it in from the picture below.
+        </p>
+        {{end}}
+        {{else}}
         <p class="callout callout-info" role="status">
           <strong>{{.ReceiptName}}</strong> is uploaded and will be attached to
           this expense. Fill in the amount and anything else you want to record.
         </p>
+        {{end}}
+
+        {{/* The picture itself. Checking a number against the receipt is the
+             entire point of confirming, and it cannot be done from memory.
+             loading=lazy because on a phone the form is what matters first. */}}
+        <figure class="receipt-preview">
+          <a href="/receipts/{{.ReceiptJobID}}/image" target="_blank" rel="noopener">
+            <img src="/receipts/{{.ReceiptJobID}}/image" alt="The uploaded receipt {{.ReceiptName}}"
+                 loading="lazy" decoding="async">
+          </a>
+          <figcaption class="hint">
+            {{.ReceiptName}} — open in a new tab to zoom.
+            {{/* A PDF or HEIC receipt has no preview the browser can draw, so
+                 the image above will simply fail to load and this caption is
+                 the only thing that appears. That is the intended fallback. */}}
+          </figcaption>
+        </figure>
+
         <label for="receipt">Attach a different file instead (optional)</label>
         <input id="receipt" name="receipt" type="file"
-               accept="image/jpeg,image/png,image/webp,image/gif,application/pdf">
+               accept="image/jpeg,image/png,image/heic,image/heif,image/webp,image/gif,application/pdf">
         <p class="hint">
           Choosing a file here replaces the one above; the uploaded receipt stays
           available for another expense.
@@ -222,7 +275,7 @@
       <div class="field" data-expense-only {{if eq .Kind "income"}}hidden{{end}}>
         <label for="receipt">Receipt (optional)</label>
         <input id="receipt" name="receipt" type="file"
-               accept="image/jpeg,image/png,image/webp,image/gif,application/pdf">
+               accept="image/jpeg,image/png,image/heic,image/heif,image/webp,image/gif,application/pdf">
         <p class="hint">
           Attached to this expense. To upload one without typing it in, use
           <a href="/import">Add Expense → Receipt Picture</a> instead.

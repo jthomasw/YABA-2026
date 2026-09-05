@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/securecookie"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/jthomasw/YABA-2026/internal/db"
@@ -49,6 +51,10 @@ const (
 	testPassword = "correct-horse-battery"
 	testEmail    = "tester@example.com"
 )
+
+// testSessionKey is the signing half of the rig's cookie keys. Named so a test
+// can try to read a cookie with it and prove that it is not enough on its own.
+var testSessionKey = []byte("test-key-that-is-at-least-32-bytes-long")
 
 // newRig builds a server with no mail relay, which is the common case.
 func newRig(t *testing.T) *testRig {
@@ -95,7 +101,7 @@ func newRigWithMail(t *testing.T, mailEnabled bool) *testRig {
 
 	srv, err := New(st, Config{
 		Addr:        ":0",
-		SessionKey:  []byte("test-key-that-is-at-least-32-bytes-long"),
+		SessionKey:  testSessionKey,
 		UploadDir:   uploadDir,
 		MaxUploadMB: 1,
 		Mail:        mail.New(mailCfg),
@@ -946,19 +952,19 @@ func TestSignupRequiresTheConfirmStep(t *testing.T) {
 
 func TestAuthRejectsAnythingThatIsNotAnEmailAddress(t *testing.T) {
 	bad := []string{
-		"kushith",     // a bare name, which a legacy row could actually hold
+		"kushith", // a bare name, which a legacy row could actually hold
 		"nope",
-		"no@dot",      // no dot in the domain
-		"a@b.c",       // single-character TLD
-		"a@.com",      // empty first label
-		"a@b.",        // trailing dot
-		"a@b..com",    // empty label
+		"no@dot",   // no dot in the domain
+		"a@b.c",    // single-character TLD
+		"a@.com",   // empty first label
+		"a@b.",     // trailing dot
+		"a@b..com", // empty label
 		"@example.com",
 		"user@",
 		"a b@example.com",
 		"two@@x.com",
-		"a@-b.com",    // label starts with a hyphen
-		"a@b.c1",      // digit in the TLD
+		"a@-b.com", // label starts with a hyphen
+		"a@b.c1",   // digit in the TLD
 	}
 	for _, e := range bad {
 		rig := newRig(t)
@@ -1078,6 +1084,57 @@ func TestLoginRateLimitEventuallyBlocks(t *testing.T) {
 	}
 	if msg := extractError(body); strings.Contains(msg, "second") {
 		t.Errorf("the countdown mentions seconds; it should be whole minutes only: %q", msg)
+	}
+}
+
+// TestLoginRateLimitCannotBeSidesteppedByChangingTheEmail: the per-account
+// counter is keyed on the address, so an attacker working down a list of
+// addresses collects a fresh budget of guesses at each one and the limit never
+// fires. A second counter on the IP alone is what closes that.
+func TestLoginRateLimitCannotBeSidesteppedByChangingTheEmail(t *testing.T) {
+	rig := newRig(t)
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Enough real accounts that a near-miss run at each adds up to more than
+	// the burst budget. Real accounts, not invented ones: an unknown address
+	// takes the "shall I create this?" branch and is never a failed password.
+	accounts := []string{testEmail}
+	for len(accounts)*store.RateMaxTries <= store.RateBurstTries {
+		addr := fmt.Sprintf("spray%d@example.com", len(accounts))
+		if _, err := rig.store.CreateUser(context.Background(), addr, string(hash)); err != nil {
+			t.Fatalf("create %s: %v", addr, err)
+		}
+		accounts = append(accounts, addr)
+	}
+
+	tries, blocked := 0, false
+	for _, email := range accounts {
+		// One short of the per-address limit, so no single account is ever
+		// locked: every refusal below is the IP counter talking.
+		for i := 0; i < store.RateMaxTries-1 && !blocked; i++ {
+			tries++
+			blocked = strings.Contains(rig.do("POST", "/auth", url.Values{
+				"csrf_token": {rig.csrf("/")},
+				"email":      {email},
+				"password":   {"wrong"},
+			}).Body.String(), "Too many failed attempts")
+		}
+		if blocked {
+			break
+		}
+	}
+
+	if !blocked {
+		t.Fatalf("%d failed logins from one address across %d accounts, still not limited",
+			tries, len(accounts))
+	}
+	if tries <= store.RateMaxTries {
+		t.Errorf("limited after only %d attempts; a shared network mistyping passwords "+
+			"must get more room than the %d allowed against one account",
+			tries, store.RateMaxTries)
 	}
 }
 
@@ -1290,6 +1347,80 @@ func TestSecurityHeadersOnRenderedPages(t *testing.T) {
 	}
 	if csp := h.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") {
 		t.Errorf("CSP missing frame-ancestors: %q", csp)
+	}
+}
+
+// TestNoThirdPartyOrigins: every asset is served from /static, so the CSP names
+// no external host and no page references one. Chart.js was the last CDN load;
+// putting one back would silently hand a third party script execution on a page
+// showing the user's finances, and would break the app wherever that host is
+// unreachable.
+func TestNoThirdPartyOrigins(t *testing.T) {
+	rig := newRig(t)
+	rig.login()
+
+	for _, page := range []string{"/dashboard", "/reports"} {
+		rec := rig.do("GET", page, nil)
+		if csp := rec.Header().Get("Content-Security-Policy"); strings.Contains(csp, "//") {
+			t.Errorf("%s CSP allows an external origin: %q", page, csp)
+		}
+		if body := rec.Body.String(); strings.Contains(body, "https://") {
+			t.Errorf("%s loads something off-site", page)
+		}
+	}
+
+	// And the vendored copy really is there, since a stale template reference
+	// would otherwise leave the charts dead with the CSP looking perfect.
+	rec := rig.do("GET", "/static/chart.umd.js", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /static/chart.umd.js = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Chart.js v4.4.1") {
+		t.Error("the vendored asset is not the Chart.js build it claims to be")
+	}
+}
+
+// TestSessionCookieIsEncryptedNotJustSigned: the cookie carries the id of a
+// live session row, which is a bearer token for that account. Signing alone
+// makes it tamper-proof but still readable, so anything that keeps a copy of
+// the cookie — a proxy log, a browser profile, a crash dump — keeps a readable
+// account token. This asserts the second key is actually in play, by trying to
+// read the cookie the way a holder of the signing key alone would.
+func TestSessionCookieIsEncryptedNotJustSigned(t *testing.T) {
+	rig := newRig(t)
+	rig.login()
+
+	var raw string
+	for _, c := range rig.cookies {
+		if c.Name == sessionName {
+			raw = c.Value
+		}
+	}
+	if raw == "" {
+		t.Fatal("no session cookie after login")
+	}
+
+	signingOnly := securecookie.New(testSessionKey, nil)
+	var values map[any]any
+	if err := signingOnly.Decode(sessionName, raw, &values); err == nil {
+		t.Fatalf("the cookie decodes with the signing key alone: %v", values)
+	}
+
+	// And the session id is not sitting in the cookie in any decodable layer.
+	var sid string
+	if err := rig.db.QueryRow(`SELECT id FROM sessions`).Scan(&sid); err != nil {
+		t.Fatalf("read session row: %v", err)
+	}
+	layer := raw
+	for i := 0; i < 3; i++ {
+		if strings.Contains(layer, sid) {
+			t.Fatalf("the session id is readable in the cookie after %d base64 layers", i)
+		}
+		next, err := base64.URLEncoding.WithPadding(base64.NoPadding).DecodeString(layer)
+		if err != nil {
+			break
+		}
+		layer = string(next)
 	}
 }
 
@@ -2332,5 +2463,200 @@ func TestUnknownEmailIsAnsweredInRedOnThePage(t *testing.T) {
 	}
 	if !strings.Contains(body, "Confirm password") {
 		t.Error("the password step should still be on screen after a mismatch")
+	}
+}
+
+// TestSignupActuallySignsTheUserIn follows the redirect the way a browser does.
+//
+// The rig above keeps every cookie a response sets and sends them all back, and
+// Go's request.Cookie returns the first match -- which hid a bug for months:
+// signup issued two yaba_session cookies, and the second one, written by the
+// welcome flash, had no session id. A browser keeps the last Set-Cookie for a
+// name, so every new account was bounced straight back to the login page.
+func TestSignupActuallySignsTheUserIn(t *testing.T) {
+	rig := newRig(t)
+
+	rec := rig.do("POST", "/auth", url.Values{
+		"csrf_token": {rig.csrf("/")},
+		"create":     {"yes"},
+		"email":      {"browser@example.com"},
+		"password":   {"longenough123"},
+		"confirm":    {"longenough123"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("signup: status %d, body %q", rec.Code, extractError(rec.Body.String()))
+	}
+
+	// Only the last cookie for the name survives, as in a browser.
+	var last *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionName {
+			last = c
+		}
+	}
+	if last == nil {
+		t.Fatal("signup set no session cookie")
+	}
+	rig.cookies = []*http.Cookie{last}
+
+	dash := rig.do("GET", "/dashboard", nil)
+	if dash.Code != http.StatusOK {
+		t.Fatalf("after signup the dashboard answered %d -> %q; the new account is not signed in",
+			dash.Code, dash.Header().Get("Location"))
+	}
+	if !strings.Contains(dash.Body.String(), "Welcome to YABA") {
+		t.Error("the welcome message should be shown on the first dashboard after signup")
+	}
+}
+
+// ── moving an entry between months ────────────────────────────────────────────
+
+// TestMovingAnEntryToAnotherMonthRecalculatesBoth. The funding waterfall is
+// stored per month, so changing a date moves the entry out of one month and
+// into another and BOTH have to be re-poured. handleTransactionDelete gets this
+// right -- it reads the date before deleting -- but the edit path used to pass
+// only the new date, leaving the old month permanently holding allocations
+// against income that is no longer in it. Nothing ever recomputed that month
+// again, so the stale figure was there until somebody happened to press
+// Recalculate while viewing it.
+func TestMovingAnEntryToAnotherMonthRecalculatesBoth(t *testing.T) {
+	rig := newRig(t)
+	rig.login()
+	ctx := context.Background()
+
+	if _, err := rig.store.CreateBucket(ctx, rig.scope, store.NewBucket{
+		Name: "Rent", CostKind: store.CostFixed, Fixed: 90000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := rig.store.Add(ctx, rig.scope, store.NewTransaction{
+		Kind: store.KindIncome, Label: "Salary", Amount: 90000, OccurredOn: "2026-03-05",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.store.ReallocateMonthOf(ctx, rig.scope, "2026-03-05"); err != nil {
+		t.Fatal(err)
+	}
+
+	allocated := func(month string) money.Cents {
+		t.Helper()
+		var c int64
+		if err := rig.db.QueryRow(
+			`SELECT IFNULL(SUM(amount_cents), 0) FROM allocations WHERE month = ?`,
+			month).Scan(&c); err != nil {
+			t.Fatalf("read allocations for %s: %v", month, err)
+		}
+		return money.Cents(c)
+	}
+	if got := allocated("2026-03"); got != 90000 {
+		t.Fatalf("March starts with %d allocated, want 90000", got)
+	}
+
+	// The date was wrong: the salary actually arrived in April.
+	rec := rig.post(fmt.Sprintf("/transactions/%d/edit", id), url.Values{
+		"kind":    {"income"},
+		"label":   {"Salary"},
+		"amount":  {"900.00"},
+		"date":    {"2026-04-05"},
+		"version": {"1"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("edit: status %d, body %q", rec.Code, extractError(rec.Body.String()))
+	}
+
+	if got := allocated("2026-03"); got != 0 {
+		t.Errorf("March still has %d allocated after the income moved out of it", got)
+	}
+	if got := allocated("2026-04"); got != 90000 {
+		t.Errorf("April has %d allocated, want 90000", got)
+	}
+}
+
+// TestAPartialFailureIsNotHiddenByTheSuccessMessage. There is one flash slot
+// per redirect, so a warning written before the success message is simply
+// overwritten by it. The user is then told "saved" while the line items, the
+// receipt or the month's funding quietly did not survive the save -- the worst
+// possible outcome, because nothing on screen ever admits it.
+func TestAPartialFailureIsNotHiddenByTheSuccessMessage(t *testing.T) {
+	const saved = "Expense of $31.40 saved."
+
+	if kind, text := (warnings{}).fold(saved); kind != "success" || text != saved {
+		t.Errorf("with nothing wrong: kind=%q text=%q", kind, text)
+	}
+
+	var ws warnings
+	ws.add("The line items could not be stored: %s", "constraint failed")
+	ws.add("The receipt could not be attached to it.")
+
+	kind, text := ws.fold(saved)
+	if kind == "success" {
+		t.Error("a partial failure was dressed up as a plain success")
+	}
+	if !strings.Contains(text, saved) {
+		t.Errorf("the message no longer says what was saved: %q", text)
+	}
+	for _, want := range []string{"line items", "receipt"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the %s warning was dropped: %q", want, text)
+		}
+	}
+}
+
+// TestAFailureAfterTheTokenIsSpentStillLetsTheUserSave. The one-time token is
+// consumed before three things that can still refuse the entry: an unusable
+// receipt, a receipt id already used, and a bucket that has since been deleted.
+// The form is then re-rendered with the spent token, so when the user fixes the
+// problem and presses Save the handler reports "That entry was already saved."
+// and records nothing. The money is silently lost and the user is told the
+// opposite -- worse than any error message.
+func TestAFailureAfterTheTokenIsSpentStillLetsTheUserSave(t *testing.T) {
+	rig := newRig(t)
+	rig.login()
+
+	tokenFrom := func(page string) string {
+		t.Helper()
+		m := regexp.MustCompile(`name="form_token" value="([^"]+)"`).FindStringSubmatch(page)
+		if m == nil {
+			t.Fatal("the add-entry form carries no one-time token")
+		}
+		return m[1]
+	}
+
+	form := url.Values{
+		"kind": {"expense"}, "label": {"Groceries"}, "amount": {"31.40"},
+		"date": {"2026-08-01"},
+		// A bucket that does not exist: this passes form validation and is
+		// refused by the store, which is one of the paths past the token.
+		"bucket_id":  {"999999"},
+		"form_token": {tokenFrom(rig.do("GET", "/transactions/new", nil).Body.String())},
+	}
+
+	rec := rig.post("/transactions/new", form)
+	if rec.Code == http.StatusSeeOther {
+		t.Fatalf("the bad bucket was accepted: %s", rec.Header().Get("Location"))
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "no longer exists") {
+		t.Fatalf("unexpected refusal: %q", extractError(body))
+	}
+
+	// The user removes the bad bucket and saves again, using whatever token the
+	// re-rendered page gave them -- which is what a browser would send.
+	form.Del("bucket_id")
+	form.Set("form_token", tokenFrom(body))
+
+	if rec := rig.post("/transactions/new", form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the corrected submit was refused: %d — %s", rec.Code, extractError(rec.Body.String()))
+	}
+
+	var n int
+	if err := rig.db.QueryRow(
+		`SELECT COUNT(*) FROM transactions WHERE label = 'Groceries'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("%d expenses recorded after a corrected resubmit, want 1", n)
 	}
 }

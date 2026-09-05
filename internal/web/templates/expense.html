@@ -49,13 +49,25 @@
     <h2>Waiting for details</h2>
     <p class="stat-note">
       {{if eq (len .Waiting) 1}}One receipt has{{else}}{{len .Waiting}} receipts have{{end}}
-      been uploaded to this budget but not entered yet. Amounts aren't read off
-      the image, so each one needs its figure typed in.
+      been uploaded to this budget but not entered yet. Where an amount could be
+      read off the image it is shown below — check it against the picture and
+      save, or correct it first.
     </p>
     <ul class="waiting-receipts">
       {{range .Waiting}}
       <li>
         <span class="waiting-name">{{.OriginalName}}</span>
+        {{/* What OCR made of it, if anything. A receipt that could not be read
+             says so rather than showing a confident-looking zero. */}}
+        {{with .Draft}}
+          {{if .HasTotal}}
+          <span class="waiting-amount {{if ne .Certainty "high"}}is-uncertain{{end}}">
+            {{money .Total}}{{with .Merchant}} · {{.}}{{end}}
+          </span>
+          {{else}}
+          <span class="stat-note">no amount could be read</span>
+          {{end}}
+        {{end}}
         <span class="stat-note">uploaded {{.CreatedAt}}</span>
         <span class="waiting-actions">
           <a class="btn btn-small btn-primary"

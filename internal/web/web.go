@@ -5,6 +5,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -32,14 +33,9 @@ import (
 	"github.com/jthomasw/YABA-2026/internal/store"
 )
 
-// Templates and static assets are compiled into the binary.
-//
-// The old code called template.ParseFiles("templates/dashboard.html", ...)
-// inside the handler on every single request. That re-read five files from
-// disk per page load, and because it used template.Must, a typo in any
-// template panicked the whole process instead of returning a 500. It also
-// meant the program only worked when launched from the repository root:
-// running the built .exe from anywhere else produced a blank page.
+// Templates and static assets are compiled into the binary, parsed once at
+// startup, so the built binary runs from any directory and a template error
+// fails the start rather than a request.
 //
 //go:embed templates
 var templateFS embed.FS
@@ -108,7 +104,17 @@ func New(st *store.Store, cfg Config) (*Server, error) {
 		return nil, err
 	}
 
-	cookies := sessions.NewCookieStore(cfg.SessionKey)
+	// Two keys, not one: with a single key gorilla signs the cookie but leaves
+	// it readable. The cookie holds only a session id, but that id is a bearer
+	// token for the row it names, and it should not be sitting in plain sight
+	// in proxy logs, browser profiles and crash dumps. The second key makes the
+	// cookie authenticated *and* encrypted.
+	//
+	// It is derived from the configured secret rather than asked for as another
+	// environment variable, so no deployment has to learn a new setting. The
+	// one visible cost is that cookies issued before this change no longer
+	// decode, which signs everybody out once.
+	cookies := sessions.NewCookieStore(cfg.SessionKey, deriveKey(cfg.SessionKey, "cookie-encryption-v1"))
 	cookies.Options = &sessions.Options{
 		Path:     "/",
 		MaxAge:   int((7 * 24 * time.Hour).Seconds()),
@@ -193,6 +199,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /transactions/{id}/edit", s.canEdit(s.handleTransactionUpdate))
 	mux.Handle("POST /transactions/{id}/delete", s.canEdit(s.handleTransactionDelete))
 	mux.Handle("GET  /transactions/{id}/receipt", s.authed(s.handleReceipt))
+	// The image of a receipt that is not yet an expense, for the confirmation
+	// form to show beside the figures OCR read off it. Only authed, like the
+	// route above: looking at a receipt is reading, and a viewer may read.
+	mux.Handle("GET  /receipts/{id}/image", s.authed(s.handleReceiptPreview))
 
 	// The import chooser now lives on /expense, so the old path redirects there
 	// rather than 404ing any bookmark or link that still points at it.
@@ -263,8 +273,8 @@ func (s *Server) ListenAndServe() error {
 	srv := &http.Server{
 		Addr:    s.cfg.Addr,
 		Handler: s.Handler(),
-		// The old server set no timeouts at all, so a client that opened a
-		// connection and never finished its request held a goroutine forever.
+		// Without timeouts a client that never finishes its request holds a
+		// goroutine forever.
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -863,11 +873,11 @@ func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int
 	// signing in rotates it, so a cached page fails the check with a baffling message.
 	w.Header().Set("Cache-Control", "no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
-	// Chart.js is loaded from a CDN, so script-src allows it; everything else is same-
-	// origin.
+	// Every script is same-origin: Chart.js is vendored into /static rather than
+	// pulled from a CDN, so no third party can reach the page.
 	w.Header().Set("Content-Security-Policy",
 		"default-src 'self'; "+
-			"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "+
+			"script-src 'self' 'unsafe-inline'; "+
 			"style-src 'self' 'unsafe-inline'; "+
 			"img-src 'self' data:; "+
 			"form-action 'self'; "+
@@ -955,6 +965,14 @@ func (s *Server) badRequest(w http.ResponseWriter, msg string) {
 // ═════════════════════════════════════════════════════════════════════════════
 // assets.go
 // ═════════════════════════════════════════════════════════════════════════════
+
+// deriveKey produces a 32-byte subkey from the session secret, separated by
+// purpose so two uses of the secret can never be the same key.
+func deriveKey(secret []byte, purpose string) []byte {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(purpose))
+	return mac.Sum(nil)
+}
 
 // assetFingerprints maps a static filename to a short hash of its contents.
 type assetFingerprints map[string]string

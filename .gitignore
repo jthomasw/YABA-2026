@@ -46,3 +46,11 @@ Thumbs.db
 *.swp
 *~
 .idea/
+
+# Vendored dependencies (rebuilt automatically from go.mod/go.sum) and
+# non-code documents/presentations that aren't needed to run the project.
+vendor/
+*.docx
+*.doc
+*.pptx
+*.ppt

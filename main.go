@@ -48,7 +48,6 @@ func main() {
 		smtpPort = flag.Int("smtp-port", int(envInt64("YABA_SMTP_PORT", 587)), "SMTP port (587 STARTTLS, 465 TLS)")
 		smtpUser = flag.String("smtp-user", envOr("YABA_SMTP_USER", ""), "SMTP username")
 		smtpFrom = flag.String("smtp-from", envOr("YABA_SMTP_FROM", ""), `sender, e.g. "YABA <you@example.com>"`)
-
 	)
 	flag.Parse()
 
@@ -147,35 +146,24 @@ func run(cfg config) error {
 
 	st := store.New(sqlDB)
 
-	// Housekeeping only: an expired session is refused whether or not the row exists,
-	// so a failure is logged rather than fatal. Without it the table grows forever.
-	if n, err := st.PurgeExpiredSessions(context.Background()); err != nil {
-		log.Printf("startup: could not purge expired sessions: %v", err)
-	} else if n > 0 {
-		log.Printf("startup: purged %d expired session(s)", n)
-	}
-
-	// The same for spent reset tokens, lapsed invitations and aged-out login windows:
-	// every query that reads them already filters, so a failure here is logged, not fatal.
-	if n, err := st.PurgeExpiredResets(context.Background()); err != nil {
-		log.Printf("startup: could not purge reset tokens: %v", err)
-	} else if n > 0 {
-		log.Printf("startup: purged %d expired reset token(s)", n)
-	}
-	if n, err := st.PurgeOldAttempts(context.Background()); err != nil {
-		log.Printf("startup: could not purge login attempts: %v", err)
-	} else if n > 0 {
-		log.Printf("startup: purged %d stale login-attempt window(s)", n)
-	}
-	if n, err := st.PurgeStaleInvites(context.Background()); err != nil {
-		log.Printf("startup: could not purge stale invitations: %v", err)
-	} else if n > 0 {
-		log.Printf("startup: purged %d long-expired invitation(s)", n)
-	}
-	if n, err := st.PurgeOldFormTokens(context.Background()); err != nil {
-		log.Printf("startup: could not purge form tokens: %v", err)
-	} else if n > 0 {
-		log.Printf("startup: purged %d unused form token(s)", n)
+	// Housekeeping. Every query that reads these tables already filters out
+	// expired rows, so a failure here is logged rather than fatal; without the
+	// sweeps the tables simply grow forever.
+	for _, sweep := range []struct {
+		what string
+		run  func(context.Context) (int64, error)
+	}{
+		{"expired session(s)", st.PurgeExpiredSessions},
+		{"expired reset token(s)", st.PurgeExpiredResets},
+		{"stale login-attempt window(s)", st.PurgeOldAttempts},
+		{"long-expired invitation(s)", st.PurgeStaleInvites},
+		{"unused form token(s)", st.PurgeOldFormTokens},
+	} {
+		if n, err := sweep.run(context.Background()); err != nil {
+			log.Printf("startup: could not purge %s: %v", sweep.what, err)
+		} else if n > 0 {
+			log.Printf("startup: purged %d %s", n, sweep.what)
+		}
 	}
 
 	// The receipt queue is drained by a background goroutine, started before the server
@@ -183,9 +171,19 @@ func run(cfg config) error {
 	ctx, cancelWorker := context.WithCancel(context.Background())
 	defer cancelWorker()
 
-	// nil means the default processor, which stores and queues the receipt for the
-	// amount to be typed in. Passing one here is the seam for reading it automatically.
-	receipts := worker.New(st, nil, 5*time.Second)
+	// The OCR processor reads the amount, date and merchant off the image. It
+	// returns nil when the machine has no tesseract binary, and worker.New turns
+	// a nil processor into the review-only behaviour this had before -- so a
+	// deployment without OCR installed degrades to queueing the receipt for
+	// manual entry rather than failing every upload.
+	//
+	// Whatever it reads is a draft the user confirms. Nothing here writes a
+	// transaction.
+	var processor worker.Processor
+	if p := worker.NewOCRProcessor(); p != nil {
+		processor = p
+	}
+	receipts := worker.New(st, processor, 5*time.Second)
 	go receipts.Run(ctx)
 
 	// Snapshots on a timer, sharing the worker's cancellation so they stop with

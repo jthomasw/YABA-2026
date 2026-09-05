@@ -6,8 +6,10 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"time"
@@ -97,6 +99,20 @@ func monthRange(month string) (start, end string, err error) {
 		return "", "", fmt.Errorf("month must look like YYYY-MM")
 	}
 	return t.Format(DateLayout), t.AddDate(0, 1, 0).Format(DateLayout), nil
+}
+
+// monthClause is the optional " AND occurred_on >= ? AND occurred_on < ?" that
+// narrows a query to one month, with its two bound values; both are empty for
+// all time. prefix qualifies the column, e.g. "t.".
+func monthClause(month, prefix string) (clause string, args []any, err error) {
+	if month == "" {
+		return "", nil, nil
+	}
+	start, end, err := monthRange(month)
+	if err != nil {
+		return "", nil, err
+	}
+	return " AND " + prefix + "occurred_on >= ? AND " + prefix + "occurred_on < ?", []any{start, end}, nil
 }
 
 // LabelTotal is one slice of a breakdown chart.
@@ -338,6 +354,17 @@ func (s *Store) Update(ctx context.Context, sc Scope, id int64, n NewTransaction
 		return err
 	}
 
+	if n.Version == 0 {
+		// A zero version skips the compare-and-swap in the UPDATE below, so this
+		// save cannot be refused for being stale. The column defaults to 1 and
+		// only ever climbs, so no real row is version 0 and every edit form
+		// carries one: a save arriving without it did not come from one of our
+		// pages. The hatch stays because silently rejecting such a save would be
+		// worse than taking it, but a lost update is invisible by nature and
+		// needs to leave a trace. If this line never appears, the hatch can go.
+		log.Printf("store: transaction %d updated with no version; staleness check skipped", id)
+	}
+
 	// The WHERE clause carries household_id as well as id, so a guessed id belonging to
 	// someone else affects zero rows.
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
@@ -449,9 +476,7 @@ type Filter struct {
 	Transfer string // "hide" to omit fund movements
 }
 
-// DefaultPageSize bounds a transaction page. The old /transactions route
-// selected every row a user had ever created with no LIMIT, so the page grew
-// without bound and the whole history was rendered on every request.
+// DefaultPageSize bounds a transaction page.
 const DefaultPageSize = 25
 
 // where builds the shared WHERE clause and its arguments.
@@ -602,15 +627,14 @@ func (t Totals) Saved() Cents {
 }
 
 // NetWorth is cash plus savings. Transfers cancel out, so this figure is
-// unaffected by moving money between pots -- the property the old code broke
-// by booking deposits as expenses.
+// unaffected by moving money between pots.
 func (t Totals) NetWorth() Cents {
 	return t.Income - t.Expense
 }
 
 // Totals aggregates all four kinds in a single pass.
 func (s *Store) Totals(ctx context.Context, sc Scope, month string) (Totals, error) {
-	start, end, err := monthRange(month)
+	clause, span, err := monthClause(month, "")
 	if err != nil {
 		return Totals{}, err
 	}
@@ -622,12 +646,8 @@ func (s *Store) Totals(ctx context.Context, sc Scope, month string) (Totals, err
 			IFNULL(SUM(CASE kind WHEN 'fund_deposit'    THEN amount_cents ELSE 0 END), 0),
 			IFNULL(SUM(CASE kind WHEN 'fund_withdrawal' THEN amount_cents ELSE 0 END), 0)
 		FROM transactions
-		WHERE household_id = ?`
-	args := []any{sc.HouseholdID}
-	if month != "" {
-		q += ` AND occurred_on >= ? AND occurred_on < ?`
-		args = append(args, start, end)
-	}
+		WHERE household_id = ?` + clause
+	args := append([]any{sc.HouseholdID}, span...)
 
 	var t Totals
 	var in, ex, dep, wd int64
@@ -658,7 +678,7 @@ func (s *Store) Breakdown(ctx context.Context, sc Scope, kind Kind, month string
 	if !kind.Valid() {
 		return nil, fmt.Errorf("unknown transaction type %q", kind)
 	}
-	start, end, err := monthRange(month)
+	clause, span, err := monthClause(month, "")
 	if err != nil {
 		return nil, err
 	}
@@ -667,12 +687,8 @@ func (s *Store) Breakdown(ctx context.Context, sc Scope, kind Kind, month string
 		SELECT CASE WHEN TRIM(label) = '' THEN 'Uncategorised' ELSE TRIM(label) END AS grp,
 		       SUM(amount_cents)
 		FROM transactions
-		WHERE household_id = ? AND kind = ?`
-	args := []any{sc.HouseholdID, string(kind)}
-	if month != "" {
-		q += ` AND occurred_on >= ? AND occurred_on < ?`
-		args = append(args, start, end)
-	}
+		WHERE household_id = ? AND kind = ?` + clause
+	args := append([]any{sc.HouseholdID, string(kind)}, span...)
 	q += ` GROUP BY grp ORDER BY SUM(amount_cents) DESC`
 
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -698,7 +714,7 @@ func (s *Store) Breakdown(ctx context.Context, sc Scope, kind Kind, month string
 
 // EssentialSplit divides real spending into essential and non-essential.
 func (s *Store) EssentialSplit(ctx context.Context, sc Scope, month string) (essential, other Cents, err error) {
-	start, end, err := monthRange(month)
+	clause, span, err := monthClause(month, "")
 	if err != nil {
 		return 0, 0, err
 	}
@@ -706,12 +722,8 @@ func (s *Store) EssentialSplit(ctx context.Context, sc Scope, month string) (ess
 		SELECT IFNULL(SUM(CASE WHEN essential = 1 THEN amount_cents ELSE 0 END), 0),
 		       IFNULL(SUM(CASE WHEN essential = 0 THEN amount_cents ELSE 0 END), 0)
 		FROM transactions
-		WHERE household_id = ? AND kind = 'expense'`
-	args := []any{sc.HouseholdID}
-	if month != "" {
-		q += ` AND occurred_on >= ? AND occurred_on < ?`
-		args = append(args, start, end)
-	}
+		WHERE household_id = ? AND kind = 'expense'` + clause
+	args := append([]any{sc.HouseholdID}, span...)
 	var e, o int64
 	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&e, &o); err != nil {
 		return 0, 0, fmt.Errorf("essential split: %w", err)
@@ -778,6 +790,12 @@ func (m MonthPoint) SavingsRate() float64 {
 // MonthlySeries returns the last n calendar months of income and spending,
 // oldest first, including months with no activity so the chart has no gaps.
 func (s *Store) MonthlySeries(ctx context.Context, sc Scope, n int) ([]MonthPoint, error) {
+	return s.MonthlySeriesAsOf(ctx, sc, n, time.Now())
+}
+
+// MonthlySeriesAsOf is MonthlySeries ending at a given date, so the month
+// arithmetic can be tested on the days it used to get wrong.
+func (s *Store) MonthlySeriesAsOf(ctx context.Context, sc Scope, n int, now time.Time) ([]MonthPoint, error) {
 	if n <= 0 {
 		n = 6
 	}
@@ -811,9 +829,7 @@ func (s *Store) MonthlySeries(ctx context.Context, sc Scope, n int) ([]MonthPoin
 	// Walk backwards from this month so empty months appear as zero bars
 	// rather than being skipped, which would make a gap read as a short month.
 	out := make([]MonthPoint, 0, n)
-	now := time.Now()
-	for i := n - 1; i >= 0; i-- {
-		key := now.AddDate(0, -i, 0).Format(MonthLayout)
+	for _, key := range MonthsBack(now, n) {
 		if mp, ok := found[key]; ok {
 			out = append(out, mp)
 		} else {
@@ -821,6 +837,28 @@ func (s *Store) MonthlySeries(ctx context.Context, sc Scope, n int) ([]MonthPoin
 		}
 	}
 	return out, nil
+}
+
+// MonthsBack lists the n calendar months ending with the one containing now,
+// oldest first, as YYYY-MM.
+//
+// The anchor is the first of the month, not now itself, because AddDate
+// normalises an impossible date forwards: 31 May minus three months is 31
+// February, which becomes 3 March. Stepping back from the 29th, 30th or 31st
+// that way repeats some months and skips others -- on 31 May, twelve steps
+// produced only seven distinct months -- which silently corrupted the
+// month-by-month chart and every average taken over it for the last few days
+// of most months.
+func MonthsBack(now time.Time, n int) []string {
+	if n <= 0 {
+		return nil
+	}
+	first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	out := make([]string, 0, n)
+	for i := n - 1; i >= 0; i-- {
+		out = append(out, first.AddDate(0, -i, 0).Format(MonthLayout))
+	}
+	return out
 }
 
 // Months lists the months the user has any activity in, newest first, to
@@ -1242,47 +1280,65 @@ const EmergencyFundName = "Emergency fund"
 
 // EmergencyFund returns the household's emergency fund, creating it on first use.
 func (s *Store) EmergencyFund(ctx context.Context, sc Scope) (Fund, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT `+fundColumns+`
-		FROM funds f
-		WHERE f.household_id = ? AND f.is_emergency = 1 AND f.closed_at IS NULL`, sc.HouseholdID)
-	f, err := scanFund(row)
-	if err == nil {
-		return f, nil
-	}
+	f, err := s.emergencyFund(ctx, sc)
 	if !errors.Is(err, sql.ErrNoRows) {
+		return f, err
+	}
+
+	// Creating it is a read-decide-write against a partial unique index
+	// (idx_funds_one_emergency), so it happens in one transaction. Two
+	// dashboard loads arriving together -- two tabs, or a page and its own
+	// refresh -- otherwise both found no fund and the second INSERT failed the
+	// constraint, turning a household's first visit into a 500.
+	if err := s.inTx(ctx, func(tx *sql.Tx) error {
+		// The other request may have created it between the read above and here.
+		var existing int64
+		err := tx.QueryRowContext(ctx, `
+			SELECT id FROM funds
+			WHERE household_id = ? AND is_emergency = 1 AND closed_at IS NULL`,
+			sc.HouseholdID).Scan(&existing)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read emergency fund: %w", err)
+		}
+
+		// Adopt an obviously-intended fund before creating a second.
+		var adoptID int64
+		err = tx.QueryRowContext(ctx, `
+			SELECT id FROM funds
+			WHERE household_id = ? AND closed_at IS NULL AND is_emergency = 0
+			  AND LOWER(name) LIKE '%emergency%'
+			ORDER BY id ASC LIMIT 1`, sc.HouseholdID).Scan(&adoptID)
+		switch {
+		case err == nil:
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE funds SET is_emergency = 1 WHERE id = ? AND household_id = ?`,
+				adoptID, sc.HouseholdID); err != nil {
+				return fmt.Errorf("adopt emergency fund: %w", err)
+			}
+		case errors.Is(err, sql.ErrNoRows):
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO funds(household_id, user_id, name, is_emergency) VALUES(?, ?, ?, 1)`,
+				sc.HouseholdID, sc.UserID, EmergencyFundName); err != nil {
+				return fmt.Errorf("create emergency fund: %w", err)
+			}
+		default:
+			return fmt.Errorf("find adoptable fund: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return Fund{}, err
 	}
+	return s.emergencyFund(ctx, sc)
+}
 
-	// Adopt an obviously-intended fund before creating a second.
-	var adoptID int64
-	err = s.db.QueryRowContext(ctx, `
-		SELECT id FROM funds
-		WHERE household_id = ? AND closed_at IS NULL AND is_emergency = 0
-		  AND LOWER(name) LIKE '%emergency%'
-		ORDER BY id ASC LIMIT 1`, sc.HouseholdID).Scan(&adoptID)
-	switch {
-	case err == nil:
-		if _, err := s.db.ExecContext(ctx,
-			`UPDATE funds SET is_emergency = 1 WHERE id = ? AND household_id = ?`,
-			adoptID, sc.HouseholdID); err != nil {
-			return Fund{}, fmt.Errorf("adopt emergency fund: %w", err)
-		}
-	case errors.Is(err, sql.ErrNoRows):
-		if _, err := s.db.ExecContext(ctx,
-			`INSERT INTO funds(household_id, user_id, name, is_emergency) VALUES(?, ?, ?, 1)`,
-			sc.HouseholdID, sc.UserID, EmergencyFundName); err != nil {
-			return Fund{}, fmt.Errorf("create emergency fund: %w", err)
-		}
-	default:
-		return Fund{}, fmt.Errorf("find adoptable fund: %w", err)
-	}
-
-	row = s.db.QueryRowContext(ctx, `
+func (s *Store) emergencyFund(ctx context.Context, sc Scope) (Fund, error) {
+	return scanFund(s.db.QueryRowContext(ctx, `
 		SELECT `+fundColumns+`
 		FROM funds f
-		WHERE f.household_id = ? AND f.is_emergency = 1 AND f.closed_at IS NULL`, sc.HouseholdID)
-	return scanFund(row)
+		WHERE f.household_id = ? AND f.is_emergency = 1 AND f.closed_at IS NULL`, sc.HouseholdID))
 }
 
 // FundWithdrawalHistory returns the monthly total withdrawn from one fund, oldest
@@ -1707,8 +1763,7 @@ func (s *Store) Buckets(ctx context.Context, sc Scope, month string) ([]Bucket, 
 		return nil, err
 	}
 
-	// One query with correlated subqueries for the three per-month figures.
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, bucketHistoryCTE+`
 		SELECT b.id, b.name, b.priority, b.cost_kind, b.fixed_cents, b.essential,
 		       IFNULL((
 		           SELECT SUM(t.amount_cents) FROM transactions t
@@ -1719,46 +1774,12 @@ func (s *Store) Buckets(ctx context.Context, sc Scope, month string) ([]Bucket, 
 		           SELECT SUM(a.amount_cents) FROM allocations a
 		           WHERE a.bucket_id = b.id AND a.month = ?
 		       ), 0) AS allocated,
-		       IFNULL((
-		           -- Trailing average of the last six months that had activity,
-		           -- excluding the month being viewed so a part-paid month does
-		           -- not drag the estimate down.
-		           SELECT AVG(m.total) FROM (
-		               SELECT SUM(t2.amount_cents) AS total
-		               FROM transactions t2
-		               WHERE t2.bucket_id = b.id AND t2.kind = 'expense'
-		                 AND t2.occurred_on < ?
-		               GROUP BY substr(t2.occurred_on, 1, 7)
-		               ORDER BY substr(t2.occurred_on, 1, 7) DESC
-		               LIMIT 6
-		           ) m
-		       ), 0) AS estimate,
-		       IFNULL((
-		           SELECT MIN(m.total) FROM (
-		               SELECT SUM(t3.amount_cents) AS total
-		               FROM transactions t3
-		               WHERE t3.bucket_id = b.id AND t3.kind = 'expense'
-		                 AND t3.occurred_on < ?
-		               GROUP BY substr(t3.occurred_on, 1, 7)
-		               ORDER BY substr(t3.occurred_on, 1, 7) DESC
-		               LIMIT 6
-		           ) m
-		       ), 0) AS low,
-		       IFNULL((
-		           SELECT MAX(m.total) FROM (
-		               SELECT SUM(t4.amount_cents) AS total
-		               FROM transactions t4
-		               WHERE t4.bucket_id = b.id AND t4.kind = 'expense'
-		                 AND t4.occurred_on < ?
-		               GROUP BY substr(t4.occurred_on, 1, 7)
-		               ORDER BY substr(t4.occurred_on, 1, 7) DESC
-		               LIMIT 6
-		           ) m
-		       ), 0) AS high
+		       IFNULL(h.estimate, 0), IFNULL(h.low, 0), IFNULL(h.high, 0)
 		FROM expense_buckets b
+		LEFT JOIN history h ON h.bucket_id = b.id
 		WHERE b.household_id = ? AND b.archived_at IS NULL
 		ORDER BY b.priority ASC, b.id ASC`,
-		start, end, month, start, start, start, sc.HouseholdID)
+		sc.HouseholdID, start, start, end, month, sc.HouseholdID)
 	if err != nil {
 		return nil, fmt.Errorf("list buckets: %w", err)
 	}
@@ -1789,6 +1810,30 @@ func (s *Store) Buckets(ctx context.Context, sc Scope, month string) ([]Bucket, 
 	}
 	return out, rows.Err()
 }
+
+// bucketHistoryCTE summarises each bucket's trailing six months of activity
+// before a given date: the mean, cheapest and dearest month, which are the
+// estimate and range for a variable bucket. It takes two arguments, the
+// household id and the start date, and is prefixed to the queries that need it
+// so the figure the waterfall funds and the figure the dashboard shows come from
+// the same SQL. Months are ranked with a window function so the six-month
+// window is applied per bucket in a single pass over the table.
+const bucketHistoryCTE = `
+	WITH months AS (
+		SELECT bucket_id, substr(occurred_on, 1, 7) AS month, SUM(amount_cents) AS total
+		FROM transactions
+		WHERE household_id = ? AND kind = 'expense' AND bucket_id IS NOT NULL
+		  AND occurred_on < ?
+		GROUP BY bucket_id, month
+	), recent AS (
+		SELECT bucket_id, total,
+		       ROW_NUMBER() OVER (PARTITION BY bucket_id ORDER BY month DESC) AS rank
+		FROM months
+	), history AS (
+		SELECT bucket_id, AVG(total) AS estimate, MIN(total) AS low, MAX(total) AS high
+		FROM recent WHERE rank <= 6
+		GROUP BY bucket_id
+	)`
 
 // bucketDue computes what a bucket needs for the month, as a plain function so the
 // allocation code and the display code cannot disagree about the number.
@@ -1826,29 +1871,6 @@ func bucketRange(b Bucket, low, high Cents) (Cents, Cents) {
 	return low, high
 }
 
-// BucketByID returns one active bucket.
-func (s *Store) BucketByID(ctx context.Context, sc Scope, bucketID int64) (Bucket, error) {
-	var b Bucket
-	var kind string
-	var fixed int64
-	var essential int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, priority, cost_kind, fixed_cents, essential
-		 FROM expense_buckets
-		 WHERE id = ? AND household_id = ? AND archived_at IS NULL`, bucketID, sc.HouseholdID).
-		Scan(&b.ID, &b.Name, &b.Priority, &kind, &fixed, &essential)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Bucket{}, ErrNotFound
-	}
-	if err != nil {
-		return Bucket{}, fmt.Errorf("bucket by id: %w", err)
-	}
-	b.CostKind = CostKind(kind)
-	b.Fixed = Cents(fixed)
-	b.Essential = essential == 1
-	return b, nil
-}
-
 // BucketOptions lists active buckets for a form's select element.
 func (s *Store) BucketOptions(ctx context.Context, sc Scope) ([]Bucket, error) {
 	rows, err := s.db.QueryContext(ctx,
@@ -1875,20 +1897,19 @@ func (s *Store) BucketOptions(ctx context.Context, sc Scope) ([]Bucket, error) {
 	return out, rows.Err()
 }
 
-// EssentialMonthlyCost sums the monthly requirement of every bucket tagged essential,
+// EssentialCost sums the monthly requirement of every bucket tagged essential,
 // which is how the emergency fund target is sized.
-func (s *Store) EssentialMonthlyCost(ctx context.Context, sc Scope, month string) (Cents, error) {
-	buckets, err := s.Buckets(ctx, sc, month)
-	if err != nil {
-		return 0, err
-	}
+//
+// It takes the month's buckets rather than fetching them: every caller is
+// already holding them, and Buckets is the most expensive read in the app.
+func EssentialCost(buckets []Bucket) Cents {
 	var total Cents
 	for _, b := range buckets {
 		if b.Essential {
 			total += b.Due
 		}
 	}
-	return total, nil
+	return total
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1949,28 +1970,19 @@ func (s *Store) Reallocate(ctx context.Context, sc Scope, month string) error {
 			due      Cents
 			assigned Cents
 		}
-		rows, err := tx.QueryContext(ctx, `
+		rows, err := tx.QueryContext(ctx, bucketHistoryCTE+`
 			SELECT b.id, b.cost_kind, b.fixed_cents,
 			       IFNULL((
 			           SELECT SUM(t.amount_cents) FROM transactions t
 			           WHERE t.bucket_id = b.id AND t.kind = 'expense'
 			             AND t.occurred_on >= ? AND t.occurred_on < ?
 			       ), 0) AS spent,
-			       IFNULL((
-			           SELECT AVG(m.total) FROM (
-			               SELECT SUM(t2.amount_cents) AS total
-			               FROM transactions t2
-			               WHERE t2.bucket_id = b.id AND t2.kind = 'expense'
-			                 AND t2.occurred_on < ?
-			               GROUP BY substr(t2.occurred_on, 1, 7)
-			               ORDER BY substr(t2.occurred_on, 1, 7) DESC
-			               LIMIT 6
-			           ) m
-			       ), 0) AS estimate
+			       IFNULL(h.estimate, 0) AS estimate
 			FROM expense_buckets b
+			LEFT JOIN history h ON h.bucket_id = b.id
 			WHERE b.household_id = ? AND b.archived_at IS NULL
 			ORDER BY b.priority ASC, b.id ASC`,
-			start, end, start, sc.HouseholdID)
+			sc.HouseholdID, start, start, end, sc.HouseholdID)
 		if err != nil {
 			return fmt.Errorf("read buckets for allocation: %w", err)
 		}
@@ -2074,8 +2086,10 @@ func (s *Store) ReallocateMonthOf(ctx context.Context, sc Scope, date string) er
 	return s.Reallocate(ctx, sc, date[:7])
 }
 
-// AllocationsFor returns the month's summary.
-func (s *Store) AllocationsFor(ctx context.Context, sc Scope, month string) (AllocationSummary, error) {
+// AllocationsFor returns the month's summary. The month's buckets are passed
+// in rather than re-read: only their Due totals are wanted here, and every
+// caller has just fetched them.
+func (s *Store) AllocationsFor(ctx context.Context, sc Scope, month string, buckets []Bucket) (AllocationSummary, error) {
 	if month == "" {
 		month = Today()[:7]
 	}
@@ -2100,10 +2114,6 @@ func (s *Store) AllocationsFor(ctx context.Context, sc Scope, month string) (All
 		return AllocationSummary{}, fmt.Errorf("allocation total: %w", err)
 	}
 
-	buckets, err := s.Buckets(ctx, sc, month)
-	if err != nil {
-		return AllocationSummary{}, err
-	}
 	for _, b := range buckets {
 		sum.Required += b.Due
 	}
@@ -2299,17 +2309,12 @@ func (s *Store) LineItemCounts(ctx context.Context, sc Scope, txIDs []int64) (ma
 // CategoryBreakdown totals spending by category, using line-item categories where a
 // transaction has them and its own label where it does not.
 func (s *Store) CategoryBreakdown(ctx context.Context, sc Scope, month string) ([]LabelTotal, error) {
-	start, end, err := monthRange(month)
+	clause, span, err := monthClause(month, "t.")
 	if err != nil {
 		return nil, err
 	}
-
-	where := `t.household_id = ? AND t.kind = 'expense'`
-	args := []any{sc.HouseholdID}
-	if month != "" {
-		where += ` AND t.occurred_on >= ? AND t.occurred_on < ?`
-		args = append(args, start, end)
-	}
+	where := `t.household_id = ? AND t.kind = 'expense'` + clause
+	args := append([]any{sc.HouseholdID}, span...)
 	// The argument list is consumed twice, once per half of the UNION ALL.
 	args = append(args, args...)
 
@@ -2580,50 +2585,31 @@ func (s *Store) CreateUser(ctx context.Context, email, passwordHash string) (int
 // first and case-insensitively second.
 func (s *Store) CredentialsFor(ctx context.Context, email string) (User, string, error) {
 	typed := strings.TrimSpace(email)
-
-	// Stage 1: exact.
-	u, hash, err := s.credentialsExact(ctx, typed)
-	if err == nil {
-		return u, hash, nil
+	u, hash, err := s.credentials(ctx, typed, "")
+	if errors.Is(err, ErrNotFound) {
+		// Case-insensitive second. LIMIT by lowest id keeps the result
+		// deterministic if an ambiguous legacy pair is somehow reached from here.
+		u, hash, err = s.credentials(ctx, NormalizeEmail(typed), " COLLATE NOCASE")
 	}
-	if !errors.Is(err, ErrNotFound) {
-		return User{}, "", err
-	}
-
-	// Stage 2: case-insensitive. LIMIT is by lowest id so the result is at least
-	// deterministic if an ambiguous pair is somehow reached from here.
-	err = s.db.QueryRowContext(ctx, `
-		SELECT id, IFNULL(email, username), IFNULL(display_name, ''), password_hash
-		FROM users
-		WHERE email = ? COLLATE NOCASE OR username = ? COLLATE NOCASE
-		ORDER BY id ASC
-		LIMIT 1`,
-		NormalizeEmail(typed), NormalizeEmail(typed),
-	).Scan(&u.ID, &u.Email, &u.DisplayName, &hash)
-	if errors.Is(err, sql.ErrNoRows) {
-		return User{}, "", ErrNotFound
-	}
-	if err != nil {
-		return User{}, "", fmt.Errorf("select user: %w", err)
-	}
-	return u, hash, nil
+	return u, hash, err
 }
 
-// credentialsExact matches the typed string byte for byte.
-func (s *Store) credentialsExact(ctx context.Context, typed string) (User, string, error) {
+// credentials looks an account up by email or legacy username, with the
+// collation given ("" for exact, " COLLATE NOCASE" for case-insensitive).
+func (s *Store) credentials(ctx context.Context, ident, collate string) (User, string, error) {
 	var u User
 	var hash string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, IFNULL(email, username), IFNULL(display_name, ''), password_hash
 		FROM users
-		WHERE email = ? OR username = ?
+		WHERE email = ?`+collate+` OR username = ?`+collate+`
 		ORDER BY id ASC
-		LIMIT 1`, typed, typed).Scan(&u.ID, &u.Email, &u.DisplayName, &hash)
+		LIMIT 1`, ident, ident).Scan(&u.ID, &u.Email, &u.DisplayName, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, "", ErrNotFound
 	}
 	if err != nil {
-		return User{}, "", fmt.Errorf("select user (exact): %w", err)
+		return User{}, "", fmt.Errorf("select user: %w", err)
 	}
 	return u, hash, nil
 }
@@ -2642,26 +2628,18 @@ func (s *Store) EmailExists(ctx context.Context, email string) (bool, error) {
 	return n > 0, nil
 }
 
-// UserByID resolves the id held in a session to a live account.
-func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
-	var u User
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, IFNULL(email, username), IFNULL(display_name, '') FROM users WHERE id = ?`, id,
-	).Scan(&u.ID, &u.Email, &u.DisplayName)
-	if errors.Is(err, sql.ErrNoRows) {
-		return User{}, ErrNotFound
-	}
-	if err != nil {
-		return User{}, fmt.Errorf("select user by id: %w", err)
-	}
-	return u, nil
-}
-
 // ═════════════════════════════════════════════════════════════════════════════
 // sessions
 // ═════════════════════════════════════════════════════════════════════════════
 
 // A login is a row here, not just a signed cookie.
+
+// after and ago render a duration as a SQLite datetime modifier, "+86400 seconds"
+// and "-86400 seconds", so every expiry is computed by SQLite in the same clock
+// the later comparison uses -- and derived from the Go constant, so the two
+// cannot disagree.
+func after(d time.Duration) string { return fmt.Sprintf("+%d seconds", int64(d.Seconds())) }
+func ago(d time.Duration) string   { return fmt.Sprintf("-%d seconds", int64(d.Seconds())) }
 
 const (
 	// SessionTTL is how long a login lasts from the moment it is created, however active
@@ -2770,9 +2748,7 @@ func (s *Store) CreateSession(ctx context.Context, userID int64, userAgent strin
 	if err != nil {
 		return "", err
 	}
-	// The TTL is passed as a bound modifier so the expiry is computed by SQLite in the
-	// same clock the comparison later uses.
-	ttl := fmt.Sprintf("+%d seconds", int64(SessionTTL.Seconds()))
+	ttl := after(SessionTTL)
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO sessions(id, user_id, expires_at, user_agent)
 		VALUES (?, ?, datetime('now', ?), ?)`,
@@ -2788,7 +2764,7 @@ func (s *Store) SessionUser(ctx context.Context, id string) (User, error) {
 		return User{}, ErrNotFound
 	}
 
-	idle := fmt.Sprintf("-%d seconds", int64(SessionIdleTTL.Seconds()))
+	idle := ago(SessionIdleTTL)
 
 	var u User
 	err := s.db.QueryRowContext(ctx, `
@@ -2807,7 +2783,7 @@ func (s *Store) SessionUser(ctx context.Context, id string) (User, error) {
 		return User{}, fmt.Errorf("resolve session: %w", err)
 	}
 
-	stale := fmt.Sprintf("-%d seconds", int64(sessionTouchAfter.Seconds()))
+	stale := ago(sessionTouchAfter)
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE sessions SET last_seen_at = datetime('now')
 		WHERE id = ? AND last_seen_at < datetime('now', ?)`, id, stale); err != nil {
@@ -2820,7 +2796,7 @@ func (s *Store) SessionUser(ctx context.Context, id string) (User, error) {
 
 // Sessions lists a user's live logins, most recently active first.
 func (s *Store) Sessions(ctx context.Context, userID int64, current string) ([]Session, error) {
-	idle := fmt.Sprintf("-%d seconds", int64(SessionIdleTTL.Seconds()))
+	idle := ago(SessionIdleTTL)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, user_id, created_at, last_seen_at, expires_at, user_agent
 		FROM sessions
@@ -2883,7 +2859,7 @@ func (s *Store) DeleteOtherSessions(ctx context.Context, userID int64, keep stri
 
 // PurgeExpiredSessions removes rows no login can use.
 func (s *Store) PurgeExpiredSessions(ctx context.Context) (int64, error) {
-	idle := fmt.Sprintf("-%d seconds", int64(SessionIdleTTL.Seconds()))
+	idle := ago(SessionIdleTTL)
 	res, err := s.db.ExecContext(ctx, `
 		DELETE FROM sessions
 		WHERE expires_at <= datetime('now')
@@ -2908,7 +2884,7 @@ func (s *Store) CreateReset(ctx context.Context, userID int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ttl := fmt.Sprintf("+%d seconds", int64(ResetTTL.Seconds()))
+	ttl := after(ResetTTL)
 
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
@@ -3048,7 +3024,7 @@ func (s *Store) ConsumeFormToken(ctx context.Context, userID int64, token string
 	if strings.TrimSpace(token) == "" {
 		return false, nil
 	}
-	age := fmt.Sprintf("-%d seconds", int64(FormTokenTTL.Seconds()))
+	age := ago(FormTokenTTL)
 
 	var got string
 	err := s.db.QueryRowContext(ctx, `
@@ -3066,7 +3042,7 @@ func (s *Store) ConsumeFormToken(ctx context.Context, userID int64, token string
 
 // PurgeOldFormTokens drops tokens for forms nobody ever submitted.
 func (s *Store) PurgeOldFormTokens(ctx context.Context) (int64, error) {
-	age := fmt.Sprintf("-%d seconds", int64(FormTokenTTL.Seconds()))
+	age := ago(FormTokenTTL)
 	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM form_tokens WHERE created_at <= datetime('now', ?)`, age)
 	if err != nil {
@@ -3147,15 +3123,29 @@ func (s *Store) AuditLog(ctx context.Context, sc Scope, limit int) ([]AuditEntry
 // ── login rate limiting ───────────────────────────────────────────────────────
 
 // RateWindow and RateMaxTries define the login limit.
+//
+// RateBurstTries is the separate ceiling for a whole-IP counter. It is several
+// times RateMaxTries on purpose: ten failures against one address is somebody
+// guessing at that account, but sixty failures from one address spread over
+// many accounts is a password spray, and a shared office or campus network has
+// to be able to mistype passwords all morning without the building losing
+// access.
 const (
-	RateWindow   = 10 * time.Minute
-	RateMaxTries = 10
+	RateWindow     = 10 * time.Minute
+	RateMaxTries   = 10
+	RateBurstTries = 60
 )
 
 // RateRetryIn reports how long a key must wait, or zero if it may try now.
 func (s *Store) RateRetryIn(ctx context.Context, key string) (time.Duration, error) {
-	window := fmt.Sprintf("-%d seconds", int64(RateWindow.Seconds()))
-	ahead := fmt.Sprintf("+%d seconds", int64(RateWindow.Seconds()))
+	return s.RateRetryInMax(ctx, key, RateMaxTries)
+}
+
+// RateRetryInMax is RateRetryIn against a caller-chosen budget, for counters
+// that are not one-per-account.
+func (s *Store) RateRetryInMax(ctx context.Context, key string, maxTries int64) (time.Duration, error) {
+	window := ago(RateWindow)
+	ahead := after(RateWindow)
 
 	// Seconds remaining are computed in SQL rather than by parsing the timestamp in Go.
 	var failures, remaining int64
@@ -3171,7 +3161,7 @@ func (s *Store) RateRetryIn(ctx context.Context, key string) (time.Duration, err
 	if err != nil {
 		return 0, fmt.Errorf("read login attempts: %w", err)
 	}
-	if failures < RateMaxTries {
+	if failures < maxTries {
 		return 0, nil
 	}
 	if remaining <= 0 {
@@ -3184,7 +3174,7 @@ func (s *Store) RateRetryIn(ctx context.Context, key string) (time.Duration, err
 // RateFail records a failed attempt, starting a new window when the old one has aged
 // out.
 func (s *Store) RateFail(ctx context.Context, key string) error {
-	window := fmt.Sprintf("-%d seconds", int64(RateWindow.Seconds()))
+	window := ago(RateWindow)
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO login_attempts(key, failures, window_start)
 		VALUES(?, 1, datetime('now'))
@@ -3215,7 +3205,7 @@ func (s *Store) RateReset(ctx context.Context, key string) error {
 // PurgeOldAttempts drops windows that have expired, so the table does not grow
 // with one row per address that ever mistyped a password.
 func (s *Store) PurgeOldAttempts(ctx context.Context) (int64, error) {
-	window := fmt.Sprintf("-%d seconds", int64(RateWindow.Seconds()))
+	window := ago(RateWindow)
 	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM login_attempts WHERE window_start <= datetime('now', ?)`, window)
 	if err != nil {
@@ -3566,21 +3556,6 @@ func (s *Store) SwitchHousehold(ctx context.Context, userID, householdID int64) 
 	return nil
 }
 
-// RoleIn returns the caller's role in a household, or ErrNotMember.
-func (s *Store) RoleIn(ctx context.Context, householdID, userID int64) (Role, error) {
-	var r Role
-	err := s.db.QueryRowContext(ctx,
-		`SELECT role FROM household_members WHERE household_id = ? AND user_id = ?`,
-		householdID, userID).Scan(&r)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotMember
-	}
-	if err != nil {
-		return "", fmt.Errorf("select role: %w", err)
-	}
-	return r, nil
-}
-
 // ── administering a household ─────────────────────────────────────────────────
 
 // RenameHousehold changes the display name of a shared household.
@@ -3684,10 +3659,8 @@ func (s *Store) TransferOwnership(ctx context.Context, householdID, fromUserID, 
 
 		// Belt and braces: prove the invariant this method exists to protect
 		// before committing, rather than trusting the two statements above.
-		var owners int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM household_members
-			 WHERE household_id = ? AND role = 'owner'`, householdID).Scan(&owners); err != nil {
+		owners, err := ownerCount(ctx, tx, householdID)
+		if err != nil {
 			return err
 		}
 		if owners != 1 {
@@ -3718,14 +3691,8 @@ func (s *Store) SetRole(ctx context.Context, householdID, actorID, targetID int6
 		}
 
 		if current == RoleOwner {
-			var owners int
-			if err := tx.QueryRowContext(ctx,
-				`SELECT COUNT(*) FROM household_members
-				 WHERE household_id = ? AND role = 'owner'`, householdID).Scan(&owners); err != nil {
+			if err := requireAnotherOwner(ctx, tx, householdID); err != nil {
 				return err
-			}
-			if owners <= 1 {
-				return ErrLastOwner
 			}
 		}
 
@@ -3737,6 +3704,28 @@ func (s *Store) SetRole(ctx context.Context, householdID, actorID, targetID int6
 		return recordAudit(ctx, tx, Scope{HouseholdID: householdID, UserID: actorID},
 			"changed a role", "member", targetID, fmt.Sprintf("to %s", role))
 	})
+}
+
+func ownerCount(ctx context.Context, tx *sql.Tx, householdID int64) (int, error) {
+	var owners int
+	err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM household_members WHERE household_id = ? AND role = 'owner'`,
+		householdID).Scan(&owners)
+	return owners, err
+}
+
+// requireAnotherOwner refuses to demote or remove the only owner, which would
+// leave a household nobody could administer. Called inside the same transaction
+// as the change, so two owners cannot simultaneously demote each other.
+func requireAnotherOwner(ctx context.Context, tx *sql.Tx, householdID int64) error {
+	owners, err := ownerCount(ctx, tx, householdID)
+	if err != nil {
+		return err
+	}
+	if owners <= 1 {
+		return ErrLastOwner
+	}
+	return nil
 }
 
 // RemoveMember takes somebody out of a household.
@@ -3754,14 +3743,8 @@ func (s *Store) RemoveMember(ctx context.Context, householdID, actorID, targetID
 		}
 
 		if role == RoleOwner {
-			var owners int
-			if err := tx.QueryRowContext(ctx,
-				`SELECT COUNT(*) FROM household_members
-				 WHERE household_id = ? AND role = 'owner'`, householdID).Scan(&owners); err != nil {
+			if err := requireAnotherOwner(ctx, tx, householdID); err != nil {
 				return err
-			}
-			if owners <= 1 {
-				return ErrLastOwner
 			}
 		}
 
@@ -3842,9 +3825,7 @@ func (s *Store) LeaveHousehold(ctx context.Context, householdID, userID int64) e
 // InviteMember records an invitation for an email address.
 const InviteTTL = 24 * time.Hour
 
-// inviteTTLModifier is InviteTTL as a SQLite datetime modifier, derived from the
-// constant rather than written out, so the two cannot disagree.
-var inviteTTLModifier = fmt.Sprintf("+%d seconds", int64(InviteTTL.Seconds()))
+var inviteTTLModifier = after(InviteTTL)
 
 // ErrInviteExpired is returned when an invitation is real but too old to use.
 var ErrInviteExpired = errors.New("invitation expired")
@@ -4104,6 +4085,67 @@ const (
 	JobFailed JobStatus = "failed"
 )
 
+// DraftItem is one product line OCR read off a receipt.
+type DraftItem struct {
+	Description string `json:"description"`
+	Amount      Cents  `json:"amount"`
+}
+
+// ReceiptDraft is what OCR made of a receipt: a proposal, never a fact. Nothing
+// in it has reached the ledger, and nothing will until a person has seen these
+// numbers next to the photograph they came from and pressed Save.
+//
+// Everything is optional. A receipt photographed in bad light yields a draft
+// with nothing but Text, which is still an improvement on nothing: the user gets
+// the image on screen beside an empty form instead of having to find it again.
+type ReceiptDraft struct {
+	Merchant string `json:"merchant,omitempty"`
+	Category string `json:"category,omitempty"`
+	Date     string `json:"date,omitempty"`
+
+	Total    Cents `json:"total,omitempty"`
+	Subtotal Cents `json:"subtotal,omitempty"`
+	Tax      Cents `json:"tax,omitempty"`
+	Tip      Cents `json:"tip,omitempty"`
+
+	Items []DraftItem `json:"items,omitempty"`
+
+	// Confidence is 0..1. It decides how emphatically the form asks the user to
+	// check the number, and nothing else.
+	Confidence float64 `json:"confidence,omitempty"`
+
+	// Text is the raw OCR output, shown on request and kept for diagnosis.
+	Text string `json:"-"`
+}
+
+// HasTotal reports whether there is an amount worth prefilling.
+func (d ReceiptDraft) HasTotal() bool { return d.Total > 0 }
+
+// Certainty buckets the confidence for the interface, which needs three states
+// rather than a number: a percentage implies a precision this does not have.
+func (d ReceiptDraft) Certainty() string {
+	switch {
+	case !d.HasTotal():
+		return "none"
+	case d.Confidence >= 0.85:
+		return "high"
+	case d.Confidence >= 0.55:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+// ItemsTotal is the sum of the draft's line items, for a template that wants to
+// show whether they reconcile.
+func (d ReceiptDraft) ItemsTotal() Cents {
+	var sum Cents
+	for _, it := range d.Items {
+		sum += it.Amount
+	}
+	return sum
+}
+
 // ReceiptJob is one queued receipt image.
 type ReceiptJob struct {
 	ID int64
@@ -4121,6 +4163,86 @@ type ReceiptJob struct {
 	TransactionID *int64
 	CreatedAt     string
 	FinishedAt    string
+
+	// Draft is what OCR read, or nil when the receipt has not been processed or
+	// nothing could be read from it.
+	Draft *ReceiptDraft
+}
+
+// receiptJobColumns is the column list every receipt_jobs read shares, so a
+// column added to the table is added to one place rather than four.
+const receiptJobColumns = `id, user_id, household_id, path, original_name, status,
+	error, attempts, transaction_id, created_at, IFNULL(finished_at, ''),
+	parsed_total_cents, parsed_confidence, parsed_json, ocr_text`
+
+// scanReceiptJob reads one row in the order receiptJobColumns lists.
+func scanReceiptJob(row rowScanner) (ReceiptJob, error) {
+	var j ReceiptJob
+	var total int64
+	var confidence float64
+	var parsed, text string
+
+	if err := row.Scan(&j.ID, &j.UserID, &j.HouseholdID, &j.Path, &j.OriginalName,
+		&j.Status, &j.Error, &j.Attempts, &j.TransactionID, &j.CreatedAt,
+		&j.FinishedAt, &total, &confidence, &parsed, &text); err != nil {
+		return ReceiptJob{}, err
+	}
+
+	// A draft exists only once the worker has written one. An empty column is
+	// the normal state for a job that is still queued.
+	if parsed == "" && total == 0 && text == "" {
+		return j, nil
+	}
+
+	d := ReceiptDraft{}
+	if parsed != "" {
+		if err := json.Unmarshal([]byte(parsed), &d); err != nil {
+			// A draft that will not decode is a bug in this package, not a
+			// reason to fail the user's page: the receipt is still there and can
+			// still be typed in by hand.
+			log.Printf("store: receipt job %d has an undecodable draft: %v", j.ID, err)
+			d = ReceiptDraft{}
+		}
+	}
+	// The two promoted columns are authoritative over the document, because they
+	// are what any query filters or sorts on.
+	d.Total = Cents(total)
+	d.Confidence = confidence
+	d.Text = text
+	j.Draft = &d
+	return j, nil
+}
+
+// SaveReceiptDraft records what OCR made of a receipt. It deliberately does not
+// touch the transactions table: the worker proposes, and only the user disposes.
+func (s *Store) SaveReceiptDraft(ctx context.Context, jobID int64, d ReceiptDraft) error {
+	// Text travels in its own column, so it is cleared before the document is
+	// encoded rather than being stored twice.
+	text := d.Text
+	d.Text = ""
+
+	blob, err := json.Marshal(d)
+	if err != nil {
+		return fmt.Errorf("encode receipt draft: %w", err)
+	}
+
+	// The OCR text of a long receipt is a few kilobytes; a pathological image
+	// could produce far more, and none of it past the first few thousand
+	// characters is any use to anybody.
+	const maxText = 20_000
+	if len(text) > maxText {
+		text = text[:maxText]
+	}
+
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE receipt_jobs
+		SET parsed_total_cents = ?, parsed_confidence = ?, parsed_json = ?, ocr_text = ?
+		WHERE id = ?`,
+		int64(d.Total), d.Confidence, string(blob), text, jobID)
+	if err != nil {
+		return fmt.Errorf("save receipt draft: %w", err)
+	}
+	return requireOneRow(res)
 }
 
 // MaxJobAttempts is how many times a receipt is retried before the user is told it
@@ -4170,12 +4292,10 @@ func (s *Store) ClaimReceiptJob(ctx context.Context) (ReceiptJob, error) {
 			return ErrNotFound
 		}
 
-		return tx.QueryRowContext(ctx, `
-			SELECT id, user_id, household_id, path, original_name, status, error, attempts,
-			       transaction_id, created_at, IFNULL(finished_at, '')
-			FROM receipt_jobs WHERE id = ?`, id).
-			Scan(&job.ID, &job.UserID, &job.HouseholdID, &job.Path, &job.OriginalName, &job.Status,
-				&job.Error, &job.Attempts, &job.TransactionID, &job.CreatedAt, &job.FinishedAt)
+		var scanErr error
+		job, scanErr = scanReceiptJob(tx.QueryRowContext(ctx,
+			`SELECT `+receiptJobColumns+` FROM receipt_jobs WHERE id = ?`, id))
+		return scanErr
 	})
 
 	return job, err
@@ -4230,47 +4350,13 @@ func (s *Store) RecoverStuckJobs(ctx context.Context) (int64, error) {
 	return res.RowsAffected()
 }
 
-// ReceiptJobs lists a user's recent receipts so the UI can show what is still
-// being worked on.
-func (s *Store) ReceiptJobs(ctx context.Context, userID int64, limit int) ([]ReceiptJob, error) {
-	if limit <= 0 {
-		limit = 10
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, household_id, path, original_name, status, error, attempts,
-		       transaction_id, created_at, IFNULL(finished_at, '')
-		FROM receipt_jobs
-		WHERE user_id = ?
-		ORDER BY id DESC
-		LIMIT ?`, userID, limit)
-	if err != nil {
-		return nil, fmt.Errorf("receipt jobs: %w", err)
-	}
-	defer rows.Close()
-
-	out := []ReceiptJob{}
-	for rows.Next() {
-		var j ReceiptJob
-		if err := rows.Scan(&j.ID, &j.UserID, &j.HouseholdID, &j.Path, &j.OriginalName, &j.Status,
-			&j.Error, &j.Attempts, &j.TransactionID, &j.CreatedAt, &j.FinishedAt); err != nil {
-			return nil, fmt.Errorf("scan job: %w", err)
-		}
-		out = append(out, j)
-	}
-	return out, rows.Err()
-}
-
 // UnattachedReceipt fetches a processed receipt that has not yet become an expense.
 func (s *Store) UnattachedReceipt(ctx context.Context, sc Scope, jobID int64) (ReceiptJob, error) {
-	var j ReceiptJob
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, household_id, path, original_name, status, error, attempts,
-		       transaction_id, created_at, IFNULL(finished_at, '')
+	j, err := scanReceiptJob(s.db.QueryRowContext(ctx, `
+		SELECT `+receiptJobColumns+`
 		FROM receipt_jobs
 		WHERE id = ? AND household_id = ? AND transaction_id IS NULL`,
-		jobID, sc.HouseholdID,
-	).Scan(&j.ID, &j.UserID, &j.HouseholdID, &j.Path, &j.OriginalName, &j.Status,
-		&j.Error, &j.Attempts, &j.TransactionID, &j.CreatedAt, &j.FinishedAt)
+		jobID, sc.HouseholdID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return ReceiptJob{}, ErrNotFound
 	}
@@ -4287,8 +4373,7 @@ func (s *Store) UnattachedReceipts(ctx context.Context, sc Scope, limit int) ([]
 		limit = 10
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, household_id, path, original_name, status, error, attempts,
-		       transaction_id, created_at, IFNULL(finished_at, '')
+		SELECT `+receiptJobColumns+`
 		FROM receipt_jobs
 		WHERE household_id = ? AND transaction_id IS NULL AND status = 'done'
 		ORDER BY id DESC
@@ -4300,10 +4385,8 @@ func (s *Store) UnattachedReceipts(ctx context.Context, sc Scope, limit int) ([]
 
 	out := []ReceiptJob{}
 	for rows.Next() {
-		var j ReceiptJob
-		if err := rows.Scan(&j.ID, &j.UserID, &j.HouseholdID, &j.Path, &j.OriginalName,
-			&j.Status, &j.Error, &j.Attempts, &j.TransactionID, &j.CreatedAt,
-			&j.FinishedAt); err != nil {
+		j, err := scanReceiptJob(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan unattached receipt: %w", err)
 		}
 		out = append(out, j)
@@ -4429,58 +4512,60 @@ func (s *Store) Notify(ctx context.Context, userID int64, kind, text, link strin
 func (s *Store) TakeNotifications(ctx context.Context, userID int64) ([]Notification, error) {
 	out := []Notification{}
 
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, kind, text, link, created_at
-		FROM notifications
-		WHERE user_id = ? AND seen_at IS NULL
-		ORDER BY id ASC
-		LIMIT 20`, userID)
-	if err != nil {
-		return nil, fmt.Errorf("read notifications: %w", err)
-	}
-	var ids []any
-	for rows.Next() {
-		var n Notification
-		if err := rows.Scan(&n.ID, &n.Kind, &n.Text, &n.Link, &n.CreatedAt); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("scan notification: %w", err)
+	// Reading and marking seen are one transaction, because "take" is the whole
+	// contract: two pages loading together -- a tab and its own refresh -- would
+	// otherwise both read the same unseen rows before either marked them, and
+	// the user would get the same "your receipt is ready" toast twice.
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT id, kind, text, link, created_at
+			FROM notifications
+			WHERE user_id = ? AND seen_at IS NULL
+			ORDER BY id ASC
+			LIMIT 20`, userID)
+		if err != nil {
+			return fmt.Errorf("read notifications: %w", err)
 		}
-		out = append(out, n)
-		ids = append(ids, n.ID)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+		var ids []any
+		for rows.Next() {
+			var n Notification
+			if err := rows.Scan(&n.ID, &n.Kind, &n.Text, &n.Link, &n.CreatedAt); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan notification: %w", err)
+			}
+			out = append(out, n)
+			ids = append(ids, n.ID)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+
+		ph := make([]byte, 0, len(ids)*2)
+		for i := range ids {
+			if i > 0 {
+				ph = append(ph, ',')
+			}
+			ph = append(ph, '?')
+		}
+		// user_id in the WHERE as well as the ids: the ids came from a scoped
+		// read, so this changes nothing today, but it means a future caller
+		// cannot turn this into a way to mark somebody else's rows seen.
+		args := append([]any{time.Now().UTC().Format(time.RFC3339)}, ids...)
+		args = append(args, userID)
+
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE notifications SET seen_at = ? WHERE id IN (`+string(ph)+`) AND user_id = ?`,
+			args...); err != nil {
+			return fmt.Errorf("mark notifications seen: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	if len(ids) == 0 {
-		return out, nil
-	}
-
-	ph := make([]byte, 0, len(ids)*2)
-	for i := range ids {
-		if i > 0 {
-			ph = append(ph, ',')
-		}
-		ph = append(ph, '?')
-	}
-	args := append([]any{time.Now().UTC().Format(time.RFC3339)}, ids...)
-
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE notifications SET seen_at = ? WHERE id IN (`+string(ph)+`)`, args...); err != nil {
-		return nil, fmt.Errorf("mark notifications seen: %w", err)
-	}
 	return out, nil
-}
-
-// UnseenNotificationCount is used to decide whether the page should start
-// polling at all.
-func (s *Store) UnseenNotificationCount(ctx context.Context, userID int64) (int, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM notifications WHERE user_id = ? AND seen_at IS NULL`,
-		userID).Scan(&n)
-	if err != nil {
-		return 0, fmt.Errorf("unseen count: %w", err)
-	}
-	return n, nil
 }
