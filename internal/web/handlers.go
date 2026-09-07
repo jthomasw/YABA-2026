@@ -1982,10 +1982,20 @@ type entryView struct {
 
 // handleIncomePage is GET /income.
 func (s *Server) handleIncomePage(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.ProcessDueRecurringIncome(
+		r.Context(),
+		scopeOf(r),
+		store.Today(),
+	); err != nil {
+		http.Error(w, "Could not process recurring income.", http.StatusInternalServerError)
+		return
+	}
+
 	v, ok := s.buildEntryView(w, r, store.KindIncome, "Add Income", "income")
 	if !ok {
 		return
 	}
+
 	s.render(w, r, "income.html", v)
 }
 
@@ -2038,7 +2048,77 @@ func (s *Server) buildEntryView(w http.ResponseWriter, r *http.Request, kind sto
 
 // handleIncomeCreate is POST /income.
 func (s *Server) handleIncomeCreate(w http.ResponseWriter, r *http.Request) {
-	s.createEntry(w, r, store.KindIncome)
+	if !s.parseForm(w, r) {
+		return
+	}
+
+	// If this is not a recurring-income submission, use the normal
+	// one-time income flow.
+	if r.PostFormValue("income_type") != "recurring" {
+		s.createEntry(w, r, store.KindIncome)
+		return
+	}
+
+	user := mustUser(r)
+	sc := scopeOf(r)
+
+	in, msg := parseTransactionFormFor(r, store.KindIncome)
+	if msg != "" {
+		s.rerenderEntry(w, r, store.KindIncome, in, msg)
+		return
+	}
+
+	frequencyN, err := strconv.Atoi(r.PostFormValue("frequency_n"))
+	if err != nil || frequencyN <= 0 {
+		s.rerenderEntry(
+			w,
+			r,
+			store.KindIncome,
+			in,
+			"Enter a valid recurring frequency.",
+		)
+		return
+	}
+
+	frequencyUnit := r.PostFormValue("frequency_unit")
+	switch frequencyUnit {
+	case "day", "week", "month":
+	default:
+		s.rerenderEntry(
+			w,
+			r,
+			store.KindIncome,
+			in,
+			"Choose a valid recurring frequency.",
+		)
+		return
+	}
+
+	if s.duplicateSubmit(r, user.ID) {
+		s.redirectSuccess(w, r, "/income", "That recurring income was already saved.")
+		return
+	}
+
+	_, err = s.store.CreateRecurringIncome(
+		r.Context(),
+		sc,
+		in.label,
+		in.amount,
+		frequencyN,
+		frequencyUnit,
+		in.occurredOn,
+	)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+
+	s.redirectSuccess(
+		w,
+		r,
+		"/income",
+		fmt.Sprintf("Recurring income of %s saved.", in.amount.Display()),
+	)
 }
 
 // handleExpenseCreate is POST /expense.

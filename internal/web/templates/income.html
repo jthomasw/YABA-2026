@@ -53,15 +53,95 @@
       {{template "csrf" .}}
 
       <div class="field">
-        <label for="label">Source</label>
-        <input id="label" name="label" type="text" required maxlength="60"
-               value="{{.Label}}" placeholder="Salary, freelance, scholarship…"
-               autofocus>
-        <p class="hint">Where the money came from. This is what the chart groups by.</p>
-      </div>
+  <label>Income type</label>
+
+  <div class="radio-row">
+    <label>
+      <input type="radio" name="income_type" value="one_time" checked>
+      One-time
+    </label>
+
+    <label>
+      <input type="radio" name="income_type" value="recurring">
+      Recurring
+    </label>
+  </div>
+
+  <p class="hint">
+    Choose recurring for income that repeats automatically, such as a paycheck.
+  </p>
+</div>
+
+<div class="field">
+  <label for="label">Source</label>
+  <input
+    id="label"
+    name="label"
+    type="text"
+    required
+    maxlength="60"
+    value="{{.Label}}"
+    placeholder="Salary, freelance, scholarship…"
+  >
+  <p class="hint">
+    Where the money came from.
+  </p>
+</div>
+
+<div class="field" id="recurring-fields" style="display: none;">
+  <label for="frequency_n">Repeat every</label>
+
+  <div class="form-row">
+    <input
+      type="number"
+      id="frequency_n"
+      name="frequency_n"
+      min="1"
+      value="2"
+    >
+
+    <select id="frequency_unit" name="frequency_unit">
+      <option value="day">Day(s)</option>
+      <option value="week" selected>Week(s)</option>
+      <option value="month">Month(s)</option>
+    </select>
+  </div>
+
+  <p class="hint">
+    Example: every 2 weeks for a biweekly paycheck.
+  </p>
+</div>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const dateLabel = document.getElementById("income-date-label");
+    const recurringFields = document.getElementById("recurring-fields");
+    const incomeTypeInputs = document.querySelectorAll('input[name="income_type"]');
+
+    function updateRecurringFields() {
+  const selected = document.querySelector('input[name="income_type"]:checked');
+
+  recurringFields.style.display =
+    selected && selected.value === "recurring"
+      ? ""
+      : "none";
+
+  dateLabel.textContent =
+    selected && selected.value === "recurring"
+      ? "First payday"
+      : "Date";
+}
+
+    incomeTypeInputs.forEach(function (input) {
+      input.addEventListener("change", updateRecurringFields);
+    });
+
+    updateRecurringFields();
+  });
+</script>
 
       <div class="field">
-        <label for="date">Date</label>
+        <label for="date" id="income-date-label">Date</label>
         <input id="date" name="date" type="date" required value="{{.OccurredOn}}" max="2200-12-31">
       </div>
 

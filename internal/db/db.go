@@ -279,6 +279,51 @@ func migrations() []Migration {
 			// so a parser bug is reproducible from the database alone.
 			`ALTER TABLE receipt_jobs ADD COLUMN ocr_text TEXT NOT NULL DEFAULT ''`,
 		),
+
+		sqlMigration(14, "recurring income schedules", `
+			CREATE TABLE recurring_income (
+				id            INTEGER PRIMARY KEY AUTOINCREMENT,
+				household_id  INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+				user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				source        TEXT    NOT NULL,
+				amount_cents  INTEGER NOT NULL CHECK (amount_cents > 0),
+
+				frequency_n   INTEGER NOT NULL CHECK (frequency_n > 0),
+				frequency_unit TEXT NOT NULL CHECK (
+					frequency_unit IN ('day', 'week', 'month')
+				),
+
+				start_date    TEXT NOT NULL,
+				next_due_date TEXT NOT NULL,
+
+				active        INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+				created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+				updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+			)`,
+
+			`CREATE INDEX idx_recurring_income_household
+		ON recurring_income(household_id, active, next_due_date)`,
+
+			`CREATE INDEX idx_recurring_income_user
+		ON recurring_income(user_id)`,
+		),
+
+		sqlMigration(15, "recurring income occurrence tracking", `
+			CREATE TABLE recurring_income_occurrences (
+			id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+			recurring_income_id  INTEGER NOT NULL
+				REFERENCES recurring_income(id) ON DELETE CASCADE,
+			due_date             TEXT NOT NULL,
+			transaction_id       INTEGER NOT NULL
+				REFERENCES transactions(id) ON DELETE CASCADE,
+			created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+
+			UNIQUE(recurring_income_id, due_date)
+			)`,
+
+			`CREATE INDEX idx_recurring_income_occurrences_transaction
+		 ON recurring_income_occurrences(transaction_id)`,
+		),
 	}
 }
 
