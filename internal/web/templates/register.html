@@ -1,0 +1,59 @@
+{{define "content"}}
+<div class="auth-wrapper">
+  <main class="auth-card">
+    <div class="auth-brand">
+      <span class="auth-mark" aria-hidden="true">Y</span>
+      <span class="auth-wordmark">YABA</span>
+    </div>
+
+    <h1 class="auth-title">Create an account</h1>
+    <p class="auth-sub">Start planning your money with YABA.</p>
+
+    {{with .Error}}
+    <p class="auth-error" role="alert">
+      <span class="auth-error-mark" aria-hidden="true">!</span><span>{{.}}</span>
+    </p>
+    {{end}}
+
+    <form method="POST" action="/register" novalidate>
+      {{template "csrf" .}}
+
+      <div class="float-field">
+        <input id="register-email" name="email" type="email" placeholder=" "
+               autocomplete="email" value="{{.Email}}" required autofocus
+               inputmode="email" spellcheck="false">
+        <label for="register-email">Email address</label>
+      </div>
+
+      <div class="float-field">
+        <input id="register-password" name="password" type="password" placeholder=" "
+               autocomplete="new-password" required minlength="8" maxlength="72">
+        <label for="register-password">Password</label>
+        <button type="button" class="reveal" data-reveal="register-password"
+                aria-label="Show password" aria-pressed="false">
+          {{template "icon" "eye"}}
+        </button>
+      </div>
+      <p class="auth-hint">Use at least 8 characters.</p>
+
+      <div class="float-field">
+        <input id="register-confirm" name="confirm" type="password" placeholder=" "
+               autocomplete="new-password" required minlength="8" maxlength="72">
+        <label for="register-confirm">Confirm password</label>
+        <button type="button" class="reveal" data-reveal="register-confirm"
+                aria-label="Show password" aria-pressed="false">
+          {{template "icon" "eye"}}
+        </button>
+      </div>
+
+      <button type="submit" class="btn-auth">Create account</button>
+    </form>
+
+    <p class="auth-alt"><a href="/">Already have an account? Sign in</a></p>
+  </main>
+
+  <p class="auth-foot"><a href="/about">What is YABA?</a></p>
+</div>
+
+<script src="{{asset "auth.js"}}" defer></script>
+{{end}}

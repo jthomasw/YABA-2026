@@ -25,21 +25,18 @@ import (
 	"github.com/jthomasw/YABA-2026/internal/store"
 )
 
-// landingView backs the landing page, which is both the login form and the signup
-// form: an address with no account is offered one on a second state of the same page,
-// which is what Confirming switches on. There is no separate /register route.
+// landingView backs the sign-in page.
 type landingView struct {
 	view
 
 	Error string
 	Email string
+}
 
-	// Confirming is true when the address was not recognised and the user is
-	// being asked whether to create an account.
-	Confirming bool
-
-	// NewAccount is set by ?new=1 from the "Sign up" link.
-	NewAccount bool
+type registerView struct {
+	view
+	Error string
+	Email string
 }
 
 func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
@@ -48,11 +45,18 @@ func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := landingView{view: s.baseView(w, r, "Welcome to YABA", "landing")}
-	v.NewAccount = r.URL.Query().Get("new") == "1"
 	s.render(w, r, "landing.html", v)
 }
 
-// handleAuth is the single entry point for both signing in and signing up.
+func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if s.signedIn(r) {
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+	s.renderRegister(w, r, http.StatusOK, registerView{})
+}
+
+// handleAuth handles sign-in only. Account creation has its own page and endpoint.
 func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	if !s.parseForm(w, r) {
 		return
@@ -71,10 +75,6 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 
 	email := strings.TrimSpace(r.PostFormValue("email"))
 	password := r.PostFormValue("password")
-	confirm := r.PostFormValue("confirm")
-	// The confirm step posts back with this set, so the server knows the user
-	// has already been asked whether they want an account.
-	creating := r.PostFormValue("create") == "yes"
 
 	if email == "" {
 		s.renderLanding(w, r, http.StatusBadRequest, landingView{
@@ -86,13 +86,13 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	// email is rejected whether or not an account matches it.
 	if msg := validateEmail(email); msg != "" {
 		s.renderLanding(w, r, http.StatusBadRequest, landingView{
-			Email: email, Confirming: creating, Error: msg})
+			Email: email, Error: msg})
 		return
 	}
 
 	if password == "" {
 		s.renderLanding(w, r, http.StatusBadRequest, landingView{
-			Email: email, Confirming: creating,
+			Email: email,
 			Error: "Please enter a password."})
 		return
 	}
@@ -110,40 +110,46 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.attemptLogin(w, r, email, password, limit)
+}
+
+func (s *Server) handleRegisterSubmit(w http.ResponseWriter, r *http.Request) {
+	if !s.parseForm(w, r) {
+		return
+	}
+	session, err := s.sessions.Get(r, sessionName)
+	if err == nil && !s.checkCSRF(r, session) {
+		s.renderRegister(w, r, http.StatusForbidden, registerView{
+			Email: r.PostFormValue("email"), Error: "That form expired. Please try again.",
+		})
+		return
+	}
+
+	email := strings.TrimSpace(r.PostFormValue("email"))
+	password := r.PostFormValue("password")
+	confirm := r.PostFormValue("confirm")
+	showError := func(status int, message string) {
+		s.renderRegister(w, r, status, registerView{Email: email, Error: message})
+	}
+	if msg := validateEmail(email); msg != "" {
+		showError(http.StatusBadRequest, msg)
+		return
+	}
+	if msg := validatePassword(password); msg != "" {
+		showError(http.StatusBadRequest, msg)
+		return
+	}
+	if password != confirm {
+		showError(http.StatusBadRequest, "The two passwords do not match.")
+		return
+	}
 	exists, err := s.store.EmailExists(r.Context(), email)
 	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
-
 	if exists {
-		if creating {
-			// The address was created between the two steps, or the user came
-			// back to an old confirm form. Either way, sign in instead.
-			log.Printf("auth: confirm step for an address that now exists")
-		}
-		s.attemptLogin(w, r, email, password, limit)
-		return
-	}
-
-	// Unknown address. First submission asks; second submission creates.
-	if !creating {
-		s.renderLanding(w, r, http.StatusOK, landingView{
-			Email:      email,
-			Confirming: true,
-		})
-		return
-	}
-
-	if msg := validatePassword(password); msg != "" {
-		s.renderLanding(w, r, http.StatusBadRequest, landingView{
-			Email: email, Confirming: true, Error: msg})
-		return
-	}
-	if password != confirm {
-		s.renderLanding(w, r, http.StatusBadRequest, landingView{
-			Email: email, Confirming: true,
-			Error: "The two passwords do not match."})
+		showError(http.StatusConflict, "An account with this email already exists. Please sign in.")
 		return
 	}
 
@@ -152,11 +158,9 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-
 	userID, err := s.store.CreateUser(r.Context(), email, string(hash))
 	if errors.Is(err, store.ErrEmailTaken) {
-		// Lost a race with another signup for the same address.
-		s.attemptLogin(w, r, email, password, limit)
+		showError(http.StatusConflict, "An account with this email already exists. Please sign in.")
 		return
 	}
 	if err != nil {
@@ -225,14 +229,14 @@ func (s *Server) attemptLogin(w http.ResponseWriter, r *http.Request, email, pas
 		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		s.rateFail(r.Context(), limit)
 		s.renderLanding(w, r, http.StatusUnauthorized, landingView{
-			Email: email, Error: "That email and password do not match."})
+			Email: email, Error: "That email is not registered."})
 		return
 	}
 
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
 		s.rateFail(r.Context(), limit)
 		s.renderLanding(w, r, http.StatusUnauthorized, landingView{
-			Email: email, Error: "That email and password do not match."})
+			Email: email, Error: "Either your email or password is incorrect."})
 		return
 	}
 
@@ -492,6 +496,11 @@ func (s *Server) signedIn(r *http.Request) bool {
 func (s *Server) renderLanding(w http.ResponseWriter, r *http.Request, status int, v landingView) {
 	v.view = s.baseView(w, r, "Welcome to YABA", "landing")
 	s.renderStatus(w, r, status, "landing.html", v)
+}
+
+func (s *Server) renderRegister(w http.ResponseWriter, r *http.Request, status int, v registerView) {
+	v.view = s.baseView(w, r, "Create an account", "register")
+	s.renderStatus(w, r, status, "register.html", v)
 }
 
 // validateEmail checks the address is plausibly an email address.

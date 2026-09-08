@@ -27,70 +27,11 @@
 
       role="alert" so a screen reader is told without having to go looking.
     */}}
-    {{if .Confirming}}
-    <p class="auth-error" role="alert">
-      <span class="auth-error-mark" aria-hidden="true">!</span>
-      <span>
-        {{/* Kept on one line deliberately: the rendered page is what tests and
-             screen readers read, and a line break lands in the middle of the
-             sentence as whitespace. */}}
-        {{if .Error}}{{.Error}}{{else}}<strong>{{.Email}}</strong> doesn't have an account yet.
-        Choose a password below to create one.{{end}}
-      </span>
-    </p>
-    {{else}}{{with .Error}}
+    {{with .Error}}
     <p class="auth-error" role="alert">
       <span class="auth-error-mark" aria-hidden="true">!</span><span>{{.}}</span>
     </p>
-    {{end}}{{end}}
-
-    {{if .Confirming}}
-    {{/*
-      The password step. Reached only by clicking Login with an address that has
-      no account, so the question has already been answered by getting here and a
-      second confirmation would be a click for its own sake.
-
-      The address travels in a hidden field rather than being retyped: it is the
-      thing that was just checked, and offering it as an editable box invites an
-      edit that would silently create an account for somebody else's address.
-    */}}
-    <form method="POST" action="/auth" novalidate>
-      {{template "csrf" .}}
-      <input type="hidden" name="create" value="yes">
-      <input type="hidden" name="email" value="{{.Email}}">
-
-      <div class="float-field">
-        <input id="new-password" name="password" type="password" placeholder=" "
-               autocomplete="new-password" required minlength="8" maxlength="72"
-               autofocus aria-describedby="new-password-hint">
-        <label for="new-password">Password</label>
-        <button type="button" class="reveal" data-reveal="new-password"
-                aria-label="Show password" aria-pressed="false">
-          {{template "icon" "eye"}}
-        </button>
-      </div>
-      <p class="auth-hint" id="new-password-hint">Use at least 8 characters.</p>
-
-      <div class="float-field">
-        <input id="confirm" name="confirm" type="password" placeholder=" "
-               autocomplete="new-password" required minlength="8" maxlength="72">
-        <label for="confirm">Confirm password</label>
-        <button type="button" class="reveal" data-reveal="confirm"
-                aria-label="Show password" aria-pressed="false">
-          {{template "icon" "eye"}}
-        </button>
-      </div>
-
-      <button type="submit" class="btn-auth">Create account</button>
-    </form>
-
-    <p class="auth-alt"><a href="/">Use a different email</a></p>
-
-    {{else}}
-    {{/* One form serves both signing in and signing up: an address with no
-         account is offered one on the next step. The button says "Login" because
-         that is what the user came here to do; the signup path is a branch off
-         it rather than a separate thing to advertise on the button. */}}
+    {{end}}
     <form method="POST" action="/auth" novalidate>
       {{template "csrf" .}}
 
@@ -118,17 +59,7 @@
 
     <div class="auth-divider"><span>New to YABA?</span></div>
 
-    {{/* "Create an account" leads to the same form: signing up here is those same
-         two fields, and an unknown address is offered an account automatically.
-         A separate page would be a second form doing the identical thing. */}}
-    <a class="btn-auth btn-auth-secondary" href="/?new=1">Create an account</a>
-
-    {{if .NewAccount}}
-    <p class="auth-hint auth-hint-centre">
-      Enter your email and choose a password — the account is set up on the next step.
-    </p>
-    {{end}}
-    {{end}}
+    <a class="btn-auth btn-auth-secondary" href="/register">Create an account</a>
 
   </main>
 

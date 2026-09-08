@@ -869,21 +869,22 @@ func TestBadLoginRerendersFormInsteadOf401Page(t *testing.T) {
 	}
 }
 
-func TestLoginDoesNotRevealWhetherAUsernameExists(t *testing.T) {
+func TestUnknownLoginStaysOnLoginForm(t *testing.T) {
 	rig := newRig(t)
 
-	// An address with no account is offered a signup, which is the wireframe's
-	// behaviour and unavoidably reveals that it is unregistered. What must NOT
-	// differ is the wrong-password message for two *existing* accounts, and the
-	// signup offer must never appear for an address that does exist.
+	// An address with no account must stay on the login form and explain how to
+	// proceed. Account creation is only entered through the explicit signup link.
 	unknown := rig.do("POST", "/auth", url.Values{
 		"csrf_token": {rig.csrf("/")},
 		"email":      {"nobody-here@example.com"},
 		"password":   {"whatever"},
 	}).Body.String()
 
-	if !strings.Contains(unknown, "doesn't have an account yet") {
-		t.Errorf("an unknown address should be offered a signup, got %q", truncate(unknown))
+	if !strings.Contains(unknown, "do not match") {
+		t.Errorf("an unknown address should receive the normal sign-in error, got %q", truncate(unknown))
+	}
+	if strings.Contains(unknown, "Confirm password") {
+		t.Error("an unknown login must not open the account creation form")
 	}
 
 	known := rig.do("POST", "/auth", url.Values{
@@ -892,23 +893,30 @@ func TestLoginDoesNotRevealWhetherAUsernameExists(t *testing.T) {
 		"password":   {"wrong"},
 	}).Body.String()
 
-	if strings.Contains(known, "doesn't have an account yet") {
-		t.Error("an existing address must never be offered a signup")
-	}
 	if !strings.Contains(known, "do not match") {
 		t.Errorf("wrong password should say so, got %q", extractError(known))
 	}
 }
 
-// TestSignupRequiresTheConfirmStep covers the wireframe's two-step flow: an
-// unknown address is asked whether to create an account, and only a submission
-// carrying create=yes with a matching confirmation actually creates one.
+func TestCreateAccountLinkOpensSignupForm(t *testing.T) {
+	rig := newRig(t)
+
+	body := rig.do("GET", "/register", nil).Body.String()
+	if !strings.Contains(body, "Confirm password") {
+		t.Errorf("create account link should open signup form, got %q", truncate(body))
+	}
+	if !strings.Contains(body, `action="/register"`) {
+		t.Error("signup form should submit to the registration endpoint")
+	}
+}
+
+// TestSignupRequiresTheConfirmStep covers the explicit two-step signup flow.
 func TestSignupRequiresTheConfirmStep(t *testing.T) {
 	rig := newRig(t)
 
-	// Step one: no account is created yet.
-	body := rig.do("POST", "/auth", url.Values{
-		"csrf_token": {rig.csrf("/")},
+	// The signup form is reached explicitly and no account is created yet.
+	body := rig.do("POST", "/register", url.Values{
+		"csrf_token": {rig.csrf("/register")},
 		"email":      {"fresh@example.com"},
 		"password":   {"longenough123"},
 	}).Body.String()
@@ -920,9 +928,8 @@ func TestSignupRequiresTheConfirmStep(t *testing.T) {
 	}
 
 	// A mismatched confirmation is refused.
-	body = rig.do("POST", "/auth", url.Values{
-		"csrf_token": {rig.csrf("/")},
-		"create":     {"yes"},
+	body = rig.do("POST", "/register", url.Values{
+		"csrf_token": {rig.csrf("/register")},
 		"email":      {"fresh@example.com"},
 		"password":   {"longenough123"},
 		"confirm":    {"somethingelse"},
@@ -935,9 +942,8 @@ func TestSignupRequiresTheConfirmStep(t *testing.T) {
 	}
 
 	// A matching one creates it and signs the user straight in.
-	rec := rig.do("POST", "/auth", url.Values{
-		"csrf_token": {rig.csrf("/")},
-		"create":     {"yes"},
+	rec := rig.do("POST", "/register", url.Values{
+		"csrf_token": {rig.csrf("/register")},
 		"email":      {"fresh@example.com"},
 		"password":   {"longenough123"},
 		"confirm":    {"longenough123"},
@@ -1177,9 +1183,8 @@ func TestSignupValidation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rig := newRig(t)
-			body := rig.do("POST", "/auth", url.Values{
-				"csrf_token": {rig.csrf("/")},
-				"create":     {"yes"},
+			body := rig.do("POST", "/register", url.Values{
+				"csrf_token": {rig.csrf("/register")},
 				"email":      {tc.email},
 				"password":   {tc.password},
 				"confirm":    {tc.confirm},
@@ -2418,9 +2423,8 @@ func TestRecentActivityIsCappedAtThree(t *testing.T) {
 
 // ── signing up from the sign-in page ──────────────────────────────────────────
 
-// TestUnknownEmailIsAnsweredInRedOnThePage: an address with no account is told
-// so in the page's own red banner, with the password step underneath it. No
-// dialog and no second page: the answer belongs where the button was.
+// TestUnknownEmailIsAnsweredInRedOnThePage: an address with no account receives
+// the same generic sign-in error as any failed login.
 func TestUnknownEmailIsAnsweredInRedOnThePage(t *testing.T) {
 	rig := newRig(t)
 
@@ -2433,14 +2437,13 @@ func TestUnknownEmailIsAnsweredInRedOnThePage(t *testing.T) {
 	if !strings.Contains(body, `class="auth-error"`) {
 		t.Errorf("the answer should be the page's red banner: %q", truncate(body))
 	}
-	if !strings.Contains(body, "doesn't have an account yet") {
-		t.Error("the banner does not say the address has no account")
+	if !strings.Contains(body, "do not match") {
+		t.Error("the banner should use the normal sign-in error")
 	}
-	if !strings.Contains(body, "Confirm password") {
-		t.Error("the password step should be on the page, ready to fill in")
+	if strings.Contains(body, "Confirm password") {
+		t.Error("an unknown login must not open the account creation form")
 	}
-	// The same information used to arrive in a modal. It must not come back:
-	// the signed-out page has no other dialog, so any <dialog> here is this one.
+	// The sign-in page must not offer account creation as a side effect.
 	if strings.Contains(body, "<dialog") {
 		t.Error("this flow should not open a dialog")
 	}
@@ -2448,22 +2451,6 @@ func TestUnknownEmailIsAnsweredInRedOnThePage(t *testing.T) {
 		t.Fatal("offering to create the account must not create it")
 	}
 
-	// A mismatch replaces the banner's text with the reason, in the same place,
-	// and leaves the fields on screen to be corrected.
-	body = rig.do("POST", "/auth", url.Values{
-		"csrf_token": {rig.csrf("/")},
-		"create":     {"yes"},
-		"email":      {"nobody@example.com"},
-		"password":   {"longenough123"},
-		"confirm":    {"mismatch12345"},
-	}).Body.String()
-
-	if !strings.Contains(body, "do not match") {
-		t.Errorf("a mismatch should be explained in the banner: %q", extractError(body))
-	}
-	if !strings.Contains(body, "Confirm password") {
-		t.Error("the password step should still be on screen after a mismatch")
-	}
 }
 
 // TestSignupActuallySignsTheUserIn follows the redirect the way a browser does.
@@ -2476,9 +2463,8 @@ func TestUnknownEmailIsAnsweredInRedOnThePage(t *testing.T) {
 func TestSignupActuallySignsTheUserIn(t *testing.T) {
 	rig := newRig(t)
 
-	rec := rig.do("POST", "/auth", url.Values{
-		"csrf_token": {rig.csrf("/")},
-		"create":     {"yes"},
+	rec := rig.do("POST", "/register", url.Values{
+		"csrf_token": {rig.csrf("/register")},
 		"email":      {"browser@example.com"},
 		"password":   {"longenough123"},
 		"confirm":    {"longenough123"},

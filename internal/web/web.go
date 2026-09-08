@@ -154,6 +154,8 @@ func (s *Server) Handler() http.Handler {
 	// mutates data.
 	mux.HandleFunc("GET  /{$}", s.handleLanding)
 	mux.HandleFunc("POST /auth", s.handleAuth)
+	mux.HandleFunc("GET  /register", s.handleRegister)
+	mux.HandleFunc("POST /register", s.handleRegisterSubmit)
 	mux.HandleFunc("POST /logout", s.handleLogout)
 	mux.HandleFunc("GET  /about", s.handleAbout)   // the `Learn more!` link
 	mux.HandleFunc("GET  /forgot", s.handleForgot) // the `Forgot password` link
@@ -693,9 +695,10 @@ func logRequests(next http.Handler) http.Handler {
 // pages lists every top-level template. Each one defines a "content" block
 // that layout.html renders inside the shared chrome.
 var pages = []string{
-	"landing.html", // login and signup in one, per the wireframe
-	"about.html",   // the `Learn more!` link
-	"forgot.html",  // the `Forgot password` link
+	"landing.html",  // sign-in page
+	"register.html", // account creation page
+	"about.html",    // the `Learn more!` link
+	"forgot.html",   // the `Forgot password` link
 	"dashboard.html",
 	"reports.html",
 	"transactions.html",
