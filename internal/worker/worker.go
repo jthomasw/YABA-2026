@@ -46,6 +46,10 @@ type Draft struct {
 	Items      []store.DraftItem
 	Confidence float64
 	Text       string
+
+	// ItemsBalanced reports that the last item is a balancing line the parser
+	// added, not something the receipt listed, so the form can say so.
+	ItemsBalanced bool
 }
 
 // Empty reports whether a draft carries nothing worth storing, so a receipt that
@@ -58,16 +62,17 @@ func (d Draft) Empty() bool {
 // toStore converts a processor's draft into the form the database holds.
 func (d Draft) toStore() store.ReceiptDraft {
 	return store.ReceiptDraft{
-		Merchant:   d.Payee,
-		Category:   d.Label,
-		Date:       d.Date,
-		Total:      d.Amount,
-		Subtotal:   d.Subtotal,
-		Tax:        d.Tax,
-		Tip:        d.Tip,
-		Items:      d.Items,
-		Confidence: d.Confidence,
-		Text:       d.Text,
+		Merchant:      d.Payee,
+		Category:      d.Label,
+		Date:          d.Date,
+		Total:         d.Amount,
+		Subtotal:      d.Subtotal,
+		Tax:           d.Tax,
+		Tip:           d.Tip,
+		Items:         d.Items,
+		ItemsBalanced: d.ItemsBalanced,
+		Confidence:    d.Confidence,
+		Text:          d.Text,
 	}
 }
 

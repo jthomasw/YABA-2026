@@ -2,8 +2,10 @@ package ocr
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,11 +78,16 @@ func TestParseRealOCR(t *testing.T) {
 	}
 }
 
-// TestItemsAlwaysReconcile guards the invariant the transaction form depends on:
-// line items handed back must sum exactly to the total, or none may be handed
-// back at all. Items that do not reconcile are refused by SetLineItems, so an
-// unreconciled prefill would produce a form the user cannot save.
-func TestItemsAlwaysReconcile(t *testing.T) {
+// TestItemsNeverFallShort guards what the transaction form depends on. Every
+// product line read is now handed back, because a user who photographed ten
+// things wants to see ten things -- but a set that falls short of the total is
+// a set SetLineItems refuses, so the parser must never hand one back. It closes
+// any shortfall with a balancing line instead.
+//
+// Overshooting is the one case left unresolved: a line item cannot be negative,
+// so nothing can be added to bring the sum down, and the form asks the user to
+// fix it. That is a visible, explicable state rather than a silent one.
+func TestItemsNeverFallShort(t *testing.T) {
 	for _, want := range loadExpectations(t) {
 		t.Run(want.Name, func(t *testing.T) {
 			b, err := os.ReadFile(filepath.Join("testdata", want.Name+".txt"))
@@ -101,11 +108,105 @@ func TestItemsAlwaysReconcile(t *testing.T) {
 				}
 				sum += it.Amount
 			}
-			if sum != got.Total {
-				t.Errorf("items sum to %s but total is %s; they would be rejected on save",
+
+			if got.Total <= 0 {
+				return // nothing to reconcile against
+			}
+			if sum < got.Total {
+				t.Errorf("items sum to %s, short of the total %s, and were not balanced;"+
+					" they would be rejected on save", sum.Display(), got.Total.Display())
+			}
+			if got.ItemsBalanced && sum != got.Total {
+				t.Errorf("balanced items sum to %s but the total is %s; balancing must be exact",
 					sum.Display(), got.Total.Display())
 			}
 		})
+	}
+}
+
+// TestBalancingLine drives the three outcomes directly, because the real samples
+// happen to reconcile and would never exercise the interesting paths.
+func TestBalancingLine(t *testing.T) {
+	// Two items and a total three dollars above them: the third thing on the
+	// receipt was cut off, misread, or is a bag charge.
+	short := Parse(strings.Join([]string{
+		"CORNER MARKET",
+		"MILK 2.50",
+		"BREAD 3.00",
+		"TOTAL 8.50",
+	}, "\n"), 0)
+
+	if !short.ItemsBalanced {
+		t.Fatalf("items short of the total were not balanced: %+v", short.Items)
+	}
+	if len(short.Items) != 3 {
+		t.Fatalf("got %d items, want the 2 read plus 1 balancing line", len(short.Items))
+	}
+	last := short.Items[len(short.Items)-1]
+	if last.Description != BalancingItemDescription {
+		t.Errorf("balancing line is described as %q, want %q",
+			last.Description, BalancingItemDescription)
+	}
+	if last.Amount != money.Cents(300) {
+		t.Errorf("balancing line is %s, want $3.00", last.Amount.Display())
+	}
+	if sum := sumItems(short.Items); sum != short.Total {
+		t.Errorf("balanced items sum to %s, want the total %s", sum.Display(), short.Total.Display())
+	}
+
+	// Items that already add up are left alone: no invented line, no flag.
+	exact := Parse(strings.Join([]string{
+		"CORNER MARKET",
+		"MILK 2.50",
+		"BREAD 3.00",
+		"TOTAL 5.50",
+	}, "\n"), 0)
+
+	if exact.ItemsBalanced {
+		t.Error("items that reconcile were flagged as balanced")
+	}
+	for _, it := range exact.Items {
+		if it.Description == BalancingItemDescription {
+			t.Error("a balancing line was added to items that already reconciled")
+		}
+	}
+
+	// The user's actual case: ten things on one receipt, one price misread, and
+	// all ten must still reach the form.
+	var lines []string
+	lines = append(lines, "BIG SHOP")
+	for i := 1; i <= 10; i++ {
+		lines = append(lines, fmt.Sprintf("ITEM NUMBER %d 1.00", i))
+	}
+	lines = append(lines, "TOTAL 14.00")
+	ten := Parse(strings.Join(lines, "\n"), 0)
+
+	if len(ten.Items) != 11 {
+		t.Fatalf("got %d items, want the 10 read plus 1 balancing line: %+v",
+			len(ten.Items), ten.Items)
+	}
+	if sum := sumItems(ten.Items); sum != ten.Total {
+		t.Errorf("items sum to %s, want the total %s", sum.Display(), ten.Total.Display())
+	}
+}
+
+// TestItemsWithoutTotal covers a receipt whose total was creased away: there is
+// nothing to reconcile against, so the items stand as read and nothing is
+// invented to pad them out to a number nobody knows.
+func TestItemsWithoutTotal(t *testing.T) {
+	got := Parse(strings.Join([]string{
+		"CORNER MARKET",
+		"MILK 2.50",
+		"BREAD 3.00",
+	}, "\n"), 0)
+
+	if got.ItemsBalanced {
+		t.Error("items were balanced against a total that was never found")
+	}
+	for _, it := range got.Items {
+		if it.Description == BalancingItemDescription {
+			t.Error("a balancing line was invented without a total to balance to")
+		}
 	}
 }
 

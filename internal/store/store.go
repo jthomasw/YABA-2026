@@ -683,6 +683,11 @@ type Transaction struct {
 	// without a query per row.
 	LineItemCount int
 
+	// Items is that same breakdown in full, also filled in by List, so the log
+	// can open a row and show what was actually bought. Empty for the many
+	// transactions that were never split.
+	Items []LineItem
+
 	// Version increments on every edit. The form carries it back so a save can
 	// be refused if somebody else edited the row in the meantime.
 	Version int64
@@ -1021,17 +1026,19 @@ func (s *Store) List(ctx context.Context, sc Scope, f Filter) ([]Transaction, in
 	}
 
 	// One extra query for the whole page, rather than one per row, so the list
-	// can show a "3 items" expander on split transactions.
+	// can expand a split transaction into the things that were bought without
+	// turning a page of twenty rows into twenty-one queries.
 	ids := make([]int64, 0, len(out))
 	for _, t := range out {
 		ids = append(ids, t.ID)
 	}
-	counts, err := s.LineItemCounts(ctx, sc, ids)
+	items, err := s.LineItemsFor(ctx, sc, ids)
 	if err != nil {
 		return nil, 0, err
 	}
 	for i := range out {
-		out[i].LineItemCount = counts[out[i].ID]
+		out[i].Items = items[out[i].ID]
+		out[i].LineItemCount = len(out[i].Items)
 	}
 
 	return out, total, nil
@@ -2762,6 +2769,54 @@ func (s *Store) LineItemCounts(ctx context.Context, sc Scope, txIDs []int64) (ma
 			return nil, err
 		}
 		out[id] = n
+	}
+	return out, rows.Err()
+}
+
+// LineItemsFor returns the lines of many transactions at once, keyed by
+// transaction id, so the log can expand any row without a query per row. It is
+// LineItemCounts' larger sibling: the same single query, carrying the rows
+// themselves rather than only how many there are.
+func (s *Store) LineItemsFor(ctx context.Context, sc Scope, txIDs []int64) (map[int64][]LineItem, error) {
+	out := map[int64][]LineItem{}
+	if len(txIDs) == 0 {
+		return out, nil
+	}
+
+	// Placeholders rather than interpolated ids, as above.
+	ph := make([]byte, 0, len(txIDs)*2)
+	args := make([]any, 0, len(txIDs)+1)
+	args = append(args, sc.HouseholdID)
+	for i, id := range txIDs {
+		if i > 0 {
+			ph = append(ph, ',')
+		}
+		ph = append(ph, '?')
+		args = append(args, id)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT li.transaction_id, li.id, li.description, li.category,
+		       li.amount_cents, li.position
+		FROM line_items li
+		JOIN transactions t ON t.id = li.transaction_id
+		WHERE t.household_id = ? AND li.transaction_id IN (`+string(ph)+`)
+		ORDER BY li.transaction_id, li.position ASC, li.id ASC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("line items for transactions: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var txID int64
+		var it LineItem
+		var amount int64
+		if err := rows.Scan(&txID, &it.ID, &it.Description, &it.Category,
+			&amount, &it.Position); err != nil {
+			return nil, fmt.Errorf("scan line item: %w", err)
+		}
+		it.Amount = Cents(amount)
+		out[txID] = append(out[txID], it)
 	}
 	return out, rows.Err()
 }
@@ -4569,6 +4624,12 @@ type ReceiptDraft struct {
 	Tip      Cents `json:"tip,omitempty"`
 
 	Items []DraftItem `json:"items,omitempty"`
+
+	// ItemsBalanced reports that the last item is a balancing line the parser
+	// added to close a gap between what it could read and what was charged. The
+	// form labels it, so an invented line is never mistaken for one the receipt
+	// listed.
+	ItemsBalanced bool `json:"items_balanced,omitempty"`
 
 	// Confidence is 0..1. It decides how emphatically the form asks the user to
 	// check the number, and nothing else.

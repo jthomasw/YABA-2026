@@ -116,9 +116,36 @@
           <td data-label="Description">
             {{if .Label}}{{.Label}}{{else}}<span class="stat-note">Unlabelled</span>{{end}}
             {{if .BucketName}}<span class="tag tag-bucket">{{.BucketName}}</span>{{end}}
-            {{if .Split}}<span class="tag">{{.LineItemCount}} items</span>{{end}}
             {{if .ReceiptPath}}
             <a class="receipt-link" href="/transactions/{{.ID}}/receipt">receipt</a>
+            {{end}}
+
+            {{/* A split transaction opens into what was actually bought. The
+                 row still shows one amount, because one amount is what was
+                 charged; the breakdown is the answer to "what was in that
+                 shop trip?", which a single total cannot give.
+
+                 details/summary rather than a script: it opens without
+                 JavaScript, it is keyboard-operable for free, and browser
+                 find-in-page reaches inside a closed one. */}}
+            {{if .Split}}
+            <details class="tx-items">
+              <summary>{{.LineItemCount}} items</summary>
+              <table class="tx-items-table">
+                <tbody>
+                  {{range .Items}}
+                  <tr>
+                    <td>
+                      {{if .Description}}{{.Description}}
+                      {{else}}<span class="stat-note">Unlabelled</span>{{end}}
+                      {{if .Category}}<span class="tag tag-bucket">{{.Category}}</span>{{end}}
+                    </td>
+                    <td class="num">{{money .Amount}}</td>
+                  </tr>
+                  {{end}}
+                </tbody>
+              </table>
+            </details>
             {{end}}
 
             {{/* The optional Ws, shown only when they were filled in, so an

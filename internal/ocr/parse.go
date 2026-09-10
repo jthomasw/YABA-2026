@@ -37,6 +37,12 @@ type Receipt struct {
 	Tip      money.Cents
 	Items    []Item
 
+	// ItemsBalanced reports that the items read did not add up to the total on
+	// their own, so a balancing line was appended to close the gap. The form
+	// says so rather than letting an invented line pass for something the
+	// receipt actually listed.
+	ItemsBalanced bool
+
 	// Category is a guess at the expense label, from the merchant name.
 	Category string
 
@@ -308,7 +314,7 @@ func Parse(text string, ocrConfidence float64) Receipt {
 		r.Reasons = append(r.Reasons, "total derived from subtotal plus tax")
 	}
 
-	r.Items = findItems(lines, r)
+	r.Items, r.ItemsBalanced = findItems(lines, r)
 	r.Confidence, r.Reasons = score(r, ocrConfidence, r.Reasons)
 	return r
 }
@@ -409,7 +415,10 @@ func findLabelled(lines []line, terms []string) money.Cents {
 // because everything below that is arithmetic about the items rather than more
 // items -- and a receipt that repeats its total in a footer would otherwise
 // contribute it as a product.
-func findItems(lines []line, r Receipt) []Item {
+//
+// The second return reports whether a balancing line had to be added to make
+// the set add up to the total.
+func findItems(lines []line, r Receipt) ([]Item, bool) {
 	var out []Item
 	for _, l := range lines {
 		if !l.hasAmt {
@@ -426,41 +435,81 @@ func findItems(lines []line, r Receipt) []Item {
 		out = append(out, Item{Description: desc, Amount: l.amount})
 	}
 
-	// Items are only offered to the user when they reconcile, because the
-	// transaction form requires line items to sum exactly to the amount. Handing
-	// back a set that cannot be saved would turn a helpful prefill into a form
-	// the user has to repair before it will submit.
+	// Every product line that was read is handed back. A user who photographed a
+	// receipt with ten things on it wants to see ten things, and a set that is
+	// one misread price away from reconciling is still nine correct lines. What
+	// follows decides only whether anything must be added to make it add up.
 	if len(out) == 0 {
-		return nil
+		return nil, false
 	}
-	var sum money.Cents
-	for _, it := range out {
-		sum += it.Amount
+	sum := sumItems(out)
+
+	// No total to reconcile against: the amount will be typed by hand, and the
+	// items stand exactly as they were read.
+	if r.Total <= 0 {
+		return out, false
 	}
 
-	switch {
-	case r.Total > 0 && abs(sum-r.Total) <= reconcileSlack:
-		return out
-	case r.Total > 0 && r.Subtotal > 0 && abs(sum-r.Subtotal) <= reconcileSlack:
-		// The items make up the pre-tax total, so tax and tip become lines of
-		// their own and the set adds up to what was charged.
+	// Exactly, not within a cent or two: SetLineItems compares for equality, so
+	// a set that is one cent short is a set the user cannot save. Anything short
+	// falls through to the balancing line below, which closes the gap however
+	// small it is.
+	if sum == r.Total {
+		return out, false
+	}
+
+	// The items make up the pre-tax total, so tax and tip become lines of their
+	// own. This is the tidy case, and it is tried before any balancing. The
+	// slack is allowed here because this is a judgement about what the numbers
+	// mean, not a promise about what will save.
+	if r.Subtotal > 0 && abs(sum-r.Subtotal) <= reconcileSlack {
 		if r.Tax > 0 {
 			out = append(out, Item{Description: "Tax", Amount: r.Tax})
 		}
 		if r.Tip > 0 {
 			out = append(out, Item{Description: "Tip", Amount: r.Tip})
 		}
-		var withExtras money.Cents
-		for _, it := range out {
-			withExtras += it.Amount
+		sum = sumItems(out)
+		if sum == r.Total {
+			return out, false
 		}
-		if abs(withExtras-r.Total) <= reconcileSlack {
-			return out
-		}
-		return nil
-	default:
-		return nil
 	}
+
+	// Short of the total. Something was missed: a line the camera cut off, a
+	// price read as 4.99 when it was 14.99, a bag charge or a deposit. The
+	// difference becomes one editable line, so the breakdown adds up to what was
+	// actually charged -- which the transaction form requires, and which the
+	// category report depends on, since it totals line items rather than the
+	// transaction for a split row. The user can correct that line or delete it
+	// along with whichever row was wrong.
+	if sum < r.Total {
+		out = append(out, Item{
+			Description: BalancingItemDescription,
+			Amount:      r.Total - sum,
+		})
+		return out, true
+	}
+
+	// Over the total, which usually means a summary line was collected as a
+	// product. Nothing can be added to fix that, because a line item cannot be
+	// negative, so the rows are handed back as read and the form shows their
+	// running total against the amount for the user to reconcile by hand.
+	return out, false
+}
+
+// BalancingItemDescription labels the line that makes a partly-read breakdown
+// add up to the amount charged. Exported so the interface can recognise it and
+// explain where it came from rather than presenting it as something the receipt
+// actually said.
+const BalancingItemDescription = "Other (not itemised)"
+
+// sumItems totals a set of lines.
+func sumItems(items []Item) money.Cents {
+	var sum money.Cents
+	for _, it := range items {
+		sum += it.Amount
+	}
+	return sum
 }
 
 // itemQtyRe strips a leading quantity. "2 x" is often OCR'd as "2%" or "2 «",
@@ -727,8 +776,18 @@ func score(r Receipt, ocrConfidence float64, reasons []string) (float64, []strin
 		reasons = append(reasons, "a merchant name was read")
 	}
 	if len(r.Items) > 0 {
-		structural += 0.20
-		reasons = append(reasons, fmt.Sprintf("%d line items reconcile to the total", len(r.Items)))
+		// Items that add up on their own are strong evidence the numbers were
+		// read correctly. Items that needed a balancing line are worth less --
+		// something on the receipt was missed -- but they are still structure,
+		// and they still tell the user what they bought.
+		if r.ItemsBalanced {
+			structural += 0.08
+			reasons = append(reasons, fmt.Sprintf(
+				"%d line items read, short of the total by a balancing line", len(r.Items)-1))
+		} else {
+			structural += 0.20
+			reasons = append(reasons, fmt.Sprintf("%d line items reconcile to the total", len(r.Items)))
+		}
 	}
 	if structural > 1 {
 		structural = 1

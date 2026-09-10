@@ -108,15 +108,16 @@ func toDraft(r ocr.Receipt) Draft {
 	}
 
 	return Draft{
-		Label:      r.Category,
-		Payee:      r.Merchant,
-		Amount:     r.Total,
-		Date:       r.Date,
-		Subtotal:   r.Subtotal,
-		Tax:        r.Tax,
-		Tip:        r.Tip,
-		Items:      items,
-		Confidence: r.Confidence,
-		Text:       r.Text,
+		Label:         r.Category,
+		Payee:         r.Merchant,
+		Amount:        r.Total,
+		Date:          r.Date,
+		Subtotal:      r.Subtotal,
+		Tax:           r.Tax,
+		Tip:           r.Tip,
+		Items:         items,
+		ItemsBalanced: r.ItemsBalanced,
+		Confidence:    r.Confidence,
+		Text:          r.Text,
 	}
 }

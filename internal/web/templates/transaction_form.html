@@ -144,12 +144,34 @@
       */}}
       <details class="field line-items" data-expense-only {{if eq .Kind "income"}}hidden{{end}}
                {{if .Items}}open{{end}}>
-        <summary>Break this into items{{if .Items}} ({{len .Items}}){{end}}</summary>
+        <summary>
+          {{if and .Draft .Items}}Items read from the receipt ({{len .Items}})
+          {{else}}Break this into items{{if .Items}} ({{len .Items}}){{end}}{{end}}
+        </summary>
 
         <p class="hint">
           For a shop trip that covers several categories. The items must add up to
           the total above, so the category breakdown and your spending total agree.
         </p>
+
+        {{/* An added balancing line is called out rather than left to look like
+             something the receipt said. Every other row here came off the
+             photograph; this one is arithmetic, and the difference matters when
+             the user is deciding which number to trust. */}}
+        {{if and .Draft .Draft.ItemsBalanced}}
+        <div class="callout callout-warn">
+          <p>
+            These lines were read off the receipt, but they came to less than the
+            total. The last one, <strong>Other (not itemised)</strong>, is the
+            difference — not something the receipt listed.
+          </p>
+          <p>
+            A line was probably cut off or a price misread. Correct the row that
+            is wrong and adjust that last line to match, or leave it as it is:
+            either way the breakdown adds up to what you were charged.
+          </p>
+        </div>
+        {{end}}
 
         <div data-item-rows>
           {{range .Items}}

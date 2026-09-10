@@ -1113,6 +1113,55 @@ a:hover { text-decoration: underline; }
   color: var(--text-muted);
 }
 
+/* The breakdown a split transaction opens into. Closed, it is styled to read as
+   the "3 items" tag it replaces, so the log looks unchanged until somebody
+   opens one. */
+.tx-items { margin-top: .3rem; }
+.tx-items > summary {
+  display: inline-block;
+  cursor: pointer;
+  padding: .15rem .5rem;
+  border-radius: 999px;
+  background: var(--info-bg);
+  color: var(--text-muted);
+  font-size: .78rem;
+  font-weight: 600;
+  list-style: none;
+}
+/* Safari draws its own triangle through ::-webkit-details-marker, which
+   list-style alone does not remove. */
+.tx-items > summary::-webkit-details-marker { display: none; }
+.tx-items > summary::after { content: " ▾"; font-size: .7em; }
+.tx-items[open] > summary::after { content: " ▴"; }
+.tx-items > summary:hover { color: var(--brand); }
+
+.tx-items-table {
+  width: 100%;
+  max-width: 26rem;
+  margin: .4rem 0 .2rem;
+  border-collapse: collapse;
+  font-size: .82rem;
+}
+.tx-items-table td {
+  padding: .25rem .5rem .25rem 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.tx-items-table tr:last-child td { border-bottom: 0; }
+.tx-items-table .num {
+  text-align: right;
+  white-space: nowrap;
+  padding-right: 0;
+  font-variant-numeric: tabular-nums;
+}
+/* The category pill is smaller here than the one on the row above, so ten items
+   read as a list rather than as ten badges. */
+.tx-items-table .tag {
+  margin-left: .4rem;
+  font-size: .7rem;
+  padding: .05rem .4rem;
+}
+
 /* ── toasts ──────────────────────────────────────────────────────────────── */
 
 .toasts {

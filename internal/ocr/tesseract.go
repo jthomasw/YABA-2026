@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -63,25 +64,171 @@ func NewEngine() *Engine {
 		MaxPages: DefaultMaxPages,
 		Binarise: true,
 	}
-	e.Tesseract = lookPath("tesseract")
-	e.Pdftoppm = lookPath("pdftoppm")
+	e.Tesseract = lookTool("tesseract", envTesseract, tesseractPlaces()...)
+	e.Pdftoppm = lookTool("pdftoppm", envPdftoppm, pdftoppmPlaces()...)
 	// magick is ImageMagick 7's entry point; convert is ImageMagick 6's.
 	// heif-convert ships with libheif and handles iPhone photos on its own.
 	for _, name := range []string{"magick", "convert", "heif-convert"} {
-		if p := lookPath(name); p != "" {
-			e.Convert = p
-			break
+		p := lookTool(name, envConvert, convertPlaces(name)...)
+		if p == "" {
+			continue
 		}
+		// Windows ships its own convert.exe in System32 -- the FAT-to-NTFS
+		// drive converter, which has nothing to do with images. Accepting it
+		// would have the log claim HEIC support that does not exist, and fail
+		// only on the first iPhone photo somebody uploads. So the binary is
+		// asked to identify itself before it is believed.
+		if !isImageMagick(p) {
+			continue
+		}
+		e.Convert = p
+		break
 	}
 	return e
 }
 
+// Environment overrides, for a machine where a tool is installed somewhere
+// neither PATH nor the list below knows about. Setting one is the escape hatch
+// that means nobody has to patch this file.
+const (
+	envTesseract = "YABA_TESSERACT"
+	envPdftoppm  = "YABA_PDFTOPPM"
+	envConvert   = "YABA_CONVERT"
+)
+
+// lookTool finds an external tool. PATH comes first, because an administrator
+// who put a particular build on PATH meant it. Failing that, it looks in the
+// places the usual installers actually write to.
+//
+// That fallback exists because PATH is unreliable in exactly the situation
+// where it matters most: an installer updates the environment, but every shell
+// and terminal already open keeps the copy it started with, so a perfectly good
+// installation looks missing until the user logs out and back in. Silently
+// degrading to manual entry because of a stale environment variable is a poor
+// way to treat somebody who did install the software.
+func lookTool(name, envVar string, fallbacks ...string) string {
+	// An explicit override wins outright, and is reported as missing if it is
+	// wrong, rather than quietly falling through to something else -- a
+	// misspelled override should be visible, not papered over.
+	if v := strings.TrimSpace(os.Getenv(envVar)); v != "" {
+		if isExecutableFile(v) {
+			return v
+		}
+		return ""
+	}
+	if p, err := exec.LookPath(name); err == nil {
+		return p
+	}
+	for _, cand := range fallbacks {
+		// A candidate may contain a wildcard, because ImageMagick installs into
+		// a directory named after its version.
+		if strings.ContainsAny(cand, "*?") {
+			matches, _ := filepath.Glob(cand)
+			sort.Sort(sort.Reverse(sort.StringSlice(matches))) // newest version first
+			for _, m := range matches {
+				if isExecutableFile(m) {
+					return m
+				}
+			}
+			continue
+		}
+		if isExecutableFile(cand) {
+			return cand
+		}
+	}
+	return ""
+}
+
+// lookPath is the plain PATH lookup, kept for callers that want nothing else.
 func lookPath(name string) string {
 	p, err := exec.LookPath(name)
 	if err != nil {
 		return ""
 	}
 	return p
+}
+
+// isExecutableFile reports whether the path is a file this process could run.
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true // extension, not a permission bit, decides on Windows
+	}
+	return info.Mode()&0o111 != 0
+}
+
+// isImageMagick asks a candidate binary to identify itself, so the name
+// `convert` is not taken on trust. A tool that cannot answer in a second is
+// not one to hand a receipt to either.
+func isImageMagick(path string) bool {
+	if strings.Contains(strings.ToLower(filepath.Base(path)), "heif-convert") {
+		return true // libheif's converter, which is exactly what we want
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "-version").CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return false
+	}
+	return strings.Contains(strings.ToLower(string(out)), "imagemagick")
+}
+
+// tesseractPlaces lists where the usual installers put tesseract.
+func tesseractPlaces() []string {
+	switch runtime.GOOS {
+	case "windows":
+		return []string{
+			`C:\Program Files\Tesseract-OCR\tesseract.exe`,
+			`C:\Program Files (x86)\Tesseract-OCR\tesseract.exe`,
+			filepath.Join(os.Getenv("LOCALAPPDATA"), `Programs\Tesseract-OCR\tesseract.exe`),
+			filepath.Join(os.Getenv("ProgramW6432"), `Tesseract-OCR\tesseract.exe`),
+		}
+	case "darwin":
+		return []string{
+			"/opt/homebrew/bin/tesseract", // Apple silicon
+			"/usr/local/bin/tesseract",    // Intel
+		}
+	default:
+		// /usr/local/bin first: a version compiled from source, as on the EC2
+		// box, should beat an older packaged one.
+		return []string{"/usr/local/bin/tesseract", "/usr/bin/tesseract", "/bin/tesseract"}
+	}
+}
+
+// pdftoppmPlaces lists where poppler tends to land.
+func pdftoppmPlaces() []string {
+	switch runtime.GOOS {
+	case "windows":
+		return []string{
+			`C:\Program Files\poppler\Library\bin\pdftoppm.exe`,
+			`C:\Program Files\poppler\bin\pdftoppm.exe`,
+			`C:\poppler\Library\bin\pdftoppm.exe`,
+			`C:\tools\poppler\bin\pdftoppm.exe`,
+		}
+	case "darwin":
+		return []string{"/opt/homebrew/bin/pdftoppm", "/usr/local/bin/pdftoppm"}
+	default:
+		return []string{"/usr/local/bin/pdftoppm", "/usr/bin/pdftoppm"}
+	}
+}
+
+// convertPlaces lists where the image converters land. ImageMagick installs
+// into a versioned directory on Windows, hence the wildcard.
+func convertPlaces(name string) []string {
+	switch runtime.GOOS {
+	case "windows":
+		return []string{
+			`C:\Program Files\ImageMagick-*\` + name + `.exe`,
+			`C:\Program Files (x86)\ImageMagick-*\` + name + `.exe`,
+		}
+	case "darwin":
+		return []string{"/opt/homebrew/bin/" + name, "/usr/local/bin/" + name}
+	default:
+		return []string{"/usr/local/bin/" + name, "/usr/bin/" + name}
+	}
 }
 
 // Available reports whether OCR can be attempted at all.
@@ -92,8 +239,12 @@ func (e *Engine) Available() bool { return e != nil && e.Tesseract != "" }
 // PDF.
 func (e *Engine) Describe() string {
 	if !e.Available() {
-		return "OCR disabled: no tesseract binary on PATH — " +
-			"receipts will be queued for manual entry"
+		// Naming the places that were searched turns "why is this off?" into a
+		// question the log has already answered.
+		return "OCR disabled: tesseract not found on PATH or in " +
+			strings.Join(tesseractPlaces(), ", ") +
+			" — receipts will be queued for manual entry" +
+			" (set " + envTesseract + " to point at it directly)"
 	}
 	parts := []string{"tesseract " + e.Tesseract}
 	if e.Pdftoppm != "" {
