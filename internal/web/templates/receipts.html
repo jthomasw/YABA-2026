@@ -1,0 +1,99 @@
+{{define "helptopics"}}
+<div class="help-topic" data-topic="_">
+  <h3>Receipts</h3>
+  <p class="help-lead">Receipts you have uploaded but not yet turned into an expense.</p>
+  <ul class="help-list">
+    <li>{{template "icon" "check-circle"}}
+      <span>A receipt lands here the moment it is uploaded and leaves the moment
+      you save it as an expense. An empty page means everything is entered.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Where an amount could be read off the picture it is shown beside the
+      file. A figure in <span class="waiting-amount is-uncertain">amber</span> was
+      read less confidently — worth a closer look at the image.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>This page is the safety net. Notifications can be dismissed or missed,
+      and without somewhere for a receipt to wait, one uploaded on a phone last
+      week would be lost in the queue.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span><strong>Discard</strong> is for a duplicate or the wrong photograph.
+      It deletes the stored file, so it is not the way to postpone one — a receipt
+      you still intend to enter can simply stay here.</span></li>
+  </ul>
+</div>
+{{end}}
+
+{{define "content"}}
+
+{{/*
+  Receipts waiting for their details.
+
+  This list used to sit at the top of Add Expense, above the two choices that
+  page exists to offer -- so the first thing anyone saw when adding an expense
+  was a backlog. It is a destination of its own now: reachable from the nav
+  whenever you want it, and in the way of nothing.
+*/}}
+
+<div class="page-head">
+  <h1><span class="head-icon head-expense">{{template "icon" "upload"}}</span> Receipts</h1>
+  <a class="btn btn-quiet" href="/expense">Add an expense</a>
+</div>
+
+<div class="entry-single">
+  <div class="card">
+    {{if .Waiting}}
+    <h2>Waiting for details</h2>
+    <p class="stat-note">
+      {{if eq (len .Waiting) 1}}One receipt has{{else}}{{len .Waiting}} receipts have{{end}}
+      been uploaded to this budget but not entered yet. Where an amount could be
+      read off the image it is shown below — check it against the picture and
+      save, or correct it first.
+    </p>
+
+    <ul class="waiting-receipts">
+      {{range .Waiting}}
+      <li>
+        <span class="waiting-name">{{.OriginalName}}</span>
+        {{/* What OCR made of it, if anything. A receipt that could not be read
+             says so rather than showing a confident-looking zero. */}}
+        {{with .Draft}}
+          {{if .HasTotal}}
+          <span class="waiting-amount {{if ne .Certainty "high"}}is-uncertain{{end}}">
+            {{money .Total}}{{with .Merchant}} · {{.}}{{end}}
+          </span>
+          {{else}}
+          <span class="stat-note">no amount could be read</span>
+          {{end}}
+        {{end}}
+        <span class="stat-note">uploaded {{.CreatedAt}}</span>
+        <span class="waiting-actions">
+          <a class="btn btn-small btn-primary"
+             href="/transactions/new?type=expense&amp;receipt={{.ID}}">Enter details</a>
+          {{/* A duplicate or a mis-picked file needs a way out that is not
+               "invent an expense for it". POST, so no prefetch or crawler can
+               reach it, and confirmed because the file goes with the row. */}}
+          <form method="POST" action="/receipts/{{.ID}}/discard" class="inline-form"
+                onsubmit="return confirm('Discard {{.OriginalName}}? The uploaded file is deleted.')">
+            {{template "csrf" $}}
+            <button type="submit" class="btn btn-small btn-quiet">Discard</button>
+          </form>
+        </span>
+      </li>
+      {{end}}
+    </ul>
+
+    {{else}}
+    {{/* Nothing waiting is the good state, so it reads as one rather than as a
+         blank page that looks broken. */}}
+    <div class="empty-state">
+      <span class="empty-icon">{{template "icon" "check-circle"}}</span>
+      <h2>Nothing waiting</h2>
+      <p class="stat-note">
+        Every receipt you have uploaded has been entered. Upload another from
+        <a href="/expense">Add an expense</a> and it will be read here.
+      </p>
+    </div>
+    {{end}}
+  </div>
+</div>
+
+{{end}}

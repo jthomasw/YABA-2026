@@ -154,8 +154,6 @@ func (s *Server) Handler() http.Handler {
 	// mutates data.
 	mux.HandleFunc("GET  /{$}", s.handleLanding)
 	mux.HandleFunc("POST /auth", s.handleAuth)
-	mux.HandleFunc("GET  /register", s.handleRegister)
-	mux.HandleFunc("POST /register", s.handleRegisterSubmit)
 	mux.HandleFunc("POST /logout", s.handleLogout)
 	mux.HandleFunc("GET  /about", s.handleAbout)   // the `Learn more!` link
 	mux.HandleFunc("GET  /forgot", s.handleForgot) // the `Forgot password` link
@@ -205,6 +203,14 @@ func (s *Server) Handler() http.Handler {
 	// form to show beside the figures OCR read off it. Only authed, like the
 	// route above: looking at a receipt is reading, and a viewer may read.
 	mux.Handle("GET  /receipts/{id}/image", s.authed(s.handleReceiptPreview))
+
+	// Receipts uploaded but not yet entered. This list used to sit at the top of
+	// Add Expense; it is a page of its own now, so uploading offers two choices
+	// and nothing else. Reading, so any member may look.
+	mux.Handle("GET  /receipts", s.authed(s.handleReceiptsPage))
+	// Polled by the upload page while the worker reads a receipt, so the page can
+	// show progress rather than sending the user away to wait for a notification.
+	mux.Handle("GET  /receipts/{id}/status", s.authed(s.handleReceiptStatus))
 
 	// The import chooser now lives on /expense, so the old path redirects there
 	// rather than 404ing any bookmark or link that still points at it.
@@ -695,16 +701,16 @@ func logRequests(next http.Handler) http.Handler {
 // pages lists every top-level template. Each one defines a "content" block
 // that layout.html renders inside the shared chrome.
 var pages = []string{
-	"landing.html",  // sign-in page
-	"register.html", // account creation page
-	"about.html",    // the `Learn more!` link
-	"forgot.html",   // the `Forgot password` link
+	"landing.html", // login and signup in one, per the wireframe
+	"about.html",   // the `Learn more!` link
+	"forgot.html",  // the `Forgot password` link
 	"dashboard.html",
 	"reports.html",
 	"transactions.html",
 	"transaction_form.html",
 	"income.html",    // dedicated Add Income page
 	"expense.html",   // dedicated Add Expense page, opening on Manual or Upload
+	"receipts.html",  // receipts uploaded but not yet entered
 	"household.html", // members, roles and invitations for a shared budget
 	"sessions.html",  // active logins, with revocation
 	"reset.html",     // choose a new password from an emailed link

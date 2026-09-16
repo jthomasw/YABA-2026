@@ -1,13 +1,12 @@
 /* ============================================================================
    YABA stylesheet
 
-   One file, one theme: light. There is deliberately no
-   prefers-color-scheme: dark override — the app is light regardless of what the
-   operating system asks for, because a budgeting app shown in a demo or on a
-   projector should look the same on every machine.
+   One file, two themes. Every colour, radius and shadow is a custom property
+   defined once in :root and restated under prefers-color-scheme: dark, so the
+   app follows the machine rather than insisting on being bright at midnight.
 
-   Everything is still written against custom properties, so reintroducing a dark
-   theme later means adding one @media block, not editing every rule.
+   That this cost one @media block rather than an edit to every rule is entirely
+   down to the earlier decision to name colours instead of writing them inline.
 
    Colour is semantic, not decorative:
      blue  = brand, navigation, neutral action
@@ -18,76 +17,157 @@
    ========================================================================= */
 
 :root {
-  /* Surfaces */
-  --bg:            #f5f7fb;
-  --surface:       #ffffff;
-  --surface-2:     #f8fafc;
-  --surface-3:     #eef2f7;
-  --border:        #e2e8f0;
-  --border-strong: #cbd5e1;
+  /* ── surfaces ──────────────────────────────────────────────────────────────
+     The specified greys, which are the Tailwind neutral scale -- so the rest of
+     the ramp is taken from the same scale rather than invented alongside it.
+     Mixing a hand-picked grey into a systematic one is what makes an interface
+     look almost right. */
+  --bg:            #F7F8FA;  /* the canvas */
+  --surface:       #FFFFFF;  /* cards */
+  --surface-2:     #F9FAFB;  /* gray-50, inset rows and quiet buttons */
+  --surface-3:     #F3F4F6;  /* gray-100, tracks and wells */
+  --border:        #E5E7EB;  /* gray-200 -- the workhorse */
+  --border-strong: #D1D5DB;  /* gray-300, for an edge that must be seen */
 
-  /* Text */
-  --text:          #0f172a;
-  --text-muted:    #64748b;
+  --text:          #111827;  /* gray-900 */
+  --text-muted:    #6B7280;  /* gray-500 */
 
-  /* Brand */
-  --brand:         #2563eb;
-  --brand-dark:    #1d4ed8;
-  --brand-soft:    #eff5ff;
-  --brand-contrast:#ffffff;
+  /* ── brand ─────────────────────────────────────────────────────────────────
+     Indigo 600, kept. Colour stays semantic: indigo is the brand and any
+     neutral action, green is money in, red is money out, amber is a warning.
+     Nothing else is coloured, which is what keeps a financial interface calm
+     enough to scan. */
+  --brand:          #4F46E5;
+  --brand-dark:     #4338CA;
+  --brand-soft:     #EEF2FF;
+  --brand-contrast: #FFFFFF;
 
-  /* Money in / money out */
-  --income:        #128a4d;
-  --income-dark:   #0f7442;
-  --income-soft:   #e8f8ef;
-  --expense:       #c62d2d;
-  --expense-dark:  #a92323;
-  --expense-soft:  #fdeded;
+  --income:      #059669;  /* emerald-600 */
+  --income-dark: #047857;
+  --income-soft: #ECFDF5;
+  --expense:     #DC2626;  /* red-600 */
+  --expense-dark:#B91C1C;
+  --expense-soft:#FEF2F2;
 
-  /* Status */
-  --positive:      var(--income);
-  --negative:      var(--expense);
-  --warn:          #b45309;
-  --warn-bg:       #fffaeb;
-  --alert-bg:      var(--expense-soft);
-  --good-bg:       var(--income-soft);
-  --info-bg:       var(--brand-soft);
+  --positive: var(--income);
+  --negative: var(--expense);
+  --warn:     #D97706;     /* amber-600 */
+  --warn-bg:  #FFFBEB;
+  --alert-bg: var(--expense-soft);
+  --good-bg:  var(--income-soft);
+  --info-bg:  var(--brand-soft);
 
-  /* The four dashboard cards. A tinted face, a stronger edge, and an ink colour
-     for the figure, so each card is identifiable at a glance without shouting. */
-  --card-current-bg:     #eaf2ff;
-  --card-current-edge:   #93b8ea;
-  --card-current-ink:    #17457e;
+  /* The four dashboard cards. Pale tint, defined edge, saturated ink for the
+     figure -- identifiable at a glance without four loud blocks of colour. */
+  --card-current-bg:     #EEF2FF;
+  --card-current-edge:   #C7D2FE;
+  --card-current-ink:    #3730A3;
 
-  --card-emergency-bg:   #fff6e8;
-  --card-emergency-edge: #e6b979;
-  --card-emergency-ink:  #8a5109;
+  --card-emergency-bg:   #FFFBEB;
+  --card-emergency-edge: #FDE68A;
+  --card-emergency-ink:  #92400E;
 
-  --card-income-bg:      #e8f8ef;
-  --card-income-edge:    #82ca9f;
-  --card-income-ink:     #0d5f36;
+  --card-income-bg:      #ECFDF5;
+  --card-income-edge:    #A7F3D0;
+  --card-income-ink:     #065F46;
 
-  --card-expenses-bg:    #fdeded;
-  --card-expenses-edge:  #e79b9b;
-  --card-expenses-ink:   #8f2020;
+  --card-expenses-bg:    #FEF2F2;
+  --card-expenses-edge:  #FECACA;
+  --card-expenses-ink:   #991B1B;
 
-  /* Shape and depth */
-  --radius:        14px;
-  --radius-sm:     8px;
-  --radius-panel:  22px;
-  --shadow-sm:     0 1px 2px rgba(15, 23, 42, .06);
-  --shadow:        0 1px 3px rgba(15, 23, 42, .08), 0 8px 24px -12px rgba(15, 23, 42, .14);
-  --shadow-lg:     0 12px 32px -8px rgba(15, 23, 42, .22);
+  /* ── shape and depth ───────────────────────────────────────────────────────
+     Restrained on both counts, deliberately. Heavy rounding reads as consumer
+     app, and stacked shadows read as a template: structure comes from borders
+     and spacing, and a shadow only appears where something genuinely floats
+     above the page -- a dialog, a toast, a menu. */
+  --radius:       10px;
+  --radius-sm:    6px;
+  --radius-panel: 12px;
+  --shadow-sm: 0 1px 2px rgba(17, 24, 39, .05);
+  --shadow:    0 1px 2px rgba(17, 24, 39, .06);
+  --shadow-lg: 0 10px 15px -3px rgba(17, 24, 39, .10), 0 4px 6px -4px rgba(17, 24, 39, .10);
 
-  --gap:           1rem;
-  --maxw:          1180px;
+  --gap:  1rem;
+  --maxw: 1240px;
 
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Sidebar width, named so the main column and the responsive collapse both
+     refer to one number. */
+  --sidebar-w: 236px;
 
-  /* Without this, a machine set to dark mode renders the native date picker,
-     select arrows, scrollbars and autofill in dark colours inside our light
-     page -- which is exactly the mismatch that was showing. */
+  --font: "Inter var", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          Roboto, "Helvetica Neue", Arial, sans-serif;
+
   color-scheme: light;
+}
+
+/* ── dark ────────────────────────────────────────────────────────────────────
+   Every token above, restated. Nothing else in this file needs to know, which
+   is the whole reason the colours were named rather than written inline.
+
+   Two things are deliberate. The surfaces are near-black rather than black:
+   #000 makes any shadow invisible, so the interface flattens into a single
+   plane. And the accents are lighter and less saturated than their light
+   counterparts, because a colour that reads as confident on white glares on a
+   dark ground -- the eye's contrast sensitivity does not run both ways. */
+@media (prefers-color-scheme: dark) {
+  /* Every token above, restated on the same scale. Nothing else in this file
+     needs to know, which is the whole point of naming colours.
+
+     Two deliberate choices. The surfaces are near-black rather than black, so a
+     border still reads and the interface keeps its layers. And the accents step
+     two stops lighter than their light-mode counterparts -- indigo-400 for
+     indigo-600, emerald-400 for emerald-600 -- because a hue that looks
+     confident on white glares on a dark ground. */
+  :root {
+    --bg:            #0B0D12;
+    --surface:       #12151C;
+    --surface-2:     #181C25;
+    --surface-3:     #1F242F;
+    --border:        #262C38;
+    --border-strong: #3A4252;
+
+    --text:       #F3F4F6;  /* gray-100 */
+    --text-muted: #9CA3AF;  /* gray-400 */
+
+    --brand:          #818CF8;  /* indigo-400 */
+    --brand-dark:     #A5B4FC;  /* lighter still on hover: on dark, "stronger" means brighter */
+    --brand-soft:     #1E1B4B;  /* indigo-950 */
+    --brand-contrast: #0B0D12;
+
+    --income:      #34D399;  /* emerald-400 */
+    --income-dark: #6EE7B7;
+    --income-soft: #052E22;
+    --expense:     #F87171;  /* red-400 */
+    --expense-dark:#FCA5A5;
+    --expense-soft:#2A1214;
+
+    --warn:    #FBBF24;      /* amber-400 */
+    --warn-bg: #271B06;
+
+    --card-current-bg:     #1A1A3E;
+    --card-current-edge:   #312E81;
+    --card-current-ink:    #C7D2FE;
+
+    --card-emergency-bg:   #271B06;
+    --card-emergency-edge: #5C400C;
+    --card-emergency-ink:  #FCD34D;
+
+    --card-income-bg:      #062B20;
+    --card-income-edge:    #0F5542;
+    --card-income-ink:     #6EE7B7;
+
+    --card-expenses-bg:    #2A1214;
+    --card-expenses-edge:  #5E2023;
+    --card-expenses-ink:   #FCA5A5;
+
+    /* Black and tighter: on a dark ground a wide soft shadow is invisible, so
+       what little depth there is has to come from a defined edge. */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .40);
+    --shadow:    0 1px 2px rgba(0, 0, 0, .40);
+    --shadow-lg: 0 10px 20px -4px rgba(0, 0, 0, .70), 0 4px 8px -4px rgba(0, 0, 0, .60);
+
+    color-scheme: dark;
+  }
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -2287,3 +2367,525 @@ dialog::backdrop {
 @media (prefers-reduced-motion: no-preference) {
   .receipt-preview img { transition: max-height .2s ease; }
 }
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Refinements
+
+   Appended rather than edited into the rules above, so each change is one place
+   and the original intent still reads in its own section. Everything here is
+   the difference between an interface that works and one that feels considered:
+   how numbers line up, how a surface lifts under the cursor, how motion behaves
+   for somebody who asked for less of it.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Kerning and ligatures on for text. Worth one line: it is most of what
+   separates a page that looks typeset from one that looks rendered. */
+body {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Money in tabular figures, so a column of amounts aligns on the decimal point
+   and digits do not shuffle as a figure updates. Proportional digits in a
+   ledger are the detail people feel without being able to name. */
+.num, .stat-value, .tab-value, .waiting-amount, .ring-figure,
+td[data-label="Amount"], .tx-items-table .num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+h1 { letter-spacing: -.02em; }
+h2, h3 { letter-spacing: -.01em; }
+
+/* A card is an object on a page, so it responds to being pointed at. Small
+   enough to register as texture rather than animation. */
+.card {
+  transition: box-shadow .18s ease, border-color .18s ease, transform .18s ease;
+}
+
+.btn {
+  transition: background-color .15s ease, border-color .15s ease,
+              box-shadow .15s ease, transform .06s ease;
+}
+.btn:hover { box-shadow: var(--shadow-sm); }
+/* Depresses on click. Two pixels and gone, but it is the difference between a
+   button and a picture of one. */
+.btn:active { transform: translateY(1px); }
+
+.btn-primary { box-shadow: 0 1px 2px rgba(12, 19, 34, .16); }
+
+/* The navigation's current page earns a marker, not just a tint -- on a narrow
+   screen the tint alone is easy to miss. */
+.mainnav a {
+  position: relative;
+  transition: background-color .15s ease, color .15s ease;
+}
+.mainnav a[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: .7rem; right: .7rem; bottom: .1rem;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--brand);
+}
+
+/* The two choices on Add Expense are the whole page, so they should feel
+   press-able rather than sit there. */
+.choice {
+  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+.choice:hover {
+  border-color: var(--brand);
+  box-shadow: var(--shadow);
+  transform: translateY(-2px);
+}
+
+/* Inputs get the brand ring on focus rather than only the browser default, so
+   the field being typed into is unmistakable. */
+input:focus, select:focus, textarea:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+  outline: none;
+}
+
+/* ── receipt progress ────────────────────────────────────────────────────────
+   The ring shown while a receipt is read. The percentage is a stage rather than
+   a measurement -- see import.js -- and the stroke is driven from there by
+   stroke-dashoffset. */
+
+.receipt-progress {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.ring {
+  position: relative;
+  flex: 0 0 auto;
+  width: 108px;
+  height: 108px;
+  display: grid;
+  place-items: center;
+}
+.ring svg {
+  width: 100%;
+  height: 100%;
+  /* Start the stroke at twelve o'clock instead of three. */
+  transform: rotate(-90deg);
+}
+.ring circle {
+  fill: none;
+  stroke-width: 9;
+  stroke-linecap: round;
+}
+.ring-track { stroke: var(--surface-3); }
+.ring-bar {
+  stroke: var(--brand);
+  transition: stroke .3s ease;
+}
+.ring-figure {
+  position: absolute;
+  font-size: 1.45rem;
+  font-weight: 650;
+  color: var(--text);
+  letter-spacing: -.02em;
+}
+
+.receipt-progress-text { flex: 1 1 16rem; }
+.receipt-progress-text h2 { margin-bottom: .15rem; }
+.progress-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin: .75rem 0 0;
+}
+
+/* Finished and failed recolour the ring, so the state is legible at a glance
+   and not only from the words beside it. */
+.receipt-progress.is-done .ring-bar { stroke: var(--positive); }
+.receipt-progress.is-done .ring-figure { color: var(--positive); }
+.receipt-progress.is-failed .ring-bar { stroke: var(--warn); }
+.receipt-progress.is-failed .ring-figure { color: var(--warn); }
+
+/* While there is work to do the ring breathes very slightly, which reads as
+   "working" in the gaps between polls without demanding attention. */
+@keyframes ring-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .82; }
+}
+.receipt-progress:not(.is-done):not(.is-failed) .ring-bar {
+  animation: ring-pulse 1.8s ease-in-out infinite;
+}
+
+/* ── nothing waiting ─────────────────────────────────────────────────────── */
+
+.empty-state {
+  text-align: center;
+  padding: 2.5rem 1rem 2rem;
+}
+.empty-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 3rem; height: 3rem;
+  margin-bottom: .75rem;
+  border-radius: 50%;
+  background: var(--good-bg);
+  color: var(--positive);
+}
+.empty-icon svg { width: 1.5rem; height: 1.5rem; }
+.empty-state p { max-width: 32rem; margin-inline: auto; }
+
+/* ── reduced motion ──────────────────────────────────────────────────────────
+   Someone who has asked their system for less movement means it. Everything
+   above degrades to an instant state change rather than being removed: the
+   information was never in the animation. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .card:hover, .choice:hover, .btn:active { transform: none; }
+}
+
+
+/* ── hierarchy ───────────────────────────────────────────────────────────────
+   The light theme's real problem was not colour, it was weight: every card the
+   same, every heading the same, nothing telling the eye where to land first.
+   A type scale with actual steps in it, and a card that reads as an object on
+   the page rather than a slightly different shade of it. */
+
+h1 { font-size: 1.85rem; font-weight: 680; letter-spacing: -.025em; }
+h2 { font-size: 1.15rem; font-weight: 640; }
+h3 { font-size: .98rem; font-weight: 620; }
+
+.page-head h1 { margin-bottom: 0; }
+.page-head { margin-bottom: 1.25rem; }
+
+/* Padding only. Deliberately not border-color: the accent cards set their own
+   top border, and a later rule of equal specificity would quietly erase it. */
+.card { padding: 1.15rem 1.25rem; }
+
+/* The lead paragraph under a card heading is supporting text, so it is set
+   smaller and lighter rather than competing at body weight. */
+.card > h2 + .stat-note { margin-top: -.15rem; margin-bottom: .9rem; }
+
+/* The bar at the top of the app is a frame, not a card: it sits flush, and the
+   only thing separating it from the page is a hairline. */
+.topbar { box-shadow: none; border-bottom: 1px solid var(--border); }
+
+/* The wordmark should look deliberate rather than like a link that forgot its
+   styling. */
+.brand, .topbar strong { letter-spacing: -.03em; font-weight: 700; }
+
+/* A dashed border says "drop something here", which an empty state is not --
+   it is a finished, correct condition and should look calm. */
+.empty-state { border: 0; background: none; }
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Product layer
+
+   The brief: a small fintech SaaS, not a student project. Concretely that means
+   four things, and everything below serves one of them.
+
+     1. Hierarchy. One dominant number per card, labels that recede, and a type
+        scale with real steps -- so a page can be read at a glance instead of
+        word by word.
+     2. Restraint. Colour is reserved for meaning. Borders carry structure and
+        shadows are almost absent, because shadow everywhere flattens into haze.
+     3. Density. Tighter, more even rhythm. Financial tools are read, not
+        admired, and generous padding everywhere makes a page feel empty rather
+        than calm.
+     4. Speed. No layout that needs script to work, and no animation longer than
+        it takes to notice.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── the frame ───────────────────────────────────────────────────────────── */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+  padding: 1.1rem .7rem;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.sidebar .logo {
+  display: block;
+  padding: .1rem .55rem 1.1rem;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -.03em;
+  color: var(--brand);
+}
+.sidebar .logo:hover { text-decoration: none; }
+
+.sidenav { display: flex; flex-direction: column; gap: 1px; }
+
+/* A section label, not a heading: it groups the links under it and should be
+   almost invisible until you look for it. */
+.sidenav-label {
+  margin: 1.1rem 0 .3rem;
+  padding: 0 .55rem;
+  font-size: .68rem;
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.sidenav a {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .5rem .55rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: .9rem;
+  font-weight: 500;
+  transition: background-color .12s ease, color .12s ease;
+}
+.sidenav a:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+}
+.sidenav a svg { width: 1.05rem; height: 1.05rem; flex: 0 0 auto; opacity: .75; }
+
+/* The current page is filled, not underlined. In a vertical list a tinted block
+   is unmistakable at a glance, which an underline is not. */
+.sidenav a[aria-current="page"] {
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+.sidenav a[aria-current="page"] svg { opacity: 1; }
+
+.sidenav .role-badge { margin-left: auto; }
+
+/* ── the topbar ──────────────────────────────────────────────────────────── */
+
+.app-main { min-width: 0; display: flex; flex-direction: column; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: .75rem 1.5rem;
+  min-height: 60px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: none;
+  /* Stays put while a long ledger scrolls underneath: which budget you are
+     editing is not something to have to scroll up and check. */
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.topbar-plain { padding: 1rem 1.5rem; }
+
+.topbar-context { margin: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.topbar-eyebrow {
+  font-size: .66rem;
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.topbar-budget { font-size: .95rem; font-weight: 600; color: var(--text); }
+
+.topbar .user-actions { margin-left: auto; }
+.welcome { font-size: .875rem; }
+
+.container { padding: 1.5rem; max-width: var(--maxw); }
+
+/* ── type scale ──────────────────────────────────────────────────────────── */
+
+h1 { font-size: 1.5rem;  font-weight: 650; letter-spacing: -.02em; }
+h2 { font-size: 1.05rem; font-weight: 620; letter-spacing: -.01em; }
+h3 { font-size: .9rem;   font-weight: 620; }
+
+.page-head { align-items: center; margin-bottom: 1.25rem; }
+.page-head h1 { margin-bottom: 0; }
+
+/* ── cards ───────────────────────────────────────────────────────────────── */
+
+.card {
+  padding: 1.15rem 1.25rem;
+  box-shadow: none;
+  border-radius: var(--radius);
+}
+/* No lift on hover. A card is a region of the page, not a button, and making
+   every panel react to the cursor is exactly the kind of busyness the brief
+   rules out. */
+.card:hover { transform: none; box-shadow: none; }
+
+/* A card heading and its supporting line, as one block with the body pushed
+   clear of it -- the commonest shape on every page, so it is worth getting
+   right once. */
+.card > h2 { margin-bottom: .2rem; }
+.card > h2 + .stat-note { margin: 0 0 1rem; }
+
+/* ── stat cards ──────────────────────────────────────────────────────────────
+   The figure is the content; the label is a caption for it. Previously both
+   were set at similar weights, which is why the dashboard read as a wall of
+   text rather than four numbers. */
+
+.stat-value {
+  font-size: 1.85rem;
+  font-weight: 680;
+  letter-spacing: -.03em;
+  line-height: 1.1;
+}
+.stat-label, .stat-note {
+  font-size: .78rem;
+  color: var(--text-muted);
+}
+.stat-label {
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+/* ── rows and tables ─────────────────────────────────────────────────────────
+   A ledger is read down its columns, so the rules between rows should be
+   hairlines and the header should be a quiet label rather than a banner. */
+
+.table th {
+  padding: .6rem .75rem;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font-size: .7rem;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.table td {
+  padding: .7rem .75rem;
+  border-bottom: 1px solid var(--border);
+}
+.table tbody tr:last-child td { border-bottom: 0; }
+.table tbody tr { transition: background-color .1s ease; }
+.table tbody tr:hover { background: var(--surface-2); }
+
+/* ── buttons ─────────────────────────────────────────────────────────────── */
+
+.btn {
+  padding: .45rem .8rem;
+  min-height: 36px;
+  border-radius: var(--radius-sm);
+  font-size: .875rem;
+  font-weight: 550;
+  box-shadow: none;
+}
+.btn:hover { box-shadow: none; background: var(--surface-2); }
+.btn:active { transform: none; }
+.btn-primary, .btn-primary:hover { box-shadow: none; }
+.btn-primary:hover { background: var(--brand-dark); }
+.btn-small { min-height: 30px; padding: .3rem .6rem; font-size: .8rem; }
+
+/* ── tags ────────────────────────────────────────────────────────────────── */
+
+.tag {
+  padding: .1rem .45rem;
+  border-radius: var(--radius-sm);
+  font-size: .72rem;
+  font-weight: 550;
+}
+
+/* ── the two choices on an entry page ────────────────────────────────────── */
+
+.choice { border-radius: var(--radius); }
+.choice:hover {
+  transform: none;
+  border-color: var(--brand);
+  box-shadow: none;
+  background: var(--brand-soft);
+}
+
+/* ── things that genuinely float ─────────────────────────────────────────────
+   The only places a shadow is earned. */
+
+.modal, .help-panel, .toast { box-shadow: var(--shadow-lg); }
+
+/* ── responsive ──────────────────────────────────────────────────────────────
+   Desktop-first, as asked, but the sidebar cannot simply vanish on a phone --
+   that is where a receipt actually gets photographed. Below the breakpoint the
+   same markup becomes a scrolling row of pills along the top: no off-canvas
+   drawer, no script, nothing to get stuck open. */
+
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; }
+
+  .sidebar {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: .4rem;
+    padding: .6rem .75rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    /* The row scrolls sideways; it must not also become a scroll trap. */
+    overscroll-behavior-x: contain;
+  }
+  .sidebar .logo { padding: 0 .5rem 0 .25rem; }
+  .sidenav { flex-direction: row; gap: .25rem; }
+  .sidenav a { white-space: nowrap; }
+  /* Section labels are a vertical-list device and make no sense inline. */
+  .sidenav-label { display: none; }
+
+  .topbar { padding: .6rem .9rem; }
+  .container { padding: 1rem .9rem; }
+  .stat-value { font-size: 1.6rem; }
+}
+
+@media (max-width: 560px) {
+  /* Icons alone once the words stop fitting. Each link keeps its accessible
+     name from the sprite's title, so this loses nothing but width. */
+  .sidenav a span:not(.role-badge) { display: none; }
+  .sidenav a { padding: .5rem .6rem; }
+  .sidenav a svg { width: 1.15rem; height: 1.15rem; }
+  .welcome { display: none; }
+}
+
+
+/* ── stat card rhythm ────────────────────────────────────────────────────────
+   Label, figure and caption are one unit and should sit close enough to read
+   as one. Spread apart -- which is what the inherited paragraph margins did --
+   they read as three unrelated lines in a box, and the card stops being a
+   single fact. */
+
+.stat-label { margin: 0 0 .45rem; }
+.stat-value { margin: 0 0 .35rem; }
+.stat-value + .stat-note { margin-top: 0; }
+.stat-note { font-size: .78rem; }
+
+/* The dashboard's own stat blocks use an h2 as the label, so it gets the same
+   treatment rather than keeping heading margins. */
+.stat h2 { margin: 0 0 .45rem; font-size: .78rem; }
+
+/* Nothing on a page should be able to push it sideways. Financial tables are
+   the usual culprit, and they have their own scroll container; this is the
+   backstop for everything else. */
+body { overflow-x: hidden; }
+.container > * { min-width: 0; }

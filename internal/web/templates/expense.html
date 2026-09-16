@@ -5,8 +5,15 @@
   <ul class="help-list">
     <li>{{template "icon" "check-circle"}}
       <span><strong>Manual</strong> is fastest for one item. <strong>Upload</strong>
-      takes a photo or PDF of a receipt, queues it, and tells you when it is
-      ready — you do not have to wait on the page.</span></li>
+      reads a photo or PDF of a receipt while you watch, then opens the form with
+      the amount, the shop and the individual items already filled in.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Always check what was read against the picture beside it. An amount
+      taken off a photograph is a proposal, not a fact — and nothing reaches your
+      ledger until you press save.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Close the tab part-way through and nothing is lost: the receipt keeps
+      processing and waits for you under <a href="/receipts">Receipts</a>.</span></li>
     <li>{{template "icon" "check-circle"}}
       <span><strong>What?</strong> is the category and drives the spending chart.
       Who, Where and Why are optional — useful when you look back in six
@@ -43,47 +50,46 @@
 <div class="entry-single">
 
   {{if eq .Step "choose"}}
-  {{if .Waiting}}
-  <!-- ── receipts already uploaded and still waiting for their details ───────── -->
-  <div class="card">
-    <h2>Waiting for details</h2>
-    <p class="stat-note">
-      {{if eq (len .Waiting) 1}}One receipt has{{else}}{{len .Waiting}} receipts have{{end}}
-      been uploaded to this budget but not entered yet. Where an amount could be
-      read off the image it is shown below — check it against the picture and
-      save, or correct it first.
-    </p>
-    <ul class="waiting-receipts">
-      {{range .Waiting}}
-      <li>
-        <span class="waiting-name">{{.OriginalName}}</span>
-        {{/* What OCR made of it, if anything. A receipt that could not be read
-             says so rather than showing a confident-looking zero. */}}
-        {{with .Draft}}
-          {{if .HasTotal}}
-          <span class="waiting-amount {{if ne .Certainty "high"}}is-uncertain{{end}}">
-            {{money .Total}}{{with .Merchant}} · {{.}}{{end}}
-          </span>
-          {{else}}
-          <span class="stat-note">no amount could be read</span>
-          {{end}}
-        {{end}}
-        <span class="stat-note">uploaded {{.CreatedAt}}</span>
-        <span class="waiting-actions">
-          <a class="btn btn-small btn-primary"
-             href="/transactions/new?type=expense&amp;receipt={{.ID}}">Enter details</a>
-          {{/* A duplicate or a mis-picked file needs a way out that is not
-               "invent an expense for it". POST, so no prefetch or crawler can
-               reach it, and confirmed because the file goes with the row. */}}
-          <form method="POST" action="/receipts/{{.ID}}/discard" class="inline-form"
-                onsubmit="return confirm('Discard {{.OriginalName}}? The uploaded file is deleted.')">
-            {{template "csrf" $}}
-            <button type="submit" class="btn btn-small btn-quiet">Discard</button>
-          </form>
-        </span>
-      </li>
-      {{end}}
-    </ul>
+
+  {{/* ── a receipt just uploaded, being read ──────────────────────────────────
+
+       Uploading used to end with a redirect to the dashboard and a promise that
+       a notification would arrive. That threw the user out of the middle of a
+       task: what they wanted next was the filled-in form, and they were sent
+       somewhere else to wait for permission to come back.
+
+       So the page stays put and shows the work happening. The markup below is
+       the state with scripting off -- a truthful "queued", and a link to the
+       receipts page -- and the script upgrades it into a ring that follows the
+       real stages. Nothing here depends on the script having run.
+  */}}
+  {{if .Watching}}
+  <div class="card receipt-progress" data-receipt-progress
+       data-status-url="/receipts/{{.Watching}}/status"
+       data-next-url="/transactions/new?type=expense&amp;receipt={{.Watching}}">
+
+    <div class="ring" aria-hidden="true">
+      <svg viewBox="0 0 120 120">
+        <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+        <circle class="ring-bar" cx="60" cy="60" r="52" data-ring></circle>
+      </svg>
+      <span class="ring-figure" data-percent>20%</span>
+    </div>
+
+    {{/* The same information in words, for a screen reader and for anyone whose
+         script did not run. aria-live so the stage is announced as it changes
+         rather than silently redrawn. */}}
+    <div class="receipt-progress-text" aria-live="polite">
+      <h2 data-label>Reading your receipt</h2>
+      <p class="stat-note" data-detail>
+        Queued. This usually takes a few seconds.
+      </p>
+      <p class="progress-actions">
+        <a class="btn btn-primary" data-next hidden
+           href="/transactions/new?type=expense&amp;receipt={{.Watching}}">Enter details</a>
+        <a class="btn btn-quiet" href="/receipts">All waiting receipts</a>
+      </p>
+    </div>
   </div>
   {{end}}
 
@@ -104,7 +110,7 @@
               aria-expanded="false">
         <span class="choice-icon">{{template "icon" "upload"}}</span>
         <span class="choice-name">Upload</span>
-        <span class="choice-desc">Attach a photo or PDF of a receipt and we'll queue it.</span>
+        <span class="choice-desc">Photograph a receipt and we'll read the amount off it.</span>
       </button>
     </div>
   </div>
@@ -127,21 +133,20 @@
         <p class="hint">JPEG, PNG, WebP, GIF or PDF.</p>
       </div>
 
-      <div class="callout">
-        <p><strong>You don't have to wait.</strong> The file is queued and
-           processed in the background — carry on using YABA and a notification
-           appears when it's ready.</p>
+      <div class="callout callout-info">
+        <p><strong>Stay on this page.</strong> The receipt is read here and you
+           will see it happen — then the expense form opens with the amount,
+           the shop and the items already filled in.</p>
         <p class="stat-note">
-          The amount is not read off the image: the receipt is stored and
-          attached, and waits on this page for you to type the figure. Either way
-          you'll be told, including next time you sign in if something failed
-          while you were away.
+          Check the figures against the picture before you save: an amount read
+          off a photograph is a proposal, never a fact. Anything that could not
+          be read is simply left blank for you.
         </p>
       </div>
 
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">
-          {{template "icon" "upload"}} Upload and queue
+          {{template "icon" "upload"}} Upload and read
         </button>
         <button type="button" class="btn btn-quiet" data-close-receipt>Cancel</button>
       </div>

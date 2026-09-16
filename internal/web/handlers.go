@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/csv"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -215,6 +216,18 @@ func (s *Server) rateFail(ctx context.Context, l loginLimit) {
 	s.store.RateFail(ctx, l.ip)
 }
 
+// errSignInFailed is the only thing a failed sign-in ever says. Both branches
+// below use it -- the address with no account, and the wrong password -- because
+// a message that tells them apart turns the sign-in page into a tool for
+// discovering who has an account here. It is the same reason the unknown-address
+// branch still spends a bcrypt comparison it does not need: having gone to the
+// trouble of equalising the timing, it would be a waste to give the answer away
+// in words.
+//
+// A constant rather than the same sentence typed twice, so the two branches
+// cannot drift apart again.
+const errSignInFailed = "That email and password do not match."
+
 // attemptLogin verifies a password for a known address.
 func (s *Server) attemptLogin(w http.ResponseWriter, r *http.Request, email, password string, limit loginLimit) {
 	user, hash, err := s.store.CredentialsFor(r.Context(), email)
@@ -229,14 +242,14 @@ func (s *Server) attemptLogin(w http.ResponseWriter, r *http.Request, email, pas
 		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		s.rateFail(r.Context(), limit)
 		s.renderLanding(w, r, http.StatusUnauthorized, landingView{
-			Email: email, Error: "That email is not registered."})
+			Email: email, Error: errSignInFailed})
 		return
 	}
 
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
 		s.rateFail(r.Context(), limit)
 		s.renderLanding(w, r, http.StatusUnauthorized, landingView{
-			Email: email, Error: "Either your email or password is incorrect."})
+			Email: email, Error: errSignInFailed})
 		return
 	}
 
@@ -1985,8 +1998,12 @@ type entryView struct {
 	// not record the same money twice.
 	FormToken string
 
-	// Waiting are receipts already processed that nobody has turned into an expense yet.
-	Waiting []store.ReceiptJob
+	// Watching is the id of a receipt just uploaded from this page, or zero. The
+	// page stays put and shows that receipt being read rather than throwing the
+	// user back to the dashboard to wait for a notification; the list of every
+	// pending receipt lives on /receipts instead, so this page offers a choice
+	// between two things and nothing else.
+	Watching int64
 }
 
 // handleIncomePage is GET /income.
@@ -2021,6 +2038,18 @@ func (s *Server) handleExpensePage(w http.ResponseWriter, r *http.Request) {
 		v.Step = "manual"
 	}
 
+	// ?receipt=N is set by the upload, which returns here rather than to the
+	// dashboard. The id is checked against this household before the page will
+	// watch it, so a guessed number shows nothing rather than telling a stranger
+	// that somebody else's receipt exists.
+	if raw := r.URL.Query().Get("receipt"); raw != "" {
+		if id, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			if _, err := s.store.UnattachedReceipt(r.Context(), scopeOf(r), id); err == nil {
+				v.Watching = id
+			}
+		}
+	}
+
 	s.render(w, r, "expense.html", v)
 }
 
@@ -2043,10 +2072,6 @@ func (s *Server) buildEntryView(w http.ResponseWriter, r *http.Request, kind sto
 	}
 	if kind == store.KindExpense {
 		if v.Buckets, err = s.store.BucketOptions(ctx, sc); err != nil {
-			s.serverError(w, r, err)
-			return v, false
-		}
-		if v.Waiting, err = s.store.UnattachedReceipts(ctx, sc, 10); err != nil {
 			s.serverError(w, r, err)
 			return v, false
 		}
@@ -2825,7 +2850,8 @@ func (s *Server) handleReceiptUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := s.store.EnqueueReceipt(r.Context(), scopeOf(r), path, name); err != nil {
+	job, err := s.store.EnqueueReceipt(r.Context(), scopeOf(r), path, name)
+	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
@@ -2833,9 +2859,117 @@ func (s *Server) handleReceiptUpload(w http.ResponseWriter, r *http.Request) {
 	// Nudge the worker so it starts now rather than on its next tick.
 	s.wakeWorker()
 
-	s.flashSuccess(w, r,
-		"Receipt uploaded. It is being processed in the background — carry on, and you will be told when it is ready.")
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	// Back where they were, watching this receipt, rather than off to the
+	// dashboard to wait for a notification. Uploading a receipt is the middle of
+	// a task, not the end of one: the next thing the user wants is the filled-in
+	// form, and the shortest path to it is to stay on this page until it is
+	// ready. The redirect carries the id so the result survives a refresh and
+	// works with scripting off, where the page simply says it is being read.
+	http.Redirect(w, r, "/expense?receipt="+strconv.FormatInt(job, 10), http.StatusSeeOther)
+}
+
+// receiptStatus is the JSON the upload page polls while a receipt is read. It is
+// deliberately small: a stage, a figure to draw, and somewhere to go once there
+// is somewhere to go.
+type receiptStatus struct {
+	Status  string `json:"status"`
+	Percent int    `json:"percent"`
+	Label   string `json:"label"`
+	Done    bool   `json:"done"`
+	Failed  bool   `json:"failed"`
+	Next    string `json:"next,omitempty"`
+	Detail  string `json:"detail,omitempty"`
+}
+
+// handleReceiptStatus reports how far along one receipt is.
+//
+// The percentages are honest about being stages rather than progress: tesseract
+// reports nothing while it works, so there is no true fraction to show. Each
+// stage names a ceiling and the page eases towards it, which is why 'processing'
+// stops short of 100 -- a ring that sits at 100 while the work continues is a
+// lie the user catches immediately.
+func (s *Server) handleReceiptStatus(w http.ResponseWriter, r *http.Request) {
+	sc := scopeOf(r)
+
+	id, ok := s.pathID(w, r)
+	if !ok {
+		return
+	}
+
+	job, err := s.store.UnattachedReceipt(r.Context(), sc, id)
+	if errors.Is(err, store.ErrNotFound) {
+		// Either it never existed in this budget, or it has already become an
+		// expense. Both are "nothing left to watch", and neither is worth
+		// telling a guesser apart.
+		writeJSON(w, receiptStatus{
+			Status: "gone", Percent: 100, Label: "Already entered", Done: true,
+		})
+		return
+	}
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+
+	out := receiptStatus{Status: string(job.Status)}
+	switch job.Status {
+	case store.JobQueued:
+		out.Percent, out.Label = 20, "Queued"
+	case store.JobProcessing:
+		out.Percent, out.Label = 70, "Reading the receipt"
+	case store.JobFailed:
+		out.Percent, out.Label, out.Failed = 100, "Could not be read", true
+		out.Detail = job.Error
+		out.Next = "/transactions/new?type=expense&receipt=" + strconv.FormatInt(job.ID, 10)
+	case store.JobDone:
+		out.Percent, out.Label, out.Done = 100, "Ready", true
+		out.Next = "/transactions/new?type=expense&receipt=" + strconv.FormatInt(job.ID, 10)
+		if d := job.Draft; d != nil && d.Total > 0 {
+			out.Detail = d.Total.Display()
+			if d.Merchant != "" {
+				out.Detail += " · " + d.Merchant
+			}
+		} else {
+			out.Detail = "No amount could be read — you will be asked for it"
+		}
+	}
+	writeJSON(w, out)
+}
+
+// writeJSON sends a value as JSON with the headers a small polled endpoint
+// wants: no caching, and no sniffing of the content type.
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("web: could not write JSON response: %v", err)
+	}
+}
+
+// handleReceiptsPage lists every receipt in this budget that nobody has turned
+// into an expense yet.
+//
+// It used to sit at the top of Add Expense, where it was the first thing anybody
+// saw on a page whose job is to offer two choices. Here it is somewhere to go
+// rather than something to get past -- and it still exists, because without it a
+// dismissed notification would strand a receipt in the queue with no way to
+// reach it.
+func (s *Server) handleReceiptsPage(w http.ResponseWriter, r *http.Request) {
+	v := receiptsView{view: s.baseView(w, r, "Receipts", "receipts")}
+
+	var err error
+	if v.Waiting, err = s.store.UnattachedReceipts(r.Context(), scopeOf(r), 50); err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	s.render(w, r, "receipts.html", v)
+}
+
+// receiptsView backs the receipts page.
+type receiptsView struct {
+	view
+	Waiting []store.ReceiptJob
 }
 
 // handleReceipt serves a stored receipt to the user who owns it.

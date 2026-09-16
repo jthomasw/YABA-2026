@@ -23,6 +23,10 @@
     <a href="/dashboard" {{if eq .Nav "dashboard"}}aria-current="page"{{end}}>Dashboard</a>
     <a href="/transactions" {{if eq .Nav "transactions"}}aria-current="page"{{end}}>Transactions</a>
     <a href="/reports" {{if eq .Nav "reports"}}aria-current="page"{{end}}>Reports</a>
+    {{/* Receipts uploaded but not yet entered. In the nav rather than on Add
+         Expense, so that page can be two choices and nothing else -- and so a
+         receipt whose notification was dismissed is still somewhere findable. */}}
+    <a href="/receipts" {{if eq .Nav "receipts"}}aria-current="page"{{end}}>Receipts</a>
   </nav>
 
   <div class="user-actions">

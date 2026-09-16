@@ -2437,8 +2437,16 @@ func TestUnknownEmailIsAnsweredInRedOnThePage(t *testing.T) {
 	if !strings.Contains(body, `class="auth-error"`) {
 		t.Errorf("the answer should be the page's red banner: %q", truncate(body))
 	}
-	if !strings.Contains(body, "do not match") {
+	if !strings.Contains(body, errSignInFailed) {
 		t.Error("the banner should use the normal sign-in error")
+	}
+	// The point of the assertion above is not the wording but the sameness: an
+	// address with no account must be answered exactly as a wrong password is.
+	// A message that names the address as unregistered would let anybody use
+	// this page to find out who banks here, and would waste the dummy bcrypt
+	// comparison the handler does purely to keep the two indistinguishable.
+	if strings.Contains(body, "not registered") {
+		t.Error("the banner reveals that the address has no account")
 	}
 	if strings.Contains(body, "Confirm password") {
 		t.Error("an unknown login must not open the account creation form")
