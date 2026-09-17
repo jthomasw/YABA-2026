@@ -111,8 +111,33 @@
     panel.addEventListener("close", function () { open.focus(); });
   }
 
+  /* ── plain confirmations ─────────────────────────────────────────
+   * A form marked data-confirm="..." asks before submitting.
+   *
+   * This lived in dashboard.js, which only the dashboard and reports pages
+   * load -- so on Sharing, Active devices and Transactions the attribute was
+   * markup and nothing else. "Permanently delete this budget and everything in
+   * it" went through on one click, for every member, with no prompt. ui.js is
+   * loaded by the layout on every signed-in page, which is where a guard that
+   * every page relies on belongs.
+   *
+   * Still an enhancement, not the safety mechanism: with scripting off the form
+   * posts unconfirmed, exactly as it did before. The server is what enforces
+   * who may delete what.
+   */
+  function initConfirms() {
+    document.querySelectorAll("form[data-confirm]").forEach(function (form) {
+      form.addEventListener("submit", function (e) {
+        if (!window.confirm(form.getAttribute("data-confirm"))) {
+          e.preventDefault();
+        }
+      });
+    });
+  }
+
   function init() {
     initConfirmDialogs();
+    initConfirms();
     initHelp();
   }
 

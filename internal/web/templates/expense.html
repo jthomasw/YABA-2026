@@ -15,6 +15,11 @@
       <span>Close the tab part-way through and nothing is lost: the receipt keeps
       processing and waits for you under <a href="/receipts">Receipts</a>.</span></li>
     <li>{{template "icon" "check-circle"}}
+      <span><strong>One-time or recurring.</strong> A recurring expense is a rule,
+      not a charge: set <em>Repeat every</em> — days, weeks or months — and YABA
+      records it for you from the start date onwards, catching up on anything owed
+      each time you open this page.</span></li>
+    <li>{{template "icon" "check-circle"}}
       <span><strong>What?</strong> is the category and drives the spending chart.
       Who, Where and Why are optional — useful when you look back in six
       months.</span></li>
@@ -116,7 +121,8 @@
   </div>
 
   <!-- ── the upload panel, revealed by the Upload choice ────────────────────── -->
-  <div class="card" id="receipt-panel" hidden>
+  {{/* Not hidden here: import.js hides it on load instead. The opener is a button with no form, so a server-rendered hidden attribute made receipt upload unreachable without scripting. */}}
+  <div class="card" id="receipt-panel">
     <h2>Upload a receipt</h2>
 
     <form method="POST" action="/import/receipt" enctype="multipart/form-data">
@@ -172,6 +178,30 @@
       {{if .FormToken}}<input type="hidden" name="form_token" value="{{.FormToken}}">{{end}}
       {{template "csrf" .}}
 
+      {{/* One-time or repeating. Add Income asks the same question in the same
+           place and the same words, so the two forms are learned once rather
+           than twice. One-time is preselected: the common case, and the safe
+           default if a script never runs. */}}
+      <fieldset class="field">
+        <legend>Expense type</legend>
+
+        <div class="radio-row">
+          <label class="radio">
+            <input type="radio" name="expense_type" value="one_time" checked>
+            One-time
+          </label>
+          <label class="radio">
+            <input type="radio" name="expense_type" value="recurring">
+            Recurring
+          </label>
+        </div>
+
+        <p class="hint">
+          Choose recurring for a charge that repeats on its own — rent, a phone
+          bill, a subscription.
+        </p>
+      </fieldset>
+
       <div class="field">
         <label for="label">What?</label>
         <input id="label" name="label" type="text" required maxlength="60"
@@ -183,9 +213,40 @@
         <p class="hint">The category. This is what the chart groups by.</p>
       </div>
 
+      {{/* Shipped VISIBLE. The script below hides it when One-time is selected,
+           which is the opposite of how this was first written and the reason it
+           is worth a comment: a server-rendered display:none can only be undone
+           by the script, so with scripting off somebody who chose Recurring got
+           a schedule built from defaults they never saw and could not change.
+
+           A fieldset with a legend, so the number and the unit are announced as
+           one question -- "Repeat every" named only the number box before, and
+           the dropdown was an unnamed combo box. */}}
+      <fieldset class="field" id="recurring-fields">
+        <legend>Repeat every</legend>
+
+        <div class="form-row">
+          <label class="visually-hidden" for="frequency_n">How many</label>
+          <input type="number" id="frequency_n" name="frequency_n"
+                 min="1" max="120" value="1" inputmode="numeric">
+
+          <label class="visually-hidden" for="frequency_unit">Days, weeks or months</label>
+          <select id="frequency_unit" name="frequency_unit">
+            <option value="day">Day(s)</option>
+            <option value="week">Week(s)</option>
+            <option value="month" selected>Month(s)</option>
+          </select>
+        </div>
+
+        <p class="hint">
+          Example: every 1 month for rent, or every 2 weeks for a cleaner.
+          At most 365 days, 52 weeks or 120 months.
+        </p>
+      </fieldset>
+
       <div class="field-row">
         <div class="field">
-          <label for="date">When?</label>
+          <label for="date" id="expense-date-label">When?</label>
           <input id="date" name="date" type="date" required value="{{.OccurredOn}}" max="2200-12-31">
         </div>
         <div class="field">
@@ -253,7 +314,11 @@
       </div>
       {{end}}
 
-      <details class="field line-items">
+      {{/* Both of these describe one particular purchase, so they are hidden for
+           a schedule: a repeating rule has no single receipt to attach and no
+           one basket to break up. The script removes them from the page rather
+           than leaving inputs the server would ignore. */}}
+      <details class="field line-items" data-one-time-only>
         <summary>Break this into items</summary>
         <p class="hint">
           For a shop trip covering several categories. The items must add up to
@@ -277,7 +342,7 @@
         </p>
       </details>
 
-      <div class="field">
+      <div class="field" data-one-time-only>
         <label for="receipt-inline">Receipt (optional)</label>
         <input id="receipt-inline" name="receipt" type="file"
                accept="image/jpeg,image/png,image/webp,image/gif,application/pdf">
@@ -286,10 +351,52 @@
 
       <div class="form-actions">
         <button type="submit" class="btn btn-expense btn-lg">
-          {{template "icon" "minus"}} Save Expense
+          {{template "icon" "minus"}} <span data-save-label>Save Expense</span>
         </button>
         <a class="btn btn-quiet" href="/dashboard">Cancel</a>
       </div>
+
+      {{/*
+        One-time or recurring changes what the rest of the form means, so the
+        form says so as you switch: the date becomes a start date, the frequency
+        appears, and the two fields that describe a single purchase go away.
+
+        Everything here is presentation. With scripting off the form still posts
+        and the server still reads expense_type, so the feature works -- it is
+        just less explained.
+      */}}
+      <script>
+        document.addEventListener("DOMContentLoaded", function () {
+          var recurring  = document.getElementById("recurring-fields");
+          var dateLabel  = document.getElementById("expense-date-label");
+          var saveLabel  = document.querySelector("[data-save-label]");
+          var oneTime    = document.querySelectorAll("[data-one-time-only]");
+          var types      = document.querySelectorAll('input[name="expense_type"]');
+
+          if (!recurring || !types.length) return;
+
+          // Hidden from here, not from the server: see the fieldset above.
+          recurring.style.display = "none";
+
+          function update() {
+            var picked = document.querySelector('input[name="expense_type"]:checked');
+            var isRepeat = !!picked && picked.value === "recurring";
+
+            recurring.style.display = isRepeat ? "" : "none";
+
+            if (dateLabel) dateLabel.textContent = isRepeat ? "Starting when?" : "When?";
+            if (saveLabel) saveLabel.textContent = isRepeat ? "Save Recurring Expense" : "Save Expense";
+
+            oneTime.forEach(function (el) { el.hidden = isRepeat; });
+          }
+
+          types.forEach(function (input) {
+            input.addEventListener("change", update);
+          });
+
+          update();
+        });
+      </script>
     </form>
   </div>
   {{end}}

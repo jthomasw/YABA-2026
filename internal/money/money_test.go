@@ -122,3 +122,80 @@ func TestParseRoundTripThroughInput(t *testing.T) {
 		}
 	}
 }
+
+// TestParseRejectsASecondSign is the regression test for a parser bypass that
+// could store an amount ninety-two thousand times larger than the documented
+// ceiling.
+//
+// Parse strips one leading sign itself and then handed the rest to ParseInt,
+// which is willing to strip another. "--5" arrived at ParseInt as "-5" and came
+// back as -5; the "too large" ceiling only ever compared upwards, so a negative
+// whole part passed it; and the final `if neg { total = -total }` turned the
+// result positive again. With seventeen digits the same path yielded
+// 9223372036854775800 cents, which overflows SUM(amount_cents) in SQLite and
+// makes every page that totals money 500 for that household permanently.
+func TestParseRejectsASecondSign(t *testing.T) {
+	for _, in := range []string{
+		"--5",
+		"---5",
+		"--92233720368547758",
+		"$-,-5",
+		"-+5",
+		"+-5",
+		"+ 5",
+		"5-",
+		"1-2",
+		"5.-1",
+		"5.1-",
+		"- 5",
+	} {
+		if got, err := Parse(in); err == nil {
+			t.Errorf("Parse(%q) = %d cents, want an error", in, int64(got))
+		}
+	}
+}
+
+// Nothing but ASCII digits, a single dot and the documented decorations may
+// appear in an amount. Each of these used to be worth checking by hand; they are
+// cheap to keep checked.
+func TestParseRejectsNonDigits(t *testing.T) {
+	for _, in := range []string{
+		"1e9",      // scientific notation is not an amount
+		"0x10",     // nor is hex
+		"1_000",    // Go literal syntax is not user syntax
+		"१२",       // Devanagari digits
+		"12 5",     // non-breaking space inside the number
+		"1 2",      // ordinary space inside the number
+		"12.3.4",   // two decimal points
+		"12..5",    //
+		".",        // a lone point
+		"$",        //
+		"-",        //
+		"NaN",      //
+		"Inf",      //
+		"infinity", //
+		"٠١",       // Arabic-Indic digits
+	} {
+		if got, err := Parse(in); err == nil {
+			t.Errorf("Parse(%q) = %d cents, want an error", in, int64(got))
+		}
+	}
+}
+
+// The boundary itself, from both sides. $1,000,000,000.00 is the documented cap
+// and must be accepted; one cent more must not be.
+func TestParseCeiling(t *testing.T) {
+	if _, err := Parse("1000000000.00"); err != nil {
+		t.Errorf("the documented maximum was refused: %v", err)
+	}
+	for _, over := range []string{
+		"1000000000.01",
+		"1000000001",
+		"9223372036854775807",
+		"99999999999999999999",
+	} {
+		if got, err := Parse(over); err == nil {
+			t.Errorf("Parse(%q) = %d cents, want an error", over, int64(got))
+		}
+	}
+}

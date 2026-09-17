@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"path"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -154,7 +155,13 @@ func (s *Server) Handler() http.Handler {
 	// mutates data.
 	mux.HandleFunc("GET  /{$}", s.handleLanding)
 	mux.HandleFunc("POST /auth", s.handleAuth)
+	mux.HandleFunc("GET  /register", s.handleRegister)
+	mux.HandleFunc("POST /register", s.handleRegisterSubmit)
 	mux.HandleFunc("POST /logout", s.handleLogout)
+	// Liveness and readiness. Public and uninformative on purpose: see
+	// handleHealth.
+	mux.HandleFunc("GET  /healthz", s.handleHealth)
+
 	mux.HandleFunc("GET  /about", s.handleAbout)   // the `Learn more!` link
 	mux.HandleFunc("GET  /forgot", s.handleForgot) // the `Forgot password` link
 
@@ -276,8 +283,19 @@ func (s *Server) Handler() http.Handler {
 	return recoverPanics(logRequests(mux))
 }
 
-// ListenAndServe starts the HTTP server with sane timeouts.
-func (s *Server) ListenAndServe() error {
+// ListenAndServe starts the HTTP server with sane timeouts and serves until ctx
+// is cancelled, then stops accepting and lets in-flight requests finish.
+//
+// Before this took a context there was no shutdown path at all: SIGTERM -- which
+// is every deploy, every restart, every container eviction -- killed the process
+// where it stood. A POST that was halfway through saving money was cut off
+// mid-response, and the user got a connection reset with no way to tell whether
+// their money had been recorded. Deferred cleanup (closing the database,
+// stopping the worker) never ran either.
+//
+// The grace period is deliberately shorter than WriteTimeout, so a request that
+// has already hung is not what keeps a deploy waiting.
+func (s *Server) ListenAndServe(ctx context.Context) error {
 	srv := &http.Server{
 		Addr:    s.cfg.Addr,
 		Handler: s.Handler(),
@@ -287,8 +305,43 @@ func (s *Server) ListenAndServe() error {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		// Explicit rather than inherited, so the bound is visible here with the
+		// others rather than being a default somebody has to know about.
+		MaxHeaderBytes: 1 << 20,
 	}
-	return srv.ListenAndServe()
+
+	errs := make(chan error, 1)
+	go func() {
+		err := srv.ListenAndServe()
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		errs <- err
+	}()
+
+	select {
+	case err := <-errs:
+		// Failed to bind, or stopped on its own.
+		return err
+	case <-ctx.Done():
+	}
+
+	log.Printf("shutdown: signal received; no longer accepting connections, " +
+		"finishing in-flight requests")
+
+	grace, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(grace); err != nil {
+		// Something was still running when the grace period ran out. Say so
+		// rather than returning silently: it is the one thing an operator
+		// looking at a truncated request needs to know.
+		log.Printf("shutdown: grace period expired with requests still running: %v", err)
+		return err
+	}
+
+	log.Printf("shutdown: all requests finished")
+	return <-errs
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -313,6 +366,10 @@ const (
 
 // userCtxKey is unexported so no other package can plant a user in the context.
 type userCtxKey struct{}
+
+// requestIDCtxKey carries the per-request id logRequests assigns, so an error
+// logged deep in a handler can name the same request the access log does.
+type requestIDCtxKey struct{}
 
 // sessionCtxKey carries the current session's token, so the device list can mark
 // which row is the one you are reading it from.
@@ -483,12 +540,46 @@ func backTo(r *http.Request) string {
 	if err != nil || u.Path == "" || !strings.HasPrefix(u.Path, "/") {
 		return "/dashboard"
 	}
+	// A path beginning "//" is not a path to a browser, it is a
+	// protocol-relative URL: Location: //evil.example/x navigates off this site
+	// entirely, while still passing a naive "starts with /" check. Same for a
+	// "/\" , which several browsers normalise to "//".
+	if strings.HasPrefix(u.Path, "//") || strings.HasPrefix(u.Path, "/\\") {
+		return "/dashboard"
+	}
 	// Drop scheme, host and userinfo: whatever is left cannot leave this site.
 	back := u.Path
 	if u.RawQuery != "" {
 		back += "?" + u.RawQuery
 	}
 	return back
+}
+
+// sameSiteNavigation reports whether a request came from this site rather than
+// from somebody else's page.
+//
+// Two pages -- /income and /expense -- catch recurring schedules up on the way
+// in, which makes them GETs that write, in an app whose route table otherwise
+// promises the opposite. The writes are idempotent and only materialise what a
+// schedule already owed, so the exposure was never invention of data; but an
+// <img src="https://yaba.example/income"> on any page an editor visited still
+// drove a write in their name, and the honest fix is to not do the write.
+//
+// Sec-Fetch-Site is sent by every current browser and cannot be set or removed
+// by the page making the request, which is exactly the property needed here. A
+// request without it is something else -- curl, an old browser, a health check
+// -- and is treated as same-site, because refusing those would break the page
+// for a real user in order to close a hole only a browser can be walked into.
+func sameSiteNavigation(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "cross-site", "same-site":
+		// "same-site" is a different origin on the same registrable domain --
+		// another subdomain. Close enough to elsewhere to decline the write.
+		return false
+	default:
+		// "same-origin", "none" (the user typed it or used a bookmark), or absent.
+		return true
+	}
 }
 
 func isSafeMethod(m string) bool {
@@ -550,6 +641,29 @@ func (s *Server) checkCSRF(r *http.Request, session *sessions.Session) bool {
 	// Constant-time comparison: a plain == leaks how many leading bytes
 	// matched through its timing, which is enough to guess a token byte by byte.
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
+// publicCSRFOK is the CSRF check for the POST routes that cannot sit behind
+// authed, because the people who need them are precisely the ones who cannot
+// sign in: /forgot and /reset.
+//
+// Those two rendered a token into their forms and then never looked at it. The
+// consequence on /forgot was small but real -- any page anywhere could POST an
+// address and spend that visitor's per-IP reset budget, so their own genuine
+// request would be refused -- and on /reset it was the principle rather than an
+// attack: forging that POST needs a valid token, which an attacker only holds
+// for their own account.
+//
+// A missing or mismatched token is a false return; the caller decides what to
+// render, because these two pages report errors differently.
+func (s *Server) publicCSRFOK(r *http.Request) bool {
+	session, err := s.sessions.Get(r, sessionName)
+	if err != nil {
+		// An undecodable cookie is not a pass. The visitor gets the "that form
+		// expired" path, which is the truth: their session is unreadable.
+		return false
+	}
+	return s.checkCSRF(r, session)
 }
 
 func randomToken(n int) (string, error) {
@@ -682,6 +796,18 @@ func (w *statusRecorder) Write(b []byte) (int, error) {
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+
+		// A short id per request, put in the context and echoed in a header.
+		//
+		// Without one, "it failed at about three o'clock" could not be tied to
+		// any of the ERROR lines: the access log had method, path, status and
+		// duration, and the error log had a message, and nothing joined them.
+		// Now both carry the same token and the user can read it off the page
+		// they were sent.
+		id := newRequestID()
+		r = r.WithContext(context.WithValue(r.Context(), requestIDCtxKey{}, id))
+		w.Header().Set("X-Request-Id", id)
+
 		rec := &statusRecorder{ResponseWriter: w}
 		next.ServeHTTP(rec, r)
 		if rec.status == 0 {
@@ -689,9 +815,58 @@ func logRequests(next http.Handler) http.Handler {
 		}
 		// Query strings are omitted: they can carry a search term, and access
 		// logs are the classic place sensitive input leaks into plain text.
-		log.Printf("%s %s %d %s", r.Method, r.URL.Path, rec.status,
+		log.Printf("INFO  %s %s %s %d %s", id, r.Method, r.URL.Path, rec.status,
 			time.Since(start).Round(time.Millisecond))
 	})
+}
+
+// newRequestID returns 8 hex characters: short enough for somebody to read out
+// over the phone, wide enough that two requests in the same log file will not
+// collide in practice. It is not a secret and carries nothing about the user.
+func newRequestID() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// A failure here must not fail the request. A timestamp is a worse id
+		// than random bytes and a far better one than none.
+		return strconv.FormatInt(time.Now().UnixNano()&0xffffffff, 16)
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// requestID returns the id logRequests assigned, or "-" outside a request.
+func requestID(ctx context.Context) string {
+	if id, ok := ctx.Value(requestIDCtxKey{}).(string); ok && id != "" {
+		return id
+	}
+	return "-"
+}
+
+// handleHealth is the liveness and readiness probe.
+//
+// There was nothing to probe before but GET /, which renders a template and
+// touches the session store -- so a load balancer could not tell a healthy
+// process from one whose database had seized, and neither could an operator.
+// This does the one check that distinguishes them: a trivial query, with a
+// timeout, on the single pooled connection every other request needs.
+//
+// Deliberately public and deliberately uninformative: 200 "ok" or 503, no
+// version, no schema number, no error text. A probe does not need them and an
+// unauthenticated visitor should not have them.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+
+	if err := s.store.Ping(ctx); err != nil {
+		log.Printf("ERROR %s health: database unreachable: %v", requestID(r.Context()), err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("unavailable\n"))
+		return
+	}
+
+	_, _ = w.Write([]byte("ok\n"))
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -701,9 +876,10 @@ func logRequests(next http.Handler) http.Handler {
 // pages lists every top-level template. Each one defines a "content" block
 // that layout.html renders inside the shared chrome.
 var pages = []string{
-	"landing.html", // login and signup in one, per the wireframe
-	"about.html",   // the `Learn more!` link
-	"forgot.html",  // the `Forgot password` link
+	"landing.html",  // sign-in page
+	"register.html", // account creation page
+	"about.html",    // the `Learn more!` link
+	"forgot.html",   // the `Forgot password` link
 	"dashboard.html",
 	"reports.html",
 	"transactions.html",
@@ -945,9 +1121,71 @@ func (s *Server) renderForbidden(w http.ResponseWriter, r *http.Request, reason 
 // serverError logs the real error and shows the user a generic page, so raw SQL never
 // reaches the screen and a failed write never looks like a successful one.
 func (s *Server) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	log.Printf("ERROR %s %s: %v", r.Method, r.URL.Path, err)
-	http.Error(w, "Something went wrong on our end. Please try again.",
+	id := requestID(r.Context())
+	log.Printf("ERROR %s %s %s: %v", id, r.Method, r.URL.Path, err)
+
+	// The id is the only thing this page says that the log does not already
+	// know -- and it is the thing that makes a user report actionable. Still
+	// no detail about what failed.
+	http.Error(w, "Something went wrong on our end. Please try again.\n\n"+
+		"If it keeps happening, quote reference "+id+" so it can be looked up.",
 		http.StatusInternalServerError)
+}
+
+// safeMessage decides what a store error may say to the user, and makes sure
+// the real one is written down either way.
+//
+// Fourteen handlers used to put err.Error() straight into a flash. Most of the
+// time that is right -- "a fund needs a name", "not enough available cash" --
+// and replacing it with something generic would make the app worse. But the
+// same store functions wrap driver failures, so the same line could render
+// `set budget: constraint failed: UNIQUE constraint failed:
+// budgets.household_id, budgets.category (2067)` on the page: the storage
+// engine, the table and the columns, handed to anybody who can trip it. And
+// because flashError does no logging, the operator saw nothing at all while the
+// user read the SQL.
+//
+// The discriminator is the error chain, not a list of strings to keep in step.
+// The store writes a validation failure as a leaf -- fmt.Errorf with no %w -- or
+// as one of its own sentinels, while anything from the driver arrives wrapped:
+// fmt.Errorf("create fund: %w", err). So a leaf, or something built on a
+// sentinel, is the store talking to the user; anything else is the database
+// talking to us, and the user gets the fallback instead.
+//
+// Whatever is shown, the full error is logged with the route that produced it.
+func (s *Server) safeMessage(r *http.Request, err error, fallback string) string {
+	if err == nil {
+		return ""
+	}
+
+	if isUserFacing(err) {
+		return err.Error()
+	}
+
+	log.Printf("ERROR %s %s %s: %v", requestID(r.Context()), r.Method, r.URL.Path, err)
+	return fallback
+}
+
+// isUserFacing reports whether an error was written to be read by the person who
+// caused it. See safeMessage.
+func isUserFacing(err error) bool {
+	// Known sentinels are safe however they are wrapped: they exist precisely so
+	// a handler can recognise them, and their text is written for the user.
+	for _, sentinel := range []error{
+		store.ErrNotFound,
+		store.ErrConflict,
+		store.ErrEmailTaken,
+		store.ErrInsufficientCash,
+		store.ErrItemsDoNotBalance,
+	} {
+		if errors.Is(err, sentinel) {
+			return true
+		}
+	}
+
+	// Otherwise: a leaf is the store's own validation message; anything wrapping
+	// something else came from underneath and is not ours to show.
+	return errors.Unwrap(err) == nil
 }
 
 // writeJSON encodes v as a JSON response, buffered like render so a marshalling

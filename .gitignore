@@ -52,5 +52,15 @@ Thumbs.db
 vendor/
 *.docx
 *.doc
+*.pdf
 *.pptx
 *.ppt
+
+# Temporary and scratch files. None of these should ever be intentional
+# repository content; this just stops one from being committed by accident.
+*.log
+*.bak
+*.old
+*.orig
+*.tmp
+*.swo

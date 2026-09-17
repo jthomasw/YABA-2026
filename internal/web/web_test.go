@@ -125,6 +125,13 @@ func newRigWithMail(t *testing.T, mailEnabled bool) *testRig {
 // do issues a request carrying the jar's cookies and stores any it receives.
 func (r *testRig) do(method, target string, form url.Values) *httptest.ResponseRecorder {
 	r.t.Helper()
+	return r.serve(r.request(method, target, form))
+}
+
+// request builds the request do would send, without sending it, so a test
+// can set a header first -- Referer, or Sec-Fetch-Site.
+func (r *testRig) request(method, target string, form url.Values) *http.Request {
+	r.t.Helper()
 
 	var req *http.Request
 	if form != nil {
@@ -136,6 +143,13 @@ func (r *testRig) do(method, target string, form url.Values) *httptest.ResponseR
 	for _, c := range r.cookies {
 		req.AddCookie(c)
 	}
+	return req
+}
+
+// serve runs one prepared request through the handler, carrying any cookie it
+// sets into the next one.
+func (r *testRig) serve(req *http.Request) *httptest.ResponseRecorder {
+	r.t.Helper()
 
 	rec := httptest.NewRecorder()
 	r.handler.ServeHTTP(rec, req)
@@ -1715,16 +1729,20 @@ func TestWaitingReceiptsAreReachableWithoutTheNotification(t *testing.T) {
 	rig.login()
 	jobID := rig.waitingReceipt("lidl.png")
 
-	rec := rig.do("GET", "/expense", nil)
+	// The list used to sit on Add Expense and now has a page of its own, but the
+	// property under test is unchanged and is the one that matters: a receipt
+	// must be reachable from somewhere in the interface without its
+	// notification, or an upload becomes a dead end.
+	rec := rig.do("GET", "/receipts", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "lidl.png") {
-		t.Error("Add Expense does not mention the receipt waiting for details")
+		t.Error("the receipts page does not mention the receipt waiting for details")
 	}
 	if !strings.Contains(body, fmt.Sprintf("receipt=%d", jobID)) {
-		t.Error("Add Expense offers no link to finish the waiting receipt")
+		t.Error("the receipts page offers no link to finish the waiting receipt")
 	}
 }
 
@@ -2220,7 +2238,7 @@ func TestDiscardClearsTheWaitingListAndDeletesTheFile(t *testing.T) {
 		t.Fatalf("complete: %v", err)
 	}
 
-	if body := rig.do("GET", "/expense", nil).Body.String(); !strings.Contains(body, "dupe.png") {
+	if body := rig.do("GET", "/receipts", nil).Body.String(); !strings.Contains(body, "dupe.png") {
 		t.Fatal("the receipt is not on the waiting list to begin with")
 	}
 
@@ -2229,7 +2247,7 @@ func TestDiscardClearsTheWaitingListAndDeletesTheFile(t *testing.T) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 
-	if body := rig.do("GET", "/expense", nil).Body.String(); strings.Contains(body, "dupe.png") {
+	if body := rig.do("GET", "/receipts", nil).Body.String(); strings.Contains(body, "dupe.png") {
 		t.Error("a discarded receipt is still listed")
 	}
 	if _, err := os.Stat(file); !os.IsNotExist(err) {
@@ -2652,5 +2670,187 @@ func TestAFailureAfterTheTokenIsSpentStillLetsTheUserSave(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("%d expenses recorded after a corrected resubmit, want 1", n)
+	}
+}
+
+// ── recurring expenses ────────────────────────────────────────────────────────
+
+// The Add Expense form saves two different things depending on one radio, so the
+// tests worth having are the ones that prove the radio is what decides -- and
+// that the dangerous default is the harmless one.
+
+func TestRecurringExpenseSubmitCreatesAScheduleNotAnExpense(t *testing.T) {
+	rig := newRig(t)
+	rig.login()
+
+	rec := rig.post("/expense", url.Values{
+		"expense_type":   {"recurring"},
+		"label":          {"Rent"},
+		"amount":         {"1200.00"},
+		"date":           {store.Today()},
+		"essential":      {"yes"},
+		"frequency_n":    {"1"},
+		"frequency_unit": {"month"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", rec.Code, extractError(rec.Body.String()))
+	}
+
+	schedules, err := rig.store.ListRecurringExpense(context.Background(), rig.scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(schedules) != 1 {
+		t.Fatalf("got %d schedules, want 1", len(schedules))
+	}
+	if schedules[0].FrequencyUnit != "month" || schedules[0].FrequencyN != 1 {
+		t.Errorf("frequency = every %d %s, want every 1 month",
+			schedules[0].FrequencyN, schedules[0].FrequencyUnit)
+	}
+	if schedules[0].Amount != 120000 {
+		t.Errorf("amount = %d cents, want 120000", schedules[0].Amount)
+	}
+
+	// Starting today, so opening the page catches the first charge up.
+	if body := rig.do("GET", "/expense", nil).Body.String(); body == "" {
+		t.Fatal("empty expense page")
+	}
+	_, total, err := rig.store.List(context.Background(), rig.scope, store.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Fatalf("got %d transactions after the page ran the catch-up, want 1", total)
+	}
+}
+
+// A post with no expense_type at all is an ordinary expense. This is the default
+// a hand-written form, an old cached page or a script would produce, and it must
+// never be the one that commits somebody to a repeating charge.
+func TestExpenseWithoutATypeIsStillOneTime(t *testing.T) {
+	rig := newRig(t)
+	rig.login()
+
+	rec := rig.post("/expense", url.Values{
+		"label":     {"Coffee"},
+		"amount":    {"4.50"},
+		"date":      {"2026-02-02"},
+		"essential": {"no"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", rec.Code, extractError(rec.Body.String()))
+	}
+
+	schedules, err := rig.store.ListRecurringExpense(context.Background(), rig.scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(schedules) != 0 {
+		t.Fatalf("a one-time expense created %d schedules", len(schedules))
+	}
+
+	_, total, err := rig.store.List(context.Background(), rig.scope, store.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Fatalf("got %d transactions, want 1", total)
+	}
+}
+
+func TestRecurringExpenseRefusesABadFrequency(t *testing.T) {
+	cases := []struct {
+		name string
+		n    string
+		unit string
+	}{
+		{"zero", "0", "month"},
+		{"empty", "", "month"},
+		{"not a number", "two", "month"},
+		{"unknown unit", "1", "fortnight"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rig := newRig(t)
+			rig.login()
+
+			rec := rig.post("/expense", url.Values{
+				"expense_type":   {"recurring"},
+				"label":          {"Rent"},
+				"amount":         {"1200.00"},
+				"date":           {"2026-03-01"},
+				"frequency_n":    {c.n},
+				"frequency_unit": {c.unit},
+			})
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status %d, want 400", rec.Code)
+			}
+
+			schedules, err := rig.store.ListRecurringExpense(context.Background(), rig.scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(schedules) != 0 {
+				t.Fatalf("a bad frequency stored %d schedules", len(schedules))
+			}
+			// And it must not have fallen through into a one-time expense either.
+			if _, total, err := rig.store.List(context.Background(), rig.scope, store.Filter{}); err != nil {
+				t.Fatal(err)
+			} else if total != 0 {
+				t.Fatalf("a refused schedule recorded %d transactions", total)
+			}
+		})
+	}
+}
+
+// A viewer must not be able to commit a household to a repeating charge, the
+// same way they cannot record a single one.
+func TestRecurringExpenseNeedsEditRights(t *testing.T) {
+	rig, _, _, viewer := sharedRig(t)
+	rig.loginAs(viewer)
+
+	rec := rig.do("POST", "/expense", url.Values{
+		"csrf_token":     {rig.csrf("/dashboard")},
+		"expense_type":   {"recurring"},
+		"label":          {"Rent"},
+		"amount":         {"1200.00"},
+		"date":           {"2026-03-01"},
+		"frequency_n":    {"1"},
+		"frequency_unit": {"month"},
+	})
+	_ = rec
+
+	// canEdit bounces a viewer back to the dashboard with a flash rather than
+	// erroring, so the status is a redirect either way -- what proves the refusal
+	// is that nothing was stored.
+	schedules, err := rig.store.ListRecurringExpense(context.Background(), rig.scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(schedules) != 0 {
+		t.Fatalf("a viewer created %d recurring expenses", len(schedules))
+	}
+}
+
+// The manual form must actually offer the choice, and must offer the dropdown in
+// the units the schedule accepts -- a select whose values do not match what the
+// handler validates would refuse every submit.
+func TestManualExpenseFormOffersTheRecurringChoice(t *testing.T) {
+	rig := newRig(t)
+	rig.login()
+
+	body := rig.do("GET", "/expense?step=manual", nil).Body.String()
+	for _, want := range []string{
+		`name="expense_type" value="one_time"`,
+		`name="expense_type" value="recurring"`,
+		`name="frequency_n"`,
+		`name="frequency_unit"`,
+		`value="day"`, `value="week"`, `value="month"`,
+		"Repeat every",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("manual expense form is missing %q", want)
+		}
 	}
 }

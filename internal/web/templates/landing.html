@@ -9,7 +9,12 @@
 */}}
 
 <div class="auth-wrapper">
-  <main class="auth-card">
+  {{/* A div, not a <main>. layout.html already emits <main id="main">
+       around this, so a second one nested inside gave the sign-in and
+       registration pages two "main" landmarks -- invalid, and two
+       identical targets in a screen reader's landmark list, on the two
+       pages a new user meets first. */}}
+  <div class="auth-card">
 
     <div class="auth-brand">
       <span class="auth-mark" aria-hidden="true">Y</span>
@@ -61,7 +66,7 @@
 
     <a class="btn-auth btn-auth-secondary" href="/register">Create an account</a>
 
-  </main>
+  </div>
 
   <p class="auth-foot"><a href="/about">What is YABA?</a></p>
 </div>

@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -175,7 +176,7 @@ func (w *Worker) processNext(ctx context.Context) bool {
 	log.Printf("worker: processing receipt job %d for user %d (attempt %d)",
 		job.ID, job.UserID, job.Attempts)
 
-	draft, err := w.processor.Process(ctx, job)
+	draft, err := w.safeProcess(ctx, job)
 
 	switch {
 	case errors.Is(err, ErrNeedsReview):
@@ -192,17 +193,44 @@ func (w *Worker) processNext(ctx context.Context) bool {
 	return true
 }
 
+// safeProcess runs the processor and turns a panic into an ordinary job failure.
+//
+// This goroutine is started with a bare `go receipts.Run(ctx)`, and an
+// unrecovered panic in a goroutine takes the whole PROCESS down -- not just the
+// worker. The HTTP recoverPanics middleware does not reach here. What runs
+// inside is the OCR path: it shells out to tesseract and pdftoppm and then
+// parses whatever text comes back, which is attacker-supplied by definition
+// once anybody can upload a receipt. One index-out-of-range in that parser
+// would have signed every user out and stopped the site.
+//
+// One bad receipt now fails one job.
+func (w *Worker) safeProcess(ctx context.Context, job store.ReceiptJob) (d Draft, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			log.Printf("worker: PANIC processing receipt job %d: %v\n%s",
+				job.ID, p, debug.Stack())
+			d, err = Draft{}, fmt.Errorf("the receipt could not be read")
+		}
+	}()
+	return w.processor.Process(ctx, job)
+}
+
 // saveDraft records the proposal against the job, if there is one worth
-// recording. A failure here is logged rather than fatal: the receipt image is
-// stored and the user can still enter it by hand, which is exactly the outcome
-// they had before any of this existed.
-func (w *Worker) saveDraft(ctx context.Context, job store.ReceiptJob, d Draft) {
+// recording, and reports whether it got there.
+//
+// The caller needs the answer. finishDraft used to ignore it and then notify the
+// user "Read $45.78 from Tesco. Tap to check it and save." -- so when the write
+// had failed they clicked through to an empty form, the figure they had been
+// promised gone, and the job already marked done so it could never be retried.
+func (w *Worker) saveDraft(ctx context.Context, job store.ReceiptJob, d Draft) bool {
 	if d.Empty() {
-		return
+		return true
 	}
 	if err := w.store.SaveReceiptDraft(ctx, job.ID, d.toStore()); err != nil {
 		log.Printf("worker: could not save the draft for receipt job %d: %v", job.ID, err)
+		return false
 	}
+	return true
 }
 
 // finishDraft records a successful reading and invites the user to confirm it.
@@ -220,7 +248,14 @@ func (w *Worker) finishDraft(ctx context.Context, job store.ReceiptJob, d Draft)
 		return
 	}
 
-	w.saveDraft(ctx, job, d)
+	// If the proposal could not be stored there is nothing to invite the user to
+	// confirm, so this is a failure rather than a success with a broken link.
+	// Treating it as one also leaves the job retryable.
+	if !w.saveDraft(ctx, job, d) {
+		w.finishFailed(ctx, job, fmt.Errorf("the reading could not be stored"))
+		return
+	}
+
 	if err := w.store.CompleteReceiptJob(ctx, job.ID, nil); err != nil {
 		log.Printf("worker: could not mark job %d done: %v", job.ID, err)
 	}

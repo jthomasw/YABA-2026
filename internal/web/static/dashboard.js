@@ -81,15 +81,11 @@
   /* ── confirm before destructive actions ─────────────────────────────────
    * The old delete links fired immediately, with no confirmation and no undo.
    */
-  function initConfirms() {
-    document.querySelectorAll("form[data-confirm]").forEach(function (form) {
-      form.addEventListener("submit", function (e) {
-        if (!window.confirm(form.getAttribute("data-confirm"))) {
-          e.preventDefault();
-        }
-      });
-    });
-  }
+  /* initConfirms moved to ui.js, which the layout loads on every signed-in
+   * page. It was here, so the data-confirm on the delete-budget form -- and on
+   * every other destructive form outside the dashboard -- did nothing at all.
+   * Attaching it in both files would ask twice.
+   */
 
   /* ── charts ─────────────────────────────────────────────────────────────
    * Data arrives as JSON in data- attributes and is parsed here, rather than
@@ -301,7 +297,6 @@
 
   function init() {
     document.querySelectorAll("[data-tabs]").forEach(initTabs);
-    initConfirms();
     initBucketKind();
     initCharts();
   }

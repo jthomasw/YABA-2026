@@ -62,6 +62,12 @@ func Parse(s string) (Cents, error) {
 	if i := strings.IndexByte(s, '.'); i >= 0 {
 		whole, frac = s[:i], s[i+1:]
 	}
+
+	// "5." and ".5" are both amounts somebody might type. "." on its own is not
+	// one, and must not quietly become zero.
+	if whole == "" && frac == "" {
+		return 0, fmt.Errorf("%w: %q", ErrInvalidAmount, s)
+	}
 	if whole == "" {
 		whole = "0"
 	}
@@ -77,6 +83,21 @@ func Parse(s string) (Cents, error) {
 		// exact
 	default:
 		return 0, fmt.Errorf("%w: more than two decimal places", ErrInvalidAmount)
+	}
+
+	// Both halves must be digits and nothing else, checked before ParseInt
+	// rather than relying on it.
+	//
+	// ParseInt accepts a sign of its own, and that is the whole bug this guard
+	// exists to close: "--5" reaches here as whole == "-5", parses to -5, sails
+	// under the "too large" ceiling because the ceiling is one-sided, and is
+	// then re-negated into +$5. The same trick with a 17-digit number produced
+	// $92,233,720,368,547,758 -- ninety-two thousand times the documented cap,
+	// large enough that SUM(amount_cents) overflows in SQLite and every page
+	// that totals money returns 500 from then on, including the page you would
+	// need to delete the row.
+	if !allDigits(whole) || !allDigits(frac) {
+		return 0, fmt.Errorf("%w: %q", ErrInvalidAmount, s)
 	}
 
 	w, err := strconv.ParseInt(whole, 10, 64)
@@ -99,6 +120,22 @@ func Parse(s string) (Cents, error) {
 		total = -total
 	}
 	return Cents(total), nil
+}
+
+// allDigits reports whether s is one or more ASCII digits and nothing else.
+//
+// Deliberately ASCII-only: strconv would reject a Devanagari digit anyway, and
+// an amount field that quietly accepted one would be a surprise, not a feature.
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ParsePositive is Parse plus the requirement that the amount is above zero, which

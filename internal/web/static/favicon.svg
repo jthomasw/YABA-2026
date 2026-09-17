@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The wordmark's initial, in the brand indigo, on a rounded square.
+     An SVG rather than an .ico: one file, sharp at every size, and both themes
+     read it the same because the mark carries its own background.
+
+     This exists because every page load asked for /favicon.ico, got a 404, and
+     logged one -- a line of noise per request in a log somebody has to read. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="YABA">
+  <rect width="64" height="64" rx="14" fill="#4F46E5"/>
+  <path d="M16 18l16 18v12" fill="none" stroke="#FFFFFF" stroke-width="7"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M48 18L32 36" fill="none" stroke="#FFFFFF" stroke-width="7"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

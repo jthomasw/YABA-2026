@@ -132,6 +132,31 @@ func (s *Server) handleRegisterSubmit(w http.ResponseWriter, r *http.Request) {
 	showError := func(status int, message string) {
 		s.renderRegister(w, r, status, registerView{Email: email, Error: message})
 	}
+
+	// Registration is rate limited on the same counters as sign-in.
+	//
+	// Two reasons, and the first is the one that matters. This page answers
+	// "does this address have an account here?" out loud -- 409 and a sentence
+	// saying so -- which is the exact question /auth and /forgot go to real
+	// trouble to refuse. Registration cannot honestly refuse it as well without
+	// an email round-trip this deployment cannot rely on, so the fact stays
+	// available and the RATE does not: an attacker can confirm one address they
+	// already suspect, but cannot walk a list of ten thousand.
+	//
+	// The second: every new address costs a bcrypt at DefaultCost. Unlimited,
+	// that is a CPU exhaustion lever anybody can pull from a browser tab.
+	limit := newLoginLimit(r, email)
+	retryIn, err := s.retryIn(r.Context(), limit)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	if retryIn > 0 {
+		showError(http.StatusTooManyRequests,
+			"Too many attempts from this device. Try again "+retryPhrase(retryIn)+".")
+		return
+	}
+
 	if msg := validateEmail(email); msg != "" {
 		showError(http.StatusBadRequest, msg)
 		return
@@ -150,6 +175,9 @@ func (s *Server) handleRegisterSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if exists {
+		// This answer is the one worth paying for, so it is charged to both
+		// counters -- probing costs the prober their budget.
+		s.rateFail(r.Context(), limit)
 		showError(http.StatusConflict, "An account with this email already exists. Please sign in.")
 		return
 	}
@@ -161,6 +189,9 @@ func (s *Server) handleRegisterSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, err := s.store.CreateUser(r.Context(), email, string(hash))
 	if errors.Is(err, store.ErrEmailTaken) {
+		// Lost the race with a concurrent signup for the same address; same
+		// answer, so the same charge.
+		s.rateFail(r.Context(), limit)
 		showError(http.StatusConflict, "An account with this email already exists. Please sign in.")
 		return
 	}
@@ -253,7 +284,13 @@ func (s *Server) attemptLogin(w http.ResponseWriter, r *http.Request, email, pas
 		return
 	}
 
-	s.store.RateReset(r.Context(), limit.account)
+	// Worth noticing when it fails: the counter then stays where it was, so the
+	// user's next mistyped password can trip the lockout on the first try and
+	// they are told "too many failed attempts" after one.
+	if err := s.store.RateReset(r.Context(), limit.account); err != nil {
+		log.Printf("WARN  %s could not clear the login counter after a successful sign-in: %v",
+			requestID(r.Context()), err)
+	}
 	if err := s.startSession(w, r, user.ID); err != nil {
 		s.serverError(w, r, err)
 		return
@@ -1604,7 +1641,8 @@ func (s *Server) handleTransactionCreate(w http.ResponseWriter, r *http.Request)
 	if in.kind == store.KindExpense {
 		path, name, err := s.saveReceipt(r, user.ID)
 		if err != nil {
-			s.rerenderTransactionForm(w, r, in, err.Error(), false, 0)
+			s.rerenderTransactionForm(w, r, in,
+				s.safeMessage(r, err, "That receipt could not be stored. Try again."), false, 0)
 			return
 		}
 		n.ReceiptPath, n.ReceiptName = path, name
@@ -1743,7 +1781,11 @@ func (s *Server) handleTransactionUpdate(w http.ResponseWriter, r *http.Request)
 		wasOn = t.OccurredOn
 	}
 
-	err := s.store.Update(r.Context(), sc, id, in.toNewTransaction())
+	// The amount and its breakdown go in together. Saving them separately let a
+	// cancelled request commit a new amount over the old line items, leaving the
+	// dashboard's headline spend and its own category chart disagreeing with
+	// nothing in the schema to catch it.
+	err := s.store.UpdateWithItems(r.Context(), sc, id, in.toNewTransaction(), in.items)
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -1753,17 +1795,21 @@ func (s *Server) handleTransactionUpdate(w http.ResponseWriter, r *http.Request)
 		s.conflictOnUpdate(w, r, sc, id, in)
 		return
 	}
+	// A breakdown that does not add up is a correctable typing mistake, not a
+	// server fault. The form already checks this, so reaching here means a
+	// hand-built POST -- which still deserves the sentence rather than a 500.
+	if errors.Is(err, store.ErrItemsDoNotBalance) {
+		s.rerenderTransactionFormAt(w, r, in,
+			"The items must add up to the amount above. Nothing was saved.",
+			true, id, in.version)
+		return
+	}
 	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
 
-	// Passing an empty slice clears the breakdown, which is how a user removes
-	// line items: they blank the rows and save.
 	var ws warnings
-	if err := s.store.SetLineItems(r.Context(), sc, id, in.items); err != nil {
-		ws.add("The line items could not be stored: %s", err)
-	}
 	ws.addReallocations(r, s.store, sc, wasOn, in.occurredOn)
 
 	s.redirectSaved(w, r, "/transactions", ws, "Entry updated.")
@@ -1902,8 +1948,19 @@ func (s *Server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`.csv"`)
 
+	// csv.Writer errors are sticky: after the first failure every later row is
+	// dropped and Flush says nothing, so a user exporting a year of history
+	// over a flaky connection downloaded a file that stopped halfway, with
+	// HTTP 200 and no reason to doubt it. The header is already sent by the
+	// time this can happen, so the response cannot become an error -- but it
+	// can stop being silent.
 	cw := csv.NewWriter(w)
-	defer cw.Flush()
+	defer func() {
+		cw.Flush()
+		if err := cw.Error(); err != nil {
+			log.Printf("ERROR %s %s: CSV export truncated: %v", r.Method, r.URL.Path, err)
+		}
+	}()
 
 	// "Added by" is always a column here, unlike in the on-screen table where it is hidden
 	// for a solo user.
@@ -2008,13 +2065,17 @@ type entryView struct {
 
 // handleIncomePage is GET /income.
 func (s *Server) handleIncomePage(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.ProcessDueRecurringIncome(
-		r.Context(),
-		scopeOf(r),
-		store.Today(),
-	); err != nil {
-		http.Error(w, "Could not process recurring income.", http.StatusInternalServerError)
-		return
+	// Catching schedules up is a write, and this is a GET, so it happens only
+	// for a navigation that came from this site. See sameSiteNavigation.
+	if sameSiteNavigation(r) {
+		if err := s.store.ProcessDueRecurringIncome(
+			r.Context(),
+			scopeOf(r),
+			store.Today(),
+		); err != nil {
+			s.serverError(w, r, err)
+			return
+		}
 	}
 
 	v, ok := s.buildEntryView(w, r, store.KindIncome, "Add Income", "income")
@@ -2028,6 +2089,20 @@ func (s *Server) handleIncomePage(w http.ResponseWriter, r *http.Request) {
 // handleExpensePage is GET /expense. It opens on the Manual-or-Upload chooser rather
 // than a form: the user picks how to add the expense before seeing any fields.
 func (s *Server) handleExpensePage(w http.ResponseWriter, r *http.Request) {
+	// Schedules are caught up on the way in, the same way /income does it: there
+	// is no background job in this deployment, so "what do I owe by now" is
+	// answered the next time somebody opens the page that would show it.
+	if sameSiteNavigation(r) {
+		if err := s.store.ProcessDueRecurringExpenses(
+			r.Context(),
+			scopeOf(r),
+			store.Today(),
+		); err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+	}
+
 	v, ok := s.buildEntryView(w, r, store.KindExpense, "Add Expense", "expense")
 	if !ok {
 		return
@@ -2102,29 +2177,19 @@ func (s *Server) handleIncomeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Both halves of the interval, checked against the same ceilings the
+	// store enforces -- an unbounded value here used to reach AddDate and
+	// overflow into a date that never advances, spinning the catch-up loop
+	// on the process's only database connection.
 	frequencyN, err := strconv.Atoi(r.PostFormValue("frequency_n"))
-	if err != nil || frequencyN <= 0 {
-		s.rerenderEntry(
-			w,
-			r,
-			store.KindIncome,
-			in,
-			"Enter a valid recurring frequency.",
-		)
+	if err != nil {
+		s.rerenderEntry(w, r, store.KindIncome, in, "Enter a valid recurring frequency.")
 		return
 	}
 
 	frequencyUnit := r.PostFormValue("frequency_unit")
-	switch frequencyUnit {
-	case "day", "week", "month":
-	default:
-		s.rerenderEntry(
-			w,
-			r,
-			store.KindIncome,
-			in,
-			"Choose a valid recurring frequency.",
-		)
+	if ok, msg := store.ValidFrequency(frequencyN, frequencyUnit); !ok {
+		s.rerenderEntry(w, r, store.KindIncome, in, msg)
 		return
 	}
 
@@ -2156,8 +2221,75 @@ func (s *Server) handleIncomeCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleExpenseCreate is POST /expense.
+//
+// The manual form can save two different things: a single expense that happened,
+// or a schedule that will keep creating them. They share every field except the
+// frequency, so they share one form and one route -- expense_type says which was
+// meant, and a missing or unrecognised value means the ordinary one-time flow.
+// That is the safe default: a broken script cannot accidentally commit somebody
+// to a repeating charge.
 func (s *Server) handleExpenseCreate(w http.ResponseWriter, r *http.Request) {
-	s.createEntry(w, r, store.KindExpense)
+	if !s.parseForm(w, r) {
+		return
+	}
+
+	if r.PostFormValue("expense_type") != "recurring" {
+		s.createEntry(w, r, store.KindExpense)
+		return
+	}
+
+	user := mustUser(r)
+	sc := scopeOf(r)
+
+	in, msg := parseTransactionFormFor(r, store.KindExpense)
+	if msg != "" {
+		s.rerenderEntry(w, r, store.KindExpense, in, msg)
+		return
+	}
+
+	// Both halves of the interval, checked against the same ceilings the
+	// store enforces -- an unbounded value here used to reach AddDate and
+	// overflow into a date that never advances, spinning the catch-up loop
+	// on the process's only database connection.
+	frequencyN, err := strconv.Atoi(r.PostFormValue("frequency_n"))
+	if err != nil {
+		s.rerenderEntry(w, r, store.KindExpense, in, "Enter a valid recurring frequency.")
+		return
+	}
+
+	frequencyUnit := r.PostFormValue("frequency_unit")
+	if ok, msg := store.ValidFrequency(frequencyN, frequencyUnit); !ok {
+		s.rerenderEntry(w, r, store.KindExpense, in, msg)
+		return
+	}
+
+	if s.duplicateSubmit(r, user.ID) {
+		s.redirectSuccess(w, r, "/expense", "That recurring expense was already saved.")
+		return
+	}
+
+	_, err = s.store.CreateRecurringExpense(
+		r.Context(),
+		sc,
+		in.label,
+		in.amount,
+		in.bucketID,
+		in.essential,
+		frequencyN,
+		frequencyUnit,
+		in.occurredOn,
+	)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+
+	s.redirectSuccess(
+		w,
+		r,
+		"/expense",
+		fmt.Sprintf("Recurring expense of %s saved.", in.amount.Display()),
+	)
 }
 
 // createEntry saves one entry of a fixed kind. The kind comes from the route, never from
@@ -2188,7 +2320,8 @@ func (s *Server) createEntry(w http.ResponseWriter, r *http.Request, kind store.
 	if kind == store.KindExpense {
 		path, name, err := s.saveReceipt(r, user.ID)
 		if err != nil {
-			s.rerenderEntry(w, r, kind, in, err.Error())
+			s.rerenderEntry(w, r, kind, in,
+				s.safeMessage(r, err, "That receipt could not be stored. Try again."))
 			return
 		}
 		n.ReceiptPath, n.ReceiptName = path, name
@@ -2267,7 +2400,8 @@ func (s *Server) handleFundCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := s.store.CreateFund(r.Context(), sc, name, goal, months); err != nil {
-		s.redirectError(w, r, savingsAnchor, err.Error())
+		s.redirectError(w, r, savingsAnchor,
+			s.safeMessage(r, err, "That fund could not be created. Try again."))
 		return
 	}
 
@@ -2299,7 +2433,8 @@ func (s *Server) handleFundGoal(w http.ResponseWriter, r *http.Request) {
 	if name := strings.TrimSpace(r.PostFormValue("name")); name != "" {
 		if err := s.store.RenameFund(r.Context(), sc, fundID, name); err != nil &&
 			!errors.Is(err, store.ErrNotFound) {
-			s.redirectError(w, r, savingsAnchor, err.Error())
+			s.redirectError(w, r, savingsAnchor,
+				s.safeMessage(r, err, "That fund could not be renamed. Try again."))
 			return
 		}
 	}
@@ -2308,7 +2443,7 @@ func (s *Server) handleFundGoal(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, store.ErrNotFound) {
 		s.flashError(w, r, "That fund no longer exists.")
 	} else if err != nil {
-		s.flashError(w, r, err.Error())
+		s.flashError(w, r, s.safeMessage(r, err, "That change could not be saved. Try again."))
 	} else {
 		s.flashSuccess(w, r, "Fund target updated.")
 	}
@@ -2419,7 +2554,7 @@ func (s *Server) handleBudgetSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.store.SetBudget(r.Context(), sc, category, limit); err != nil {
-		s.flashError(w, r, err.Error())
+		s.flashError(w, r, s.safeMessage(r, err, "That change could not be saved. Try again."))
 	} else {
 		s.flashSuccess(w, r, fmt.Sprintf("%s budget set to %s a month.", category, limit.Display()))
 	}
@@ -2607,7 +2742,8 @@ func (s *Server) handleBucketCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := s.store.CreateBucket(r.Context(), sc, n); err != nil {
-		s.redirectError(w, r, expensesTab, err.Error())
+		s.redirectError(w, r, expensesTab,
+			s.safeMessage(r, err, "That recurring expense could not be created. Try again."))
 		return
 	}
 
@@ -2638,7 +2774,7 @@ func (s *Server) handleBucketUpdate(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrNotFound):
 		s.flashError(w, r, "That expense no longer exists.")
 	case err != nil:
-		s.flashError(w, r, err.Error())
+		s.flashError(w, r, s.safeMessage(r, err, "That change could not be saved. Try again."))
 	default:
 		s.reallocateNow(w, r)
 		s.flashSuccess(w, r, "Recurring expense updated.")
@@ -2713,7 +2849,11 @@ func (s *Server) handleReallocate(w http.ResponseWriter, r *http.Request) {
 // rather than leaving the page silently stale.
 func (s *Server) reallocateNow(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.Reallocate(r.Context(), scopeOf(r), ""); err != nil {
-		// Not fatal: the change the user asked for did happen.
+		// Not fatal: the change the user asked for did happen. But the cause was
+		// dropped here entirely, so a user who pressed Recalculate and watched it
+		// fail again left no trace at all for anybody to diagnose from.
+		log.Printf("ERROR %s %s %s: reallocation failed: %v",
+			requestID(r.Context()), r.Method, r.URL.Path, err)
 		s.flashError(w, r, "Saved, but the expense funding could not be recalculated. Try the Recalculate button.")
 	}
 }
@@ -2812,11 +2952,20 @@ func (s *Server) saveReceipt(r *http.Request, userID int64) (path, original stri
 	if err != nil {
 		return "", "", fmt.Errorf("could not store the receipt")
 	}
-	defer dst.Close()
-
 	// Cap the copy as well as checking header.Size: the declared size is a
 	// hint, and LimitReader is what actually bounds what reaches the disk.
 	if _, err := io.Copy(dst, io.LimitReader(file, s.maxUploadBytes())); err != nil {
+		dst.Close()
+		os.Remove(full)
+		return "", "", fmt.Errorf("could not store the receipt")
+	}
+
+	// Close is checked, not deferred. A full disk or an exceeded quota
+	// surfaces at close(2), not at write: deferring it meant the handler
+	// queued the job and told the user their upload had worked, and only
+	// the worker discovered minutes later that the file was truncated.
+	if err := dst.Close(); err != nil {
+		log.Printf("ERROR storing receipt %s: %v", full, err)
 		os.Remove(full)
 		return "", "", fmt.Errorf("could not store the receipt")
 	}
@@ -2842,7 +2991,8 @@ func (s *Server) handleReceiptUpload(w http.ResponseWriter, r *http.Request) {
 
 	path, name, err := s.saveReceipt(r, user.ID)
 	if err != nil {
-		s.redirectError(w, r, "/expense", err.Error())
+		s.redirectError(w, r, "/expense",
+			s.safeMessage(r, err, "That receipt could not be stored. Try again."))
 		return
 	}
 	if path == "" {
@@ -2919,7 +3069,13 @@ func (s *Server) handleReceiptStatus(w http.ResponseWriter, r *http.Request) {
 		out.Percent, out.Label = 70, "Reading the receipt"
 	case store.JobFailed:
 		out.Percent, out.Label, out.Failed = 100, "Could not be read", true
-		out.Detail = job.Error
+		// NOT job.Error. That string is the worker's internal cause --
+		// "stat uploads/42/9f3c....jpg: no such file or directory", or raw
+		// pdftoppm stderr -- and import.js writes whatever arrives straight
+		// into the page, so the server's filesystem layout was printed in the
+		// browser of anyone whose receipt failed. The real cause is already in
+		// the log, recorded against this job id.
+		out.Detail = "Enter the details by hand instead. The image is saved."
 		out.Next = "/transactions/new?type=expense&receipt=" + strconv.FormatInt(job.ID, 10)
 	case store.JobDone:
 		out.Percent, out.Label, out.Done = 100, "Ready", true
@@ -3270,7 +3426,8 @@ func (s *Server) handleHouseholdCreate(w http.ResponseWriter, r *http.Request) {
 
 	name := strings.TrimSpace(r.PostFormValue("name"))
 	if _, err := s.store.CreateSharedHousehold(r.Context(), user.ID, name); err != nil {
-		s.redirectError(w, r, "/household", err.Error())
+		s.redirectError(w, r, "/household",
+			s.safeMessage(r, err, "That budget could not be created. Try again."))
 		return
 	}
 
@@ -3314,7 +3471,7 @@ func (s *Server) handleHouseholdRename(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.store.RenameHousehold(r.Context(), hh.ID, r.PostFormValue("name")); err != nil {
-		s.flashError(w, r, err.Error())
+		s.flashError(w, r, s.safeMessage(r, err, "That change could not be saved. Try again."))
 	} else {
 		s.flashSuccess(w, r, "Name updated.")
 	}
@@ -3402,7 +3559,7 @@ func (s *Server) handleInviteCreate(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrInviteOpen):
 		s.flashError(w, r, "They already have an invitation waiting.")
 	case err != nil:
-		s.flashError(w, r, err.Error())
+		s.flashError(w, r, s.safeMessage(r, err, "That change could not be saved. Try again."))
 	default:
 		s.sendInvitation(w, r, store.NormalizeEmail(email), hh.Name, user.DisplayName, role)
 	}
@@ -3573,7 +3730,12 @@ func (s *Server) sendInvitation(w http.ResponseWriter, r *http.Request,
 	if err != nil {
 		// The invitation row exists and is perfectly usable, so this is not a failure of the
 		// invitation -- only of its delivery.
-		log.Printf("mail: invitation to %s failed: %v", email, err)
+		// The address is deliberately not logged. Every other line in this file
+		// identifies people by a numeric id; a plain-text log that is shipped and
+		// retained is not the place for somebody's email address, and the
+		// household name is enough to find the invitation row.
+		log.Printf("WARN  %s invitation email failed for budget %q: %v",
+			requestID(r.Context()), household, err)
 		s.flashError(w, r, fmt.Sprintf(
 			"%s is invited as a %s, but the email could not be sent. "+
 				"Tell them to sign in within 24 hours, or resend it below.",
@@ -3628,7 +3790,7 @@ func (s *Server) handleTransferOwnership(w http.ResponseWriter, r *http.Request)
 	case errors.Is(err, store.ErrForbidden):
 		s.flashError(w, r, "Only the owner can hand over a budget.")
 	case err != nil:
-		s.flashError(w, r, err.Error())
+		s.flashError(w, r, s.safeMessage(r, err, "That change could not be saved. Try again."))
 	default:
 		s.flashSuccess(w, r,
 			"Ownership handed over. You are now an editor of this budget, "+
@@ -3665,6 +3827,15 @@ func (s *Server) handleForgotRequest(w http.ResponseWriter, r *http.Request) {
 		view:        s.baseView(w, r, "Forgot password", "forgot"),
 		Email:       email,
 		MailEnabled: s.mail.Enabled(),
+	}
+
+	// The form has always carried a token; until now nothing read it, so any
+	// third-party page could POST an address here and burn this visitor's
+	// per-IP reset budget.
+	if !s.publicCSRFOK(r) {
+		v.Error = "That form expired. Please try again."
+		s.renderStatus(w, r, http.StatusForbidden, "forgot.html", v)
+		return
 	}
 
 	if msg := validateEmail(email); msg != "" {
@@ -3742,9 +3913,17 @@ func (s *Server) handleResetForm(w http.ResponseWriter, r *http.Request) {
 	v := resetView{view: s.baseView(w, r, "Choose a new password", "reset"), Token: token}
 
 	user, err := s.store.ResetUser(r.Context(), token)
-	if err != nil {
+	if errors.Is(err, store.ErrNotFound) {
 		v.Invalid = true
 		s.renderStatus(w, r, http.StatusBadRequest, "reset.html", v)
+		return
+	}
+	if err != nil {
+		// A database failure is not a forged link. Telling somebody with a
+		// perfectly good link that it "was never real" sends them round the
+		// loop to request another and be told the same thing, while nothing
+		// was written down to explain why.
+		s.serverError(w, r, err)
 		return
 	}
 	v.Email = user.Email
@@ -3762,12 +3941,26 @@ func (s *Server) handleResetSubmit(w http.ResponseWriter, r *http.Request) {
 
 	v := resetView{view: s.baseView(w, r, "Choose a new password", "reset"), Token: token}
 
+	if !s.publicCSRFOK(r) {
+		v.Error = "That form expired. Please open the link from your email again."
+		s.renderStatus(w, r, http.StatusForbidden, "reset.html", v)
+		return
+	}
+
 	// Resolve first, so an expired link is reported as expired rather than as a
 	// password problem.
 	user, err := s.store.ResetUser(r.Context(), token)
-	if err != nil {
+	if errors.Is(err, store.ErrNotFound) {
 		v.Invalid = true
 		s.renderStatus(w, r, http.StatusBadRequest, "reset.html", v)
+		return
+	}
+	if err != nil {
+		// A database failure is not a forged link. Telling somebody with a
+		// perfectly good link that it "was never real" sends them round the
+		// loop to request another and be told the same thing, while nothing
+		// was written down to explain why.
+		s.serverError(w, r, err)
 		return
 	}
 	v.Email = user.Email

@@ -201,7 +201,11 @@
     {{if .PrevQuery}}
     <a class="btn btn-small btn-quiet" href="/transactions?{{.PrevQuery}}" rel="prev">Previous</a>
     {{else}}
-    <span class="btn btn-small btn-disabled" aria-disabled="true">Previous</span>
+    {{/* aria-disabled needs a role that supports it; on a bare span it is
+         ignored, so this announced as plain text with no disabled state.
+         A span with no ARIA at all is the honest version: there is no
+         previous page, so there is nothing to announce as unavailable. */}}
+    <span class="btn btn-small btn-disabled">Previous</span>
     {{end}}
 
     <span class="page-count">Page {{.Page}} of {{.TotalPages}}</span>
@@ -209,7 +213,11 @@
     {{if .NextQuery}}
     <a class="btn btn-small btn-quiet" href="/transactions?{{.NextQuery}}" rel="next">Next</a>
     {{else}}
-    <span class="btn btn-small btn-disabled" aria-disabled="true">Next</span>
+    {{/* aria-disabled needs a role that supports it; on a bare span it is
+         ignored, so this announced as plain text with no disabled state.
+         A span with no ARIA at all is the honest version: there is no
+         previous page, so there is nothing to announce as unavailable. */}}
+    <span class="btn btn-small btn-disabled">Next</span>
     {{end}}
   </nav>
   {{end}}

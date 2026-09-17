@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jthomasw/YABA-2026/internal/db"
@@ -74,6 +76,16 @@ func main() {
 	}
 	if strings.EqualFold(strings.TrimSpace(cfg.backupDir), "off") {
 		cfg.backupDir = ""
+	}
+
+	// A deployment that has TLS but forgot the flag sends the session cookie in
+	// clear on the first plain-HTTP request anyone's browser makes to it -- a
+	// typed hostname, an old bookmark, a link in an email. Nothing failed, so
+	// nothing said anything; now it does, loudly, once, at startup.
+	if !cfg.secureCookie && strings.HasPrefix(strings.ToLower(cfg.baseURL), "https://") {
+		log.Printf("WARNING: -base-url is https:// but the session cookie is not marked Secure.")
+		log.Printf("         It will be sent over plain HTTP if anyone reaches this site without TLS.")
+		log.Printf("         Set YABA_SECURE_COOKIE=1 (or pass -secure-cookie).")
 	}
 
 	if err := run(cfg); err != nil {
@@ -217,7 +229,40 @@ func run(cfg config) error {
 		shown = "localhost" + shown
 	}
 	log.Printf("YABA listening on http://%s", shown)
-	return srv.ListenAndServe()
+
+	// Serve until a termination signal arrives, then stop accepting and let
+	// whatever is in flight finish. Cancelling this context also stops the
+	// worker and the backup loop, and the deferred sqlDB.Close() finally runs --
+	// none of which happened before, because nothing ever returned from here.
+	if err := srv.ListenAndServe(signalled()); err != nil {
+		return err
+	}
+
+	// Give the worker a moment to notice and put down whatever it is holding.
+	cancelWorker()
+	receipts.Stop(5 * time.Second)
+	return nil
+}
+
+// signalled returns a context that is cancelled on SIGINT or SIGTERM.
+//
+// SIGTERM is what a systemd restart, a container stop and most deploy scripts
+// send; SIGINT is Ctrl-C.
+//
+// stop() is released as soon as the first signal arrives, which hands the
+// default handler back: an operator who does not want to wait out the grace
+// period can press Ctrl-C again and the process dies immediately.
+//
+// Nothing is logged here. ListenAndServe announces the shutdown itself, in
+// order, and logging from a goroutine racing it produced "signal received"
+// after "all requests finished".
+func signalled() context.Context {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	return ctx
 }
 
 // sessionKeyEnv is the variable holding the cookie signing key.
@@ -234,10 +279,19 @@ func sessionKey() ([]byte, error) {
 		if _, err := rand.Read(key); err != nil {
 			return nil, fmt.Errorf("generate session key: %w", err)
 		}
-		log.Printf("WARNING: %s is not set, so a random key was generated.", sessionKeyEnv)
-		log.Printf("         Everyone will be signed out when this process restarts.")
-		log.Printf("         Set a persistent key with:")
-		log.Printf("           %s=%s", sessionKeyEnv, base64.StdEncoding.EncodeToString(key))
+		// The key itself is NOT logged. It used to be, as a convenience -- but
+		// what was printed was not a suggestion, it was the live key this
+		// process is about to sign and encrypt every cookie with. Anything that
+		// reads logs (a shared journal, log shipping, a support bundle pasted
+		// into a ticket) would have been handed it.
+		//
+		// The replacement is a command that generates a DIFFERENT key, which is
+		// what somebody setting this up actually wants.
+		log.Printf("WARNING: %s is not set, so a random key was generated for this process.", sessionKeyEnv)
+		log.Printf("         Everyone will be signed out when it restarts.")
+		log.Printf("         Generate a persistent key with:")
+		log.Printf("           openssl rand -base64 32")
+		log.Printf("         then set %s to the value it prints.", sessionKeyEnv)
 		return key, nil
 	}
 

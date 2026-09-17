@@ -10,6 +10,14 @@
   var panel = document.getElementById("receipt-panel");
   if (!panel) return;
 
+  // The panel ships visible and this hides it, rather than the template
+  // shipping it hidden and this revealing it. The difference is the whole
+  // point: the opener is a <button type="button">, so with scripting off
+  // nothing could remove a server-rendered hidden attribute and receipt
+  // upload -- one of the two things the page exists to offer -- could not be
+  // reached at all.
+  panel.hidden = true;
+
   // The Upload choice is now a .choice button on /expense rather than a card on
   // a separate /import page, but the data- hooks are unchanged so this still
   // finds it.

@@ -52,25 +52,28 @@
       {{if .FormToken}}<input type="hidden" name="form_token" value="{{.FormToken}}">{{end}}
       {{template "csrf" .}}
 
-      <div class="field">
-  <label>Income type</label>
+      {{/* A fieldset with a legend, like every other choice in the app. The
+           bare <label> that was here named no control, so the group was
+           announced as two loose radios with no question attached -- and the
+           radios were missing the class the stylesheet targets. */}}
+      <fieldset class="field">
+        <legend>Income type</legend>
 
-  <div class="radio-row">
-    <label>
-      <input type="radio" name="income_type" value="one_time" checked>
-      One-time
-    </label>
+        <div class="radio-row">
+          <label class="radio">
+            <input type="radio" name="income_type" value="one_time" checked>
+            One-time
+          </label>
+          <label class="radio">
+            <input type="radio" name="income_type" value="recurring">
+            Recurring
+          </label>
+        </div>
 
-    <label>
-      <input type="radio" name="income_type" value="recurring">
-      Recurring
-    </label>
-  </div>
-
-  <p class="hint">
-    Choose recurring for income that repeats automatically, such as a paycheck.
-  </p>
-</div>
+        <p class="hint">
+          Choose recurring for income that repeats automatically, such as a paycheck.
+        </p>
+      </fieldset>
 
 <div class="field">
   <label for="label">Source</label>
@@ -88,18 +91,26 @@
   </p>
 </div>
 
-<div class="field" id="recurring-fields" style="display: none;">
-  <label for="frequency_n">Repeat every</label>
+{{/* Shipped VISIBLE; the script below hides it until Recurring is chosen.
+     A server-rendered display:none could only be undone by that script, so
+     with scripting off somebody who chose Recurring got an every-2-weeks
+     schedule they never saw and could not change. */}}
+<fieldset class="field" id="recurring-fields">
+  <legend>Repeat every</legend>
 
   <div class="form-row">
+    <label class="visually-hidden" for="frequency_n">How many</label>
     <input
       type="number"
       id="frequency_n"
       name="frequency_n"
       min="1"
+      max="365"
+      inputmode="numeric"
       value="2"
     >
 
+    <label class="visually-hidden" for="frequency_unit">Days, weeks or months</label>
     <select id="frequency_unit" name="frequency_unit">
       <option value="day">Day(s)</option>
       <option value="week" selected>Week(s)</option>
@@ -109,14 +120,20 @@
 
   <p class="hint">
     Example: every 2 weeks for a biweekly paycheck.
+    At most 365 days, 52 weeks or 120 months.
   </p>
-</div>
+</fieldset>
 
 <script>
   document.addEventListener("DOMContentLoaded", function () {
     const dateLabel = document.getElementById("income-date-label");
     const recurringFields = document.getElementById("recurring-fields");
     const incomeTypeInputs = document.querySelectorAll('input[name="income_type"]');
+
+    if (!recurringFields || !incomeTypeInputs.length) return;
+
+    // Hidden from here, not from the server: see the fieldset above.
+    recurringFields.style.display = "none";
 
     function updateRecurringFields() {
   const selected = document.querySelector('input[name="income_type"]:checked');

@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/smtp"
+	"os"
 	"strings"
 	"time"
 )
@@ -39,6 +40,10 @@ type Message struct {
 type Mailer struct {
 	cfg     Config
 	enabled bool
+
+	// logBodies prints an unsendable message in full, reset tokens and all.
+	// Off unless YABA_MAIL_DEBUG says otherwise. See Send.
+	logBodies bool
 }
 
 // New builds a Mailer. It never fails: missing configuration means log-only.
@@ -54,13 +59,17 @@ func New(cfg Config) *Mailer {
 		cfg.From = cfg.User
 	}
 
-	m := &Mailer{cfg: cfg}
+	m := &Mailer{cfg: cfg, logBodies: debugBodies()}
 	m.enabled = cfg.Host != "" && cfg.From != ""
 	if !m.enabled {
-		log.Printf("mail: no SMTP host configured — invitations and reset links " +
-			"will be written to this log instead of being sent")
+		log.Printf("mail: no SMTP host configured, so invitations and reset " +
+			"links cannot be delivered")
 		log.Printf("mail: set YABA_SMTP_HOST, YABA_SMTP_USER, YABA_SMTP_PASS and " +
 			"YABA_SMTP_FROM to send them")
+		if m.logBodies {
+			log.Printf("mail: WARNING: YABA_MAIL_DEBUG is set, so message bodies " +
+				"including live password-reset links will be written to this log")
+		}
 	}
 	return m
 }
@@ -86,9 +95,27 @@ func (m *Mailer) Send(ctx context.Context, msg Message) error {
 	}
 
 	if !m.enabled {
-		log.Printf("mail: NOT SENT (no SMTP configured)\n"+
-			"  to:      %s\n  subject: %s\n%s",
-			msg.To, msg.Subject, indent(msg.Body))
+		// The body is NOT logged unless somebody asks for it.
+		//
+		// SMTP is unconfigured by default, and this branch used to print the
+		// whole message -- which for a password reset means the live reset URL,
+		// token included. Anybody who could read the log (journald, a log
+		// shipper, a support bundle pasted into a ticket) could take over any
+		// account by lifting one. Convenient during development, a credential
+		// leak in production, and nothing distinguished the two.
+		//
+		// So it is now opt-in, by an environment variable a real deployment
+		// will not have set, and the default records only that a message could
+		// not be sent.
+		if m.logBodies {
+			log.Printf("mail: NOT SENT (no SMTP configured; YABA_MAIL_DEBUG is on)\n"+
+				"  to:      %s\n  subject: %s\n%s",
+				msg.To, msg.Subject, indent(msg.Body))
+		} else {
+			log.Printf("mail: NOT SENT, no SMTP configured: %q. "+
+				"Set YABA_SMTP_HOST to send it, or YABA_MAIL_DEBUG=1 to print it here.",
+				msg.Subject)
+		}
 		return nil
 	}
 
@@ -318,5 +345,17 @@ func humanDuration(d time.Duration) string {
 		return "1 hour"
 	default:
 		return fmt.Sprintf("%d minutes", int(d.Minutes()))
+	}
+}
+
+// debugBodies reports whether YABA_MAIL_DEBUG asks for unsendable messages to
+// be printed in full. Anything other than an empty string, "0" or "false"
+// counts as yes.
+func debugBodies() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("YABA_MAIL_DEBUG"))) {
+	case "", "0", "false", "no", "off":
+		return false
+	default:
+		return true
 	}
 }

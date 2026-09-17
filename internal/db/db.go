@@ -324,6 +324,121 @@ func migrations() []Migration {
 			`CREATE INDEX idx_recurring_income_occurrences_transaction
 		 ON recurring_income_occurrences(transaction_id)`,
 		),
+
+		// The expense counterpart of 14 and 15, in one migration because the two
+		// tables are meaningless apart -- a schedule with nowhere to record what
+		// it already generated would double-charge on the next restart.
+		//
+		// Two columns the income version has no use for. bucket_id keeps an
+		// automated expense inside the monthly plan: rent logged by a schedule
+		// still counts against its bucket, and essential still sizes the
+		// emergency fund. Automating an expense should not quietly remove it
+		// from the budgeting it belongs to.
+		//
+		// bucket_id is SET NULL rather than CASCADE: retiring a budget line is
+		// not a reason to stop paying the rent, so the schedule survives and
+		// simply stops being attributed.
+		sqlMigration(16, "recurring expense schedules", `
+			CREATE TABLE recurring_expense (
+				id            INTEGER PRIMARY KEY AUTOINCREMENT,
+				household_id  INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+				user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				label         TEXT    NOT NULL,
+				amount_cents  INTEGER NOT NULL CHECK (amount_cents > 0),
+
+				bucket_id     INTEGER REFERENCES expense_buckets(id) ON DELETE SET NULL,
+				essential     INTEGER NOT NULL DEFAULT 1 CHECK (essential IN (0, 1)),
+
+				frequency_n   INTEGER NOT NULL CHECK (frequency_n > 0),
+				frequency_unit TEXT NOT NULL CHECK (
+					frequency_unit IN ('day', 'week', 'month')
+				),
+
+				start_date    TEXT NOT NULL,
+				next_due_date TEXT NOT NULL,
+
+				active        INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+				created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+				updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+			)`,
+
+			`CREATE INDEX idx_recurring_expense_household
+		ON recurring_expense(household_id, active, next_due_date)`,
+
+			`CREATE INDEX idx_recurring_expense_user
+		ON recurring_expense(user_id)`,
+
+			// UNIQUE(schedule, due_date) is what makes catching up idempotent:
+			// the same due date can be inserted only once however many times the
+			// processor runs, so a page refresh cannot create the rent twice.
+			`CREATE TABLE recurring_expense_occurrences (
+				id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+				recurring_expense_id  INTEGER NOT NULL
+					REFERENCES recurring_expense(id) ON DELETE CASCADE,
+				due_date              TEXT NOT NULL,
+				transaction_id        INTEGER NOT NULL
+					REFERENCES transactions(id) ON DELETE CASCADE,
+				created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+
+				UNIQUE(recurring_expense_id, due_date)
+			)`,
+
+			`CREATE INDEX idx_recurring_expense_occurrences_transaction
+		 ON recurring_expense_occurrences(transaction_id)`,
+		),
+
+		// Migration 17 finishes a job migration 4 left half done, and closes the
+		// gap it left behind.
+		//
+		// Budgets began as a per-USER thing (migration 2), with the ownership
+		// written into the table as an inline UNIQUE(user_id, category).
+		// Migration 4 moved ownership to the household and added a unique index
+		// on (household_id, category) -- but an inline UNIQUE builds an implicit
+		// index that no DROP INDEX can reach, so the user-scoped rule stayed
+		// live underneath. The visible symptom: somebody in two households could
+		// budget "Food" in the first and then got a raw SQLite constraint error
+		// from the second, forever, because SetBudget's upsert names only the
+		// household index as its conflict target and so never sees the other one
+		// coming. Dropping it needs the table rebuilt.
+		//
+		// The second defect is in the replacement index. Spending is matched to
+		// a budget case-insensitively (LOWER(TRIM(...))), but the index that is
+		// supposed to stop duplicate categories compares bytes -- so "Food" and
+		// "food" are two rows to the index and one category to the query, and a
+		// single $100.00 expense was counted in full against BOTH, producing two
+		// over-budget warnings for one piece of spending. COLLATE NOCASE makes
+		// the constraint agree with the query it protects.
+		sqlMigration(17, "budgets: drop the stale per-user uniqueness, match categories case-insensitively", `
+			CREATE TABLE budgets_new (
+				id           INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id      INTEGER NOT NULL REFERENCES users(id)      ON DELETE CASCADE,
+				household_id INTEGER          REFERENCES households(id) ON DELETE CASCADE,
+				category     TEXT    NOT NULL,
+				limit_cents  INTEGER NOT NULL CHECK (limit_cents > 0),
+				created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+			)`,
+
+			// Case-duplicate rows cannot both survive the new index. Keep the
+			// newest of each set -- it is the one the user set most recently, so
+			// it is the limit they last meant -- and drop the older spellings.
+			`INSERT INTO budgets_new (id, user_id, household_id, category, limit_cents, created_at)
+			 SELECT b.id, b.user_id, b.household_id, b.category, b.limit_cents, b.created_at
+			 FROM budgets b
+			 WHERE b.id = (
+				SELECT b2.id FROM budgets b2
+				WHERE b2.household_id IS b.household_id
+				  AND LOWER(TRIM(b2.category)) = LOWER(TRIM(b.category))
+				ORDER BY b2.id DESC
+				LIMIT 1
+			 )`,
+
+			`DROP TABLE budgets`,
+			`ALTER TABLE budgets_new RENAME TO budgets`,
+
+			`CREATE INDEX idx_budgets_user ON budgets(user_id)`,
+			`CREATE UNIQUE INDEX idx_budgets_hh_cat
+				ON budgets(household_id, category COLLATE NOCASE)`,
+		),
 	}
 }
 

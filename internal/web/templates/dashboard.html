@@ -197,7 +197,15 @@
   </div>
 
   <!-- ══ CURRENT FUNDS ══════════════════════════════════════════════════════ -->
-  <section role="tabpanel" id="panel-current" aria-labelledby="tab-current" tabindex="0">
+  {{/* No hidden attribute on any panel.
+     dashboard.js hides the unselected ones on load, which is what makes the
+     tabs work; hard-coding hidden here as well meant that with scripting off
+     three quarters of the dashboard could not be reached at all -- the whole
+     Emergency Fund tab with its deposit and withdraw forms, Monthly Income,
+     and the recurring-expense planner. The tab controls are buttons in no
+     form, so nothing could reveal them, and even the ?tab= links and the
+     /savings redirect landed on a page showing Current Funds. */}}
+<section role="tabpanel" id="panel-current" aria-labelledby="tab-current" tabindex="0">
     <div class="panel-frame">
       {{if .Charts.BalanceLabels}}
       <div class="chart-box chart-box-tall">
@@ -233,7 +241,7 @@
     IS the emergency fund from the user's point of view, so a separate Savings
     page was two names for one idea.
   */}}
-  <section role="tabpanel" id="panel-emergency" aria-labelledby="tab-emergency" tabindex="0" hidden>
+  <section role="tabpanel" id="panel-emergency" aria-labelledby="tab-emergency" tabindex="0">
     <div class="panel-frame">
 
       <div class="panel-total">
@@ -289,19 +297,19 @@
       </p>
 
       <!-- ── every fund ────────────────────────────────────────────────────── -->
-      <h3 class="panel-subhead">
+      <h2 class="panel-subhead">
         Your funds — {{money .Totals.Saved}} set aside, {{money .Totals.Cash}} available to move
-      </h3>
+      </h2>
 
       {{if .Funds}}
       <div class="fund-grid">
         {{range .Funds}}
         <div class="card fund {{if .IsEmergency}}fund-emergency{{end}}">
           <div class="fund-head">
-            <h4>
+            <h3>
               {{.Name}}
               {{if .IsEmergency}}<span class="tag tag-essential">emergency</span>{{end}}
-            </h4>
+            </h3>
             <p class="fund-balance">{{money .Balance}}</p>
           </div>
 
@@ -418,7 +426,7 @@
   </section>
 
   <!-- ══ EXPECTED MONTHLY INCOME ════════════════════════════════════════════ -->
-  <section role="tabpanel" id="panel-income" aria-labelledby="tab-income" tabindex="0" hidden>
+  <section role="tabpanel" id="panel-income" aria-labelledby="tab-income" tabindex="0">
     <div class="panel-frame">
 
       <div class="panel-total">
@@ -434,7 +442,7 @@
       {{if .Charts.MonthLabels}}
       <div class="panel-charts">
         <div class="panel-chart">
-          <h3>Income by source</h3>
+          <h2>Income by source</h2>
           {{if .Charts.IncomeLabels}}
           <div class="chart-box">
             <canvas id="chart-income"
@@ -452,7 +460,7 @@
         </div>
 
         <div class="panel-chart">
-          <h3>Change over time</h3>
+          <h2>Change over time</h2>
           {{/* "It should show a chart visualising the change in income over
                time." */}}
           <div class="chart-box">
@@ -504,7 +512,7 @@
   </section>
 
   <!-- ══ MONTHLY EXPENSES ═══════════════════════════════════════════════════ -->
-  <section role="tabpanel" id="panel-expenses" aria-labelledby="tab-expenses" tabindex="0" hidden>
+  <section role="tabpanel" id="panel-expenses" aria-labelledby="tab-expenses" tabindex="0">
     <div class="panel-frame">
 
       {{/* The headline figure, matching the income tab: what was actually spent
@@ -520,7 +528,7 @@
       </div>
 
       <div class="panel-chart">
-        <h3>Where it went</h3>
+        <h2>Where it went</h2>
         {{if .Charts.SpendLabels}}
         <div class="chart-box">
           <canvas id="chart-spend"
@@ -699,7 +707,7 @@
 
         {{if .Role.CanEditEntries}}
         <div class="bucket-add-inner">
-          <h3>Add a recurring expense</h3>
+          <h2>Add a recurring expense</h2>
           {{template "bucketform" .}}
         </div>
         {{end}}

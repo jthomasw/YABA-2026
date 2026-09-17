@@ -41,6 +41,21 @@ func New(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
+// Ping checks that the database answers, for the health endpoint.
+//
+// A real query rather than sql.DB.Ping: the pool is capped at one connection, so
+// what an operator needs to know is whether that connection can actually do
+// work, not whether the file is still open. A seized writer holding the single
+// connection is exactly the failure this has to catch, and it is the one that
+// looks identical to a healthy process from outside.
+func (s *Store) Ping(ctx context.Context) error {
+	var one int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1`).Scan(&one); err != nil {
+		return fmt.Errorf("database health check: %w", err)
+	}
+	return nil
+}
+
 // Sentinel errors. Handlers map these to HTTP responses; they must never leak
 // raw SQL text to a user.
 var (
@@ -55,6 +70,11 @@ var (
 
 	// ErrInsufficientCash blocks moving more into a fund than the user holds.
 	ErrInsufficientCash = errors.New("not enough available cash")
+
+	// ErrItemsDoNotBalance means a breakdown does not add up to its transaction.
+	// It is a sentinel so the handler can re-render the form with the message
+	// rather than returning 500 for what is a correctable typing mistake.
+	ErrItemsDoNotBalance = errors.New("the line items do not add up to the transaction")
 
 	// ErrInsufficientFund blocks withdrawing more than a fund contains.
 	ErrInsufficientFund = errors.New("not enough money in that fund")
@@ -155,14 +175,8 @@ func (s *Store) CreateRecurringIncome(
 		return 0, fmt.Errorf("amount must be positive")
 	}
 
-	if frequencyN <= 0 {
-		return 0, fmt.Errorf("frequency must be positive")
-	}
-
-	switch frequencyUnit {
-	case "day", "week", "month":
-	default:
-		return 0, fmt.Errorf("invalid frequency unit")
+	if ok, msg := ValidFrequency(frequencyN, frequencyUnit); !ok {
+		return 0, fmt.Errorf("invalid recurring frequency: %s", msg)
 	}
 
 	startDate, err := ParseDate(startDate)
@@ -427,11 +441,72 @@ func (s *Store) DeleteRecurringIncome(
 	return requireOneRow(res)
 }
 
+// Per-unit ceilings on a repeat interval.
+//
+// These are not taste. frequencyN arrives from a form field, is stored as an
+// INTEGER whose only constraint is "> 0", and is then multiplied: "every
+// 4611686018427387904 weeks" overflows frequencyN*7 back to a multiple of a
+// year and AddDate returns the SAME date, so the catch-up loop below spins
+// forever holding the process's single database connection -- one POST, and
+// every user's next request blocks. "Every 2000000000 months" is the other
+// half: it produces "166668693-05-17", which is written to a transaction and
+// then cannot be re-parsed, so the schedule can never advance and the page
+// 500s from then on.
+//
+// The ceilings are set where a real schedule stops and nonsense begins: a year
+// of days, a year of weeks, ten years of months.
+const (
+	maxFrequencyDays   = 365
+	maxFrequencyWeeks  = 52
+	maxFrequencyMonths = 120
+)
+
+// maxCatchUpOccurrences bounds one call to a Process function.
+//
+// A schedule starting in 1970 that repeats daily owes twenty thousand
+// transactions; generating them one database transaction at a time on a
+// single-connection pool would hang the request that triggered it. Stopping
+// short is safe: the remainder is generated on the next visit, because
+// next_due_date is advanced only as far as the work actually done.
+const maxCatchUpOccurrences = 500
+
+// ValidFrequency reports whether a repeat interval is one the schedules can
+// actually carry, returning a message fit to show the user if it is not.
+//
+// Exported because the handlers validate the same form field before they get
+// here, and two copies of these numbers would eventually disagree.
+func ValidFrequency(frequencyN int, frequencyUnit string) (bool, string) {
+	if frequencyN <= 0 {
+		return false, "Repeat every must be at least 1."
+	}
+
+	max := 0
+	switch frequencyUnit {
+	case "day":
+		max = maxFrequencyDays
+	case "week":
+		max = maxFrequencyWeeks
+	case "month":
+		max = maxFrequencyMonths
+	default:
+		return false, "Choose days, weeks or months."
+	}
+
+	if frequencyN > max {
+		return false, fmt.Sprintf("Repeat every cannot be more than %d %ss.", max, frequencyUnit)
+	}
+	return true, ""
+}
+
 func advanceRecurringDate(
 	date string,
 	frequencyN int,
 	frequencyUnit string,
 ) (string, error) {
+	if ok, msg := ValidFrequency(frequencyN, frequencyUnit); !ok {
+		return "", fmt.Errorf("invalid recurring frequency: %s", msg)
+	}
+
 	t, err := time.Parse(DateLayout, date)
 	if err != nil {
 		return "", fmt.Errorf("invalid recurring date: %w", err)
@@ -448,7 +523,19 @@ func advanceRecurringDate(
 		return "", fmt.Errorf("invalid frequency unit %q", frequencyUnit)
 	}
 
-	return t.Format(DateLayout), nil
+	next := t.Format(DateLayout)
+
+	// The loops that call this terminate because the date goes up. A row stored
+	// before the ceilings above existed could still hold a value that makes it
+	// stand still, so that is an error here rather than an infinite loop there.
+	if next <= date {
+		return "", fmt.Errorf("recurring date did not advance past %s", date)
+	}
+	if _, err := time.Parse(DateLayout, next); err != nil {
+		return "", fmt.Errorf("recurring date %q is out of range", next)
+	}
+
+	return next, nil
 }
 
 func (s *Store) ProcessDueRecurringIncome(
@@ -473,7 +560,10 @@ func (s *Store) ProcessDueRecurringIncome(
 
 		nextDue := r.NextDueDate
 
-		for nextDue <= asOf {
+		// Bounded: see maxCatchUpOccurrences. Anything still owed after that
+		// is generated on the next visit, because next_due_date only ever
+		// advances as far as the work actually done.
+		for made := 0; nextDue <= asOf && made < maxCatchUpOccurrences; made++ {
 			err := s.inTx(ctx, func(tx *sql.Tx) error {
 				var existing int64
 				err := tx.QueryRowContext(ctx, `
@@ -574,6 +664,240 @@ func (s *Store) ProcessDueRecurringIncome(
 			)
 			if err != nil {
 				return fmt.Errorf("advance recurring income: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// ── recurring expenses ───────────────────────────────────────────────────────
+//
+// The same machine as recurring income above, for money going the other way.
+// Deliberately a parallel implementation rather than a shared generic one: the
+// two differ in what a generated transaction carries (an expense has a bucket
+// and an essential flag, income has neither) and in nothing else, and a single
+// abstraction over both would be mostly branches on which kind it is.
+
+// RecurringExpense is a scheduled expense: a rule that creates transactions,
+// not a transaction itself. Distinct from a Bucket, which is a monthly budget
+// line and creates nothing.
+type RecurringExpense struct {
+	ID          int64
+	HouseholdID int64
+	UserID      int64
+	Label       string
+	Amount      Cents
+
+	// BucketID is the monthly budget line this pays towards, or nil. Essential
+	// marks it as a need rather than a want, which is what sizes the emergency
+	// fund. Both are carried onto every transaction the schedule creates, so
+	// automating an expense does not remove it from the planning it belongs to.
+	BucketID  *int64
+	Essential bool
+
+	FrequencyN    int
+	FrequencyUnit string
+	StartDate     string
+	NextDueDate   string
+	Active        bool
+	CreatedAt     string
+	UpdatedAt     string
+}
+
+// CreateRecurringExpense stores a schedule. The first occurrence is startDate
+// itself, which ProcessDueRecurringExpenses will pick up the moment that date
+// has arrived -- including immediately, when the user chose today.
+func (s *Store) CreateRecurringExpense(
+	ctx context.Context,
+	sc Scope,
+	label string,
+	amount Cents,
+	bucketID *int64,
+	essential bool,
+	frequencyN int,
+	frequencyUnit string,
+	startDate string,
+) (int64, error) {
+	if amount <= 0 {
+		return 0, errors.New("a recurring expense needs an amount greater than zero")
+	}
+	if ok, msg := ValidFrequency(frequencyN, frequencyUnit); !ok {
+		return 0, fmt.Errorf("invalid recurring frequency: %s", msg)
+	}
+	startDate, err := ParseDate(startDate)
+	if err != nil {
+		return 0, err
+	}
+
+	// A bucket from another household would attach this budget's spending to
+	// somebody else's plan, so it is checked rather than trusted.
+	if bucketID != nil {
+		var ok int
+		err := s.db.QueryRowContext(ctx, `
+			SELECT 1 FROM expense_buckets
+			WHERE id = ? AND household_id = ? AND archived_at IS NULL`,
+			*bucketID, sc.HouseholdID).Scan(&ok)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		if err != nil {
+			return 0, fmt.Errorf("check bucket: %w", err)
+		}
+	}
+
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO recurring_expense (
+			household_id, user_id, label, amount_cents,
+			bucket_id, essential,
+			frequency_n, frequency_unit, start_date, next_due_date
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sc.HouseholdID, sc.UserID, cleanLabel(label), int64(amount),
+		bucketID, boolToInt(essential),
+		frequencyN, frequencyUnit, startDate, startDate,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("create recurring expense: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+// ListRecurringExpense returns this budget's schedules, soonest due first.
+func (s *Store) ListRecurringExpense(ctx context.Context, sc Scope) ([]RecurringExpense, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, household_id, user_id, label, amount_cents,
+		       bucket_id, essential,
+		       frequency_n, frequency_unit, start_date, next_due_date,
+		       active, created_at, updated_at
+		FROM recurring_expense
+		WHERE household_id = ?
+		ORDER BY active DESC, next_due_date ASC, id ASC`, sc.HouseholdID)
+	if err != nil {
+		return nil, fmt.Errorf("list recurring expenses: %w", err)
+	}
+	defer rows.Close()
+
+	out := []RecurringExpense{}
+	for rows.Next() {
+		var r RecurringExpense
+		var amount int64
+		var essential, active int
+		if err := rows.Scan(
+			&r.ID, &r.HouseholdID, &r.UserID, &r.Label, &amount,
+			&r.BucketID, &essential,
+			&r.FrequencyN, &r.FrequencyUnit, &r.StartDate, &r.NextDueDate,
+			&active, &r.CreatedAt, &r.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan recurring expense: %w", err)
+		}
+		r.Amount = Cents(amount)
+		r.Essential = essential == 1
+		r.Active = active == 1
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ProcessDueRecurringExpenses creates whatever each schedule owes up to asOf.
+//
+// Catching up is a loop rather than a single insert because a schedule that has
+// not been visited for six weeks owes three fortnightly payments, not one. The
+// UNIQUE(schedule, due_date) constraint on the occurrences table is what makes
+// running this repeatedly safe: a second run inserts nothing, so refreshing the
+// page cannot charge the rent twice.
+func (s *Store) ProcessDueRecurringExpenses(ctx context.Context, sc Scope, asOf string) error {
+	asOf, err := ParseDate(asOf)
+	if err != nil {
+		return err
+	}
+
+	schedules, err := s.ListRecurringExpense(ctx, sc)
+	if err != nil {
+		return err
+	}
+
+	for _, r := range schedules {
+		if !r.Active {
+			continue
+		}
+
+		nextDue := r.NextDueDate
+
+		// Bounded: see maxCatchUpOccurrences. Anything still owed after that
+		// is generated on the next visit, because next_due_date only ever
+		// advances as far as the work actually done.
+		for made := 0; nextDue <= asOf && made < maxCatchUpOccurrences; made++ {
+			due := nextDue
+			err := s.inTx(ctx, func(tx *sql.Tx) error {
+				var existing int64
+				err := tx.QueryRowContext(ctx, `
+					SELECT transaction_id
+					FROM recurring_expense_occurrences
+					WHERE recurring_expense_id = ? AND due_date = ?`,
+					r.ID, due,
+				).Scan(&existing)
+
+				// Already generated on a previous run. Nothing to do, and not an
+				// error: this is the normal path every time the page is opened.
+				if err == nil {
+					return nil
+				}
+				if !errors.Is(err, sql.ErrNoRows) {
+					return fmt.Errorf("check recurring expense occurrence: %w", err)
+				}
+
+				res, err := tx.ExecContext(ctx, `
+					INSERT INTO transactions (
+						household_id, user_id, kind, label, amount_cents,
+						occurred_on, essential, bucket_id
+					)
+					VALUES (?, ?, 'expense', ?, ?, ?, ?, ?)`,
+					sc.HouseholdID, r.UserID, cleanLabel(r.Label), int64(r.Amount),
+					due, boolToInt(r.Essential), r.BucketID,
+				)
+				if err != nil {
+					return fmt.Errorf("create recurring expense transaction: %w", err)
+				}
+
+				transactionID, err := res.LastInsertId()
+				if err != nil {
+					return err
+				}
+
+				if _, err = tx.ExecContext(ctx, `
+					INSERT INTO recurring_expense_occurrences (
+						recurring_expense_id, due_date, transaction_id
+					)
+					VALUES (?, ?, ?)`,
+					r.ID, due, transactionID,
+				); err != nil {
+					return fmt.Errorf("record recurring expense occurrence: %w", err)
+				}
+
+				return recordAudit(ctx, tx, sc, "created", "transaction", transactionID,
+					fmt.Sprintf("Recurring expense %s — %q on %s",
+						r.Amount.Display(), cleanLabel(r.Label), due),
+				)
+			})
+			if err != nil {
+				return err
+			}
+
+			nextDue, err = advanceRecurringDate(due, r.FrequencyN, r.FrequencyUnit)
+			if err != nil {
+				return err
+			}
+		}
+
+		if nextDue != r.NextDueDate {
+			if _, err := s.db.ExecContext(ctx, `
+				UPDATE recurring_expense
+				SET next_due_date = ?, updated_at = datetime('now')
+				WHERE id = ? AND household_id = ?`,
+				nextDue, r.ID, sc.HouseholdID,
+			); err != nil {
+				return fmt.Errorf("advance recurring expense: %w", err)
 			}
 		}
 	}
@@ -833,6 +1157,31 @@ func (s *Store) Update(ctx context.Context, sc Scope, id int64, n NewTransaction
 	// The WHERE clause carries household_id as well as id, so a guessed id belonging to
 	// someone else affects zero rows.
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		return updateInTx(ctx, tx, sc, id, n, essential, bucket)
+	})
+	return err
+}
+
+// updateInTx is the body of Update, separated so that UpdateWithItems can run it
+// and the line-item replacement inside ONE database transaction.
+//
+// They used to be two, and the gap between them was a real hole: editing a
+// $100.00 expense split Food $60.00 / Books $40.00 down to $50.00 committed the
+// new amount, and if the second call did not run -- a cancelled request context
+// is enough -- the old lines stayed. The dashboard's headline spend then read
+// $50.00 while its own category breakdown read $100.00, with nothing in the
+// schema to catch it, because the sum is only ever checked at the moment the
+// items are written.
+func updateInTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	sc Scope,
+	id int64,
+	n NewTransaction,
+	essential any,
+	bucket any,
+) error {
+	{
 		// What it said before, so the history records the change rather than only the
 		// outcome.
 		var wasLabel string
@@ -867,8 +1216,55 @@ func (s *Store) Update(ctx context.Context, sc Scope, id int64, n NewTransaction
 				wasLabel, Cents(wasCents).Display(), cleanLabel(n.Label), n.Amount.Display())
 		}
 		return recordAudit(ctx, tx, sc, "edited", "transaction", id, summary)
+	}
+}
+
+// UpdateWithItems saves an edit and its breakdown atomically.
+//
+// Either the new amount and the new lines are both stored, or neither is. That
+// is the only thing keeping SUM(line_items) == transactions.amount_cents true,
+// since the check lives in the write rather than in a constraint.
+//
+// A nil or empty slice clears the breakdown, which is how somebody removes line
+// items: they blank the rows and save.
+func (s *Store) UpdateWithItems(
+	ctx context.Context,
+	sc Scope,
+	id int64,
+	n NewTransaction,
+	items []NewLineItem,
+) error {
+	if n.Kind != KindIncome && n.Kind != KindExpense {
+		return fmt.Errorf("UpdateWithItems only accepts income or expense, got %q", n.Kind)
+	}
+	if n.Amount <= 0 {
+		return fmt.Errorf("amount must be positive")
+	}
+
+	var essential any
+	if n.Kind == KindExpense {
+		v := true
+		if n.Essential != nil {
+			v = *n.Essential
+		}
+		essential = boolToInt(v)
+	}
+
+	bucket, err := s.resolveBucket(ctx, sc, n.BucketID)
+	if err != nil {
+		return err
+	}
+
+	if n.Version == 0 {
+		log.Printf("store: transaction %d updated with no version; staleness check skipped", id)
+	}
+
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if err := updateInTx(ctx, tx, sc, id, n, essential, bucket); err != nil {
+			return err
+		}
+		return setLineItemsInTx(ctx, tx, sc, id, items)
 	})
-	return err
 }
 
 // explainFailedUpdate works out why an UPDATE matched nothing: the row is gone,
@@ -2575,9 +2971,20 @@ func (s *Store) AllocationsFor(ctx context.Context, sc Scope, month string, buck
 		return AllocationSummary{}, fmt.Errorf("allocation income: %w", err)
 	}
 
+	// Only allocations to buckets that still exist count.
+	//
+	// Required is summed over active buckets, so Allocated has to be too, or the
+	// two halves of the same sentence disagree. Archiving a bucket re-pours only
+	// the CURRENT month, so its allocations survive in every other month; without
+	// this join, viewing one of those months showed money committed to a budget
+	// line that appears nowhere on the page -- $1,050.00 allocated against
+	// $1,000.00 required, and $50.00 of the user's income invisible.
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT IFNULL(SUM(amount_cents), 0) FROM allocations
-		WHERE household_id = ? AND month = ?`, sc.HouseholdID, month).Scan(&sum.Allocated); err != nil {
+		SELECT IFNULL(SUM(a.amount_cents), 0)
+		FROM allocations a
+		JOIN expense_buckets b ON b.id = a.bucket_id
+		WHERE a.household_id = ? AND a.month = ? AND b.archived_at IS NULL`,
+		sc.HouseholdID, month).Scan(&sum.Allocated); err != nil {
 		return AllocationSummary{}, fmt.Errorf("allocation total: %w", err)
 	}
 
@@ -2655,6 +3062,15 @@ type NewLineItem struct {
 // different stories with no way to know which is right.
 func (s *Store) SetLineItems(ctx context.Context, sc Scope, txID int64, items []NewLineItem) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
+		return setLineItemsInTx(ctx, tx, sc, txID, items)
+	})
+}
+
+// setLineItemsInTx is the body of SetLineItems, separated so an edit can replace
+// the amount and the breakdown in a single database transaction. See
+// UpdateWithItems.
+func setLineItemsInTx(ctx context.Context, tx *sql.Tx, sc Scope, txID int64, items []NewLineItem) error {
+	{
 		var total Cents
 		var kind string
 		err := tx.QueryRowContext(ctx,
@@ -2683,8 +3099,8 @@ func (s *Store) SetLineItems(ctx context.Context, sc Scope, txID int64, items []
 			sum += it.Amount
 		}
 		if sum != total {
-			return fmt.Errorf("the line items add up to %s but the transaction is %s",
-				sum.Display(), total.Display())
+			return fmt.Errorf("%w: they add up to %s but the transaction is %s",
+				ErrItemsDoNotBalance, sum.Display(), total.Display())
 		}
 
 		stmt, err := tx.PrepareContext(ctx, `
@@ -2702,7 +3118,7 @@ func (s *Store) SetLineItems(ctx context.Context, sc Scope, txID int64, items []
 			}
 		}
 		return nil
-	})
+	}
 }
 
 // LineItems returns one transaction's lines.
