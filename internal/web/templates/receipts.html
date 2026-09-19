@@ -1,23 +1,26 @@
 {{define "helptopics"}}
 <div class="help-topic" data-topic="_">
   <h3>Receipts</h3>
-  <p class="help-lead">Receipts you have uploaded but not yet turned into an expense.</p>
+  <p class="help-lead">Receipts you've uploaded but not yet turned into an
+    expense.</p>
   <ul class="help-list">
     <li>{{template "icon" "check-circle"}}
-      <span>A receipt lands here the moment it is uploaded and leaves the moment
-      you save it as an expense. An empty page means everything is entered.</span></li>
+      <span>A receipt lands here the moment you upload it, and leaves the
+      moment you save it as an expense. An empty page means everything's been
+      entered.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Where an amount could be read off the picture it is shown beside the
-      file. A figure in <span class="waiting-amount is-uncertain">amber</span> was
-      read less confidently — worth a closer look at the image.</span></li>
+      <span>Where an amount could be read off the picture, it's shown next to
+      the file. A figure in
+      <span class="waiting-amount is-uncertain">amber</span> was read less
+      confidently — worth a closer look at the photo.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>This page is the safety net. Notifications can be dismissed or missed,
-      and without somewhere for a receipt to wait, one uploaded on a phone last
-      week would be lost in the queue.</span></li>
+      <span>Think of this page as a safety net: upload one from your phone and
+      forget to finish it, and it just waits here instead of getting
+      lost.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span><strong>Discard</strong> is for a duplicate or the wrong photograph.
-      It deletes the stored file, so it is not the way to postpone one — a receipt
-      you still intend to enter can simply stay here.</span></li>
+      <span><strong>Discard</strong> deletes the file for good — only use
+      it for a duplicate or the wrong photo. A receipt you still mean to enter
+      can simply stay here until you're ready.</span></li>
   </ul>
 </div>
 {{end}}

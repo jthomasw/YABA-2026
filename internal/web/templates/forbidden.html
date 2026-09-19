@@ -1,19 +1,22 @@
 {{define "helptopics"}}
 <div class="help-topic" data-topic="_">
   <h3>Access levels</h3>
-  <p class="help-lead">Why a page can be closed to you.</p>
+  <p class="help-lead">Why a page might be closed to you.</p>
   <ul class="help-list">
     <li>{{template "icon" "check-circle"}}
-      <span>Each shared budget gives every member one of three levels.
-      <strong>Owner</strong> can do everything, <strong>Editor</strong> records
-      income and expenses, <strong>Viewer</strong> can only look.</span></li>
+      <span>Every shared budget gives each person one of three access levels.
+      <strong>Owner</strong> can do anything. <strong>Editor</strong> can add
+      income and expenses. <strong>Viewer</strong> can only look, not make
+      changes.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Only an owner moves money into or out of savings funds, even though an
-      editor can record ordinary spending.</span></li>
+      <span>Only an <strong>Owner</strong> can move money into or out of savings
+      funds — even an Editor, who can record ordinary spending, can't do
+      that.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Ask an owner on the <a href="/household">Sharing</a> page to change
-      your access, or switch to your own budget from the picker in the top
-      bar.</span></li>
+      <span>If you think you should have more access, ask an owner to change it
+      on the <a href="/household">Sharing</a> page. Meant to be on your own
+      budget instead? Switch back using the picker at the top of the
+      page.</span></li>
   </ul>
 </div>
 {{end}}

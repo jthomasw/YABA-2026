@@ -1,39 +1,43 @@
 {{define "helptopics"}}
 <div class="help-topic" data-topic="_">
   <h3>Add Expense</h3>
-  <p class="help-lead">Record money going out, by typing it in or from a receipt.</p>
+  <p class="help-lead">Record money going out — either by typing it in, or
+    from a photo of a receipt.</p>
   <ul class="help-list">
     <li>{{template "icon" "check-circle"}}
-      <span><strong>Manual</strong> is fastest for one item. <strong>Upload</strong>
-      reads a photo or PDF of a receipt while you watch, then opens the form with
-      the amount, the shop and the individual items already filled in.</span></li>
+      <span><strong>Manual</strong> is quickest for one item.
+      <strong>Upload</strong> reads a photo or PDF of a receipt for you —
+      amount, shop, and even individual items — while you watch.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Always check what was read against the picture beside it. An amount
-      taken off a photograph is a proposal, not a fact — and nothing reaches your
-      ledger until you press save.</span></li>
+      <span>Always double-check what was read against the picture next to it.
+      It's a best guess, not a fact — nothing is saved to your records until
+      you review it and press Save.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Close the tab part-way through and nothing is lost: the receipt keeps
-      processing and waits for you under <a href="/receipts">Receipts</a>.</span></li>
+      <span>Close the tab part-way through and nothing is lost: the receipt
+      keeps processing and waits for you under
+      <a href="/receipts">Receipts</a>.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span><strong>One-time or recurring.</strong> A recurring expense is a rule,
-      not a charge: set <em>Repeat every</em> — days, weeks or months — and YABA
-      records it for you from the start date onwards, catching up on anything owed
-      each time you open this page.</span></li>
+      <span>Choose <strong>One-time</strong> for a single purchase, or
+      <strong>Recurring</strong> for something that repeats, like a
+      subscription. Set how often — days, weeks or months — and YABA
+      records it for you automatically from then on, catching up on anything
+      owed each time you open the page.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span><strong>What?</strong> is the category and drives the spending chart.
-      Who, Where and Why are optional — useful when you look back in six
-      months.</span></li>
+      <span><strong>What?</strong> is the category, and it drives the spending
+      chart. Who, Where and Why are optional — handy if you look back in a
+      few months.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span><strong>Essential or not</strong> is the needs-versus-wants call. Your
-      essential spending is what sizes your emergency fund target, so it is worth
-      getting right.</span></li>
+      <span>Mark it <strong>essential or not</strong> — that's just needs
+      versus wants. Your essential spending is what sets your Emergency Fund
+      target, so it's worth getting right.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>One shop trip covering several categories? Use <em>Break this into
-      items</em> and each line counts under its own category.</span></li>
+      <span>One shop trip covering several categories, like food and household
+      items in one grocery run? Use <em>Break this into items</em> so each part
+      counts under its own category.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>See the breakdown on the <a href="/dashboard?tab=expenses">Monthly
-      Expenses</a> tab, or the full list under
-      <a href="/transactions?type=expense">Transactions</a>.</span></li>
+      <span>See the breakdown later on the
+      <a href="/dashboard?tab=expenses">Monthly Expenses</a> tab, or the full
+      list under <a href="/transactions?type=expense">Transactions</a>.</span></li>
   </ul>
 </div>
 {{end}}
@@ -48,7 +52,7 @@
 */}}
 
 <div class="page-head">
-  <h1><span class="head-icon head-expense">{{template "icon" "minus"}}</span> Add Expense</h1>
+  <h1>Add Expense</h1>
   <a class="btn btn-quiet" href="/dashboard">Back to dashboard</a>
 </div>
 
@@ -214,10 +218,11 @@
       </div>
 
       {{/* Shipped VISIBLE. The script below hides it when One-time is selected,
-           which is the opposite of how this was first written and the reason it
-           is worth a comment: a server-rendered display:none can only be undone
-           by the script, so with scripting off somebody who chose Recurring got
-           a schedule built from defaults they never saw and could not change.
+           and hides the raw interval fields below unless "Custom..." is picked.
+           A server-rendered display:none can only be undone by the script, so
+           with scripting off somebody who chose Recurring got a schedule built
+           from defaults they never saw and could not change -- and the raw
+           fields stay reachable without scripting too, for a custom interval.
 
            A fieldset with a legend, so the number and the unit are announced as
            one question -- "Repeat every" named only the number box before, and
@@ -225,7 +230,20 @@
       <fieldset class="field" id="recurring-fields">
         <legend>Repeat every</legend>
 
-        <div class="form-row">
+        <div class="field">
+          <label for="frequency_preset">How often</label>
+          <select id="frequency_preset" name="frequency_preset" data-frequency-preset>
+            <option value="weekly">Weekly</option>
+            <option value="biweekly">Every 2 weeks (bi-weekly)</option>
+            <option value="monthly" selected>Monthly</option>
+            <option value="quarterly">Every 3 months (quarterly)</option>
+            <option value="semiannual">Every 6 months</option>
+            <option value="yearly">Yearly</option>
+            <option value="custom">Custom&hellip;</option>
+          </select>
+        </div>
+
+        <div class="form-row" data-frequency-custom>
           <label class="visually-hidden" for="frequency_n">How many</label>
           <input type="number" id="frequency_n" name="frequency_n"
                  min="1" max="120" value="1" inputmode="numeric">
@@ -239,7 +257,7 @@
         </div>
 
         <p class="hint">
-          Example: every 1 month for rent, or every 2 weeks for a cleaner.
+          Choose a common schedule above, or Custom&hellip; to set your own.
           At most 365 days, 52 weeks or 120 months.
         </p>
       </fieldset>
@@ -351,7 +369,7 @@
 
       <div class="form-actions">
         <button type="submit" class="btn btn-expense btn-lg">
-          {{template "icon" "minus"}} <span data-save-label>Save Expense</span>
+          <span data-save-label>Save Expense</span>
         </button>
         <a class="btn btn-quiet" href="/dashboard">Cancel</a>
       </div>

@@ -2,6 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Applies a remembered light/dark override before the stylesheet paints
+     anything, so a user who has picked one doesn't see the system default
+     flash first. Synchronous and inline on purpose: a deferred file would run
+     too late. See initThemeToggle in ui.js for the other half. -->
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("yaba-theme");
+    if (t === "light" || t === "dark") {
+      document.documentElement.setAttribute("data-theme", t);
+    }
+  } catch (e) {}
+})();
+</script>
 <!-- The old templates had no viewport tag and no media queries, so the whole
      app rendered at desktop width on a phone -- which is where most people
      actually log an expense. -->
@@ -31,6 +45,17 @@
   </nav>
 
   <div class="user-actions">
+    {{/* Light/dark override. initThemeToggle in ui.js drives it; the label,
+         the pressed state and which of the two icons shows all update from
+         script, so this starts as a neutral, unlabelled button and is
+         corrected before the user can see it (ui.js runs on DOMContentLoaded,
+         same as every other progressive-enhancement control on this page). */}}
+    <button type="button" class="theme-toggle" data-theme-toggle aria-pressed="false">
+      <span class="theme-icon theme-icon-sun" aria-hidden="true">{{template "icon" "sun"}}</span>
+      <span class="theme-icon theme-icon-moon" aria-hidden="true">{{template "icon" "moon"}}</span>
+      <span class="visually-hidden">Switch between light and dark mode</span>
+    </button>
+
     {{/*
       The budget picker. Shown only when there is more than one thing to pick,
       so somebody using YABA alone never sees a control with a single option in

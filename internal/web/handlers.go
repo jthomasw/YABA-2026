@@ -664,6 +664,15 @@ type dashboardView struct {
 	// Which of the four cards is open. "current" is the mockup's default.
 	Tab string
 
+	// Whether the recurring-expense planner <details> should render expanded.
+	// True right after a bucket action redirects back here, so the section the
+	// user was just working in does not appear to have collapsed on them.
+	PlannerOpen bool
+
+	// Same idea as PlannerOpen, for the "New savings fund" <details> on the
+	// Emergency Fund tab.
+	FundAddOpen bool
+
 	// Card 1 — Current Funds.
 	Cash    money.Cents
 	Balance []store.Point
@@ -733,10 +742,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	v := dashboardView{
-		view:      s.baseView(w, r, "Dashboard", "dashboard"),
-		Month:     month,
-		Tab:       tab,
-		ThisMonth: store.Today()[:7],
+		view:        s.baseView(w, r, "Dashboard", "dashboard"),
+		Month:       month,
+		Tab:         tab,
+		PlannerOpen: r.URL.Query().Get("planner") == "open",
+		FundAddOpen: r.URL.Query().Get("fund") == "open",
+		ThisMonth:   store.Today()[:7],
 	}
 	v.MonthLabel = "All time"
 	if month != "" {
@@ -1176,6 +1187,13 @@ type transactionsView struct {
 	Months     []string
 	Kinds      []kindOption
 	SearchText string
+
+	// BackPath is this filtered, paginated list's own URL, so Edit and Delete
+	// can return here instead of resetting to page one with no filters.
+	BackPath string
+	// BackQS is BackPath, percent-encoded for embedding as the "back" query
+	// value on the Edit link's href.
+	BackQS string
 }
 
 type kindOption struct {
@@ -1233,6 +1251,8 @@ func (s *Server) handleTransactions(w http.ResponseWriter, r *http.Request) {
 	if page < totalPages {
 		v.NextQuery = withPage(q, page+1)
 	}
+	v.BackPath = "/transactions?" + withPage(q, page)
+	v.BackQS = url.QueryEscape(v.BackPath)
 
 	if v.Months, err = s.store.Months(r.Context(), sc); err != nil {
 		s.serverError(w, r, err)
@@ -1350,6 +1370,12 @@ type transactionFormView struct {
 	// Version is the row version this form was built from, submitted back as a
 	// hidden field so a save can be refused if the row moved on meanwhile.
 	Version int64
+
+	// Back is where Cancel and, after a successful save, the redirect should
+	// return to -- the filtered, paginated transactions list the user actually
+	// came from, echoed through as a hidden field. Only ever trusted for a
+	// same-path return; see handleTransactionUpdate.
+	Back string
 }
 
 func (s *Server) handleTransactionForm(w http.ResponseWriter, r *http.Request) {
@@ -1365,6 +1391,7 @@ func (s *Server) handleTransactionForm(w http.ResponseWriter, r *http.Request) {
 		Kind:       kind,
 		formFields: formFields{OccurredOn: store.Today(), Essential: true},
 		Action:     "/transactions/new",
+		Back:       r.URL.Query().Get("back"),
 	}
 	// Only the create path needs one. An edit cannot duplicate anything: it
 	// carries a version, and the second save of the same version is refused.
@@ -1449,7 +1476,11 @@ func (s *Server) handleTransactionForm(w http.ResponseWriter, r *http.Request) {
 		if t.Kind.IsTransfer() {
 			// Transfers are not editable here: changing one would desynchronise
 			// the fund balance it contributes to.
-			s.redirectError(w, r, "/transactions", "Savings transfers can't be edited. Withdraw from the fund instead.")
+			back := "/transactions"
+			if q := r.URL.Query().Get("back"); strings.HasPrefix(q, "/transactions") {
+				back = q
+			}
+			s.redirectError(w, r, back, "Savings transfers can't be edited. Withdraw from the fund instead.")
 			return
 		}
 
@@ -1812,7 +1843,14 @@ func (s *Server) handleTransactionUpdate(w http.ResponseWriter, r *http.Request)
 	var ws warnings
 	ws.addReallocations(r, s.store, sc, wasOn, in.occurredOn)
 
-	s.redirectSaved(w, r, "/transactions", ws, "Entry updated.")
+	// Only a same-path return is honoured, so this cannot be turned into an
+	// open redirect to another site -- the same guard handleTransactionDelete
+	// applies to its own "back" field.
+	back := "/transactions"
+	if q := r.PostFormValue("back"); strings.HasPrefix(q, "/transactions") {
+		back = q
+	}
+	s.redirectSaved(w, r, back, ws, "Entry updated.")
 }
 
 func (s *Server) handleTransactionDelete(w http.ResponseWriter, r *http.Request) {
@@ -1879,6 +1917,7 @@ func (s *Server) rerenderTransactionFormAt(w http.ResponseWriter, r *http.Reques
 		Error:      msg,
 		Action:     "/transactions/new",
 		Version:    version,
+		Back:       r.PostFormValue("back"),
 	}
 	// Echo the submitted line items back so a validation failure does not throw
 	// away rows the user typed.
@@ -2155,6 +2194,47 @@ func (s *Server) buildEntryView(w http.ResponseWriter, r *http.Request, kind sto
 	return v, true
 }
 
+// recurringPresets maps a friendly "repeat every" choice -- the value the
+// frequency_preset select actually submits -- to the (n, unit) pair the
+// schedule is stored as. "custom" is deliberately absent from this map: it,
+// along with any blank or unrecognised value (which is also what a client
+// with no JavaScript leaves behind, since the raw fields are what it can
+// reach), means fall through to the raw frequency_n/frequency_unit fields.
+var recurringPresets = map[string]struct {
+	n    int
+	unit string
+}{
+	"weekly":     {1, "week"},
+	"biweekly":   {2, "week"},
+	"monthly":    {1, "month"},
+	"quarterly":  {3, "month"},
+	"semiannual": {6, "month"},
+	"yearly":     {12, "month"},
+}
+
+// parseRecurringFrequency reads the interval a recurring income or expense
+// form submitted. A recognised frequency_preset wins outright; otherwise the
+// raw frequency_n/frequency_unit fields are read and checked against the same
+// ceilings the store enforces, exactly as before this preset existed -- an
+// unbounded value here used to reach AddDate and overflow into a date that
+// never advances, spinning the catch-up loop on the process's only database
+// connection.
+func parseRecurringFrequency(r *http.Request) (n int, unit string, errMsg string) {
+	if p, ok := recurringPresets[r.PostFormValue("frequency_preset")]; ok {
+		return p.n, p.unit, ""
+	}
+
+	n, err := strconv.Atoi(r.PostFormValue("frequency_n"))
+	if err != nil {
+		return 0, "", "Enter a valid recurring frequency."
+	}
+	unit = r.PostFormValue("frequency_unit")
+	if ok, msg := store.ValidFrequency(n, unit); !ok {
+		return 0, "", msg
+	}
+	return n, unit, ""
+}
+
 // handleIncomeCreate is POST /income.
 func (s *Server) handleIncomeCreate(w http.ResponseWriter, r *http.Request) {
 	if !s.parseForm(w, r) {
@@ -2177,19 +2257,9 @@ func (s *Server) handleIncomeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Both halves of the interval, checked against the same ceilings the
-	// store enforces -- an unbounded value here used to reach AddDate and
-	// overflow into a date that never advances, spinning the catch-up loop
-	// on the process's only database connection.
-	frequencyN, err := strconv.Atoi(r.PostFormValue("frequency_n"))
-	if err != nil {
-		s.rerenderEntry(w, r, store.KindIncome, in, "Enter a valid recurring frequency.")
-		return
-	}
-
-	frequencyUnit := r.PostFormValue("frequency_unit")
-	if ok, msg := store.ValidFrequency(frequencyN, frequencyUnit); !ok {
-		s.rerenderEntry(w, r, store.KindIncome, in, msg)
+	frequencyN, frequencyUnit, freqMsg := parseRecurringFrequency(r)
+	if freqMsg != "" {
+		s.rerenderEntry(w, r, store.KindIncome, in, freqMsg)
 		return
 	}
 
@@ -2198,7 +2268,7 @@ func (s *Server) handleIncomeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = s.store.CreateRecurringIncome(
+	_, err := s.store.CreateRecurringIncome(
 		r.Context(),
 		sc,
 		in.label,
@@ -2247,19 +2317,9 @@ func (s *Server) handleExpenseCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Both halves of the interval, checked against the same ceilings the
-	// store enforces -- an unbounded value here used to reach AddDate and
-	// overflow into a date that never advances, spinning the catch-up loop
-	// on the process's only database connection.
-	frequencyN, err := strconv.Atoi(r.PostFormValue("frequency_n"))
-	if err != nil {
-		s.rerenderEntry(w, r, store.KindExpense, in, "Enter a valid recurring frequency.")
-		return
-	}
-
-	frequencyUnit := r.PostFormValue("frequency_unit")
-	if ok, msg := store.ValidFrequency(frequencyN, frequencyUnit); !ok {
-		s.rerenderEntry(w, r, store.KindExpense, in, msg)
+	frequencyN, frequencyUnit, freqMsg := parseRecurringFrequency(r)
+	if freqMsg != "" {
+		s.rerenderEntry(w, r, store.KindExpense, in, freqMsg)
 		return
 	}
 
@@ -2268,7 +2328,7 @@ func (s *Server) handleExpenseCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = s.store.CreateRecurringExpense(
+	_, err := s.store.CreateRecurringExpense(
 		r.Context(),
 		sc,
 		in.label,
@@ -2375,37 +2435,68 @@ func (s *Server) rerenderEntry(w http.ResponseWriter, r *http.Request, kind stor
 // Fund handlers redirect back to the Emergency Fund tab.
 const savingsAnchor = "/dashboard?tab=emergency"
 
+// currentTab is the other place the savings section renders (see
+// dashboard.html's savingsSection); fundBack needs the literal value to
+// recognise it.
+const currentTab = "/dashboard?tab=current"
+
+// fundBack says which of the two tabs a fund action's form was submitted
+// from. The savings section (every fund's balance, deposit/withdraw, edit
+// target, close, and "New savings fund") renders identically on both the
+// Current Funds tab and the Emergency Fund tab, each copy carrying a hidden
+// "back" field naming its own tab, so a deposit made from Current Funds
+// returns there instead of jumping to Emergency Fund. Only the two exact,
+// known values are ever honoured -- anything else (missing, tampered,
+// pointed elsewhere) falls back to the Emergency Fund tab, so this can never
+// become an open redirect.
+func fundBack(r *http.Request) string {
+	if r.PostFormValue("back") == currentTab {
+		return currentTab
+	}
+	return savingsAnchor
+}
+
+// fundCreateTab is where handleFundCreate returns the user, same idea as
+// expensesTab: it reopens the "New savings fund" details so a validation
+// error -- or the confirmation of success -- appears next to the form that
+// produced it, instead of the section collapsing shut on reload.
+func fundCreateTab(r *http.Request) string {
+	return fundBack(r) + "&fund=open"
+}
+
 func (s *Server) handleFundCreate(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
 	if !s.parseForm(w, r) {
 		return
 	}
 
+	back := fundCreateTab(r)
+
 	name := strings.TrimSpace(r.PostFormValue("name"))
 	if name == "" {
-		s.redirectError(w, r, savingsAnchor, "Give the fund a name.")
+		s.redirectError(w, r, back, "Give the fund a name.")
 		return
 	}
 
 	// A goal is optional, so an empty field is zero rather than an error.
 	goal, msg := optionalAmount(r.PostFormValue("goal"), "goal")
 	if msg != "" {
-		s.redirectError(w, r, savingsAnchor, msg)
+		s.redirectError(w, r, back, msg)
 		return
 	}
 	months, msg := optionalMonths(r.PostFormValue("target_months"))
 	if msg != "" {
-		s.redirectError(w, r, savingsAnchor, msg)
+		s.redirectError(w, r, back, msg)
 		return
 	}
 
 	if _, err := s.store.CreateFund(r.Context(), sc, name, goal, months); err != nil {
-		s.redirectError(w, r, savingsAnchor,
+		s.redirectError(w, r, back,
 			s.safeMessage(r, err, "That fund could not be created. Try again."))
 		return
 	}
 
-	s.redirectSuccess(w, r, savingsAnchor, fmt.Sprintf("Fund %q created.", name))
+	s.redirectSuccess(w, r, back, fmt.Sprintf("Fund %q created.", name))
 }
 
 func (s *Server) handleFundGoal(w http.ResponseWriter, r *http.Request) {
@@ -2417,15 +2508,16 @@ func (s *Server) handleFundGoal(w http.ResponseWriter, r *http.Request) {
 	if !s.parseForm(w, r) {
 		return
 	}
+	back := fundBack(r)
 
 	goal, msg := optionalAmount(r.PostFormValue("goal"), "goal")
 	if msg != "" {
-		s.redirectError(w, r, savingsAnchor, msg)
+		s.redirectError(w, r, back, msg)
 		return
 	}
 	months, msg := optionalMonths(r.PostFormValue("target_months"))
 	if msg != "" {
-		s.redirectError(w, r, savingsAnchor, msg)
+		s.redirectError(w, r, back, msg)
 		return
 	}
 
@@ -2433,7 +2525,7 @@ func (s *Server) handleFundGoal(w http.ResponseWriter, r *http.Request) {
 	if name := strings.TrimSpace(r.PostFormValue("name")); name != "" {
 		if err := s.store.RenameFund(r.Context(), sc, fundID, name); err != nil &&
 			!errors.Is(err, store.ErrNotFound) {
-			s.redirectError(w, r, savingsAnchor,
+			s.redirectError(w, r, back,
 				s.safeMessage(r, err, "That fund could not be renamed. Try again."))
 			return
 		}
@@ -2447,7 +2539,7 @@ func (s *Server) handleFundGoal(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.flashSuccess(w, r, "Fund target updated.")
 	}
-	http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 func (s *Server) handleFundDeposit(w http.ResponseWriter, r *http.Request) {
@@ -2468,18 +2560,20 @@ func (s *Server) moveFund(w http.ResponseWriter, r *http.Request, deposit bool) 
 		return
 	}
 
+	back := fundBack(r)
+
 	direction := "to take out of the fund"
 	if deposit {
 		direction = "to move into the fund"
 	}
 	amount, err := money.ParsePositive(r.PostFormValue("amount"))
 	if err != nil {
-		s.redirectError(w, r, savingsAnchor, "Enter an amount greater than zero "+direction+".")
+		s.redirectError(w, r, back, "Enter an amount greater than zero "+direction+".")
 		return
 	}
 	date, err := store.ParseDate(strings.TrimSpace(r.PostFormValue("date")))
 	if err != nil {
-		s.redirectError(w, r, savingsAnchor, "Enter a date in YYYY-MM-DD form.")
+		s.redirectError(w, r, back, "Enter a date in YYYY-MM-DD form.")
 		return
 	}
 
@@ -2507,7 +2601,7 @@ func (s *Server) moveFund(w http.ResponseWriter, r *http.Request, deposit bool) 
 	default:
 		s.flashSuccess(w, r, done)
 	}
-	http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 // handleFundClose replaces the old /delete-fund route.
@@ -2517,6 +2611,7 @@ func (s *Server) handleFundClose(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	back := fundBack(r)
 
 	returned, err := s.store.CloseFund(r.Context(), sc, fundID)
 	switch {
@@ -2530,7 +2625,7 @@ func (s *Server) handleFundClose(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.flashSuccess(w, r, "Fund closed.")
 	}
-	http.Redirect(w, r, savingsAnchor, http.StatusSeeOther)
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 // ── budgets ───────────────────────────────────────────────────────────────────
@@ -2698,7 +2793,7 @@ func trimSentinel(err, sentinel error) string {
 
 // expensesTab is where every bucket action returns the user, so they land back
 // on the list they were editing rather than at the top of the dashboard.
-const expensesTab = "/dashboard?tab=expenses#panel-expenses"
+const expensesTab = "/dashboard?tab=expenses&planner=open#panel-expenses"
 
 // parseBucketForm reads the recurring-expense form.
 func parseBucketForm(r *http.Request) (store.NewBucket, string) {

@@ -135,10 +135,57 @@
     });
   }
 
+  /* ── theme toggle ────────────────────────────────────────────────────────
+   * The header button that overrides the system's light/dark preference. The
+   * inline script in layout.html's <head> already applied whatever was saved
+   * last time, before this file even loaded (that is why this is inline and
+   * synchronous, and this one is deferred) -- so on load this only has to
+   * read the CURRENT effective theme and make the button's icon and label
+   * agree with it, then flip both on click.
+   */
+  function initThemeToggle() {
+    var btn = document.querySelector("[data-theme-toggle]");
+    if (!btn) return;
+
+    var STORAGE_KEY = "yaba-theme";
+    var darkQuery = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+
+    function effectiveTheme() {
+      var forced = document.documentElement.getAttribute("data-theme");
+      if (forced === "light" || forced === "dark") return forced;
+      return darkQuery && darkQuery.matches ? "dark" : "light";
+    }
+
+    function reflect(theme) {
+      var label = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+      btn.setAttribute("aria-label", label);
+      btn.setAttribute("title", label);
+      btn.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+    }
+
+    function apply(theme) {
+      document.documentElement.setAttribute("data-theme", theme);
+      try {
+        localStorage.setItem(STORAGE_KEY, theme);
+      } catch (e) {
+        // Private browsing, or storage disabled -- the toggle still works for
+        // the rest of this page view, it just won't be remembered.
+      }
+      reflect(theme);
+    }
+
+    reflect(effectiveTheme());
+
+    btn.addEventListener("click", function () {
+      apply(effectiveTheme() === "dark" ? "light" : "dark");
+    });
+  }
+
   function init() {
     initConfirmDialogs();
     initConfirms();
     initHelp();
+    initThemeToggle();
   }
 
   if (document.readyState === "loading") {

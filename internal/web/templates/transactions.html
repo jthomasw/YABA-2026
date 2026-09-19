@@ -1,24 +1,25 @@
 {{define "helptopics"}}
 <div class="help-topic" data-topic="_">
   <h3>Transactions</h3>
-  <p class="help-lead">Everything you have recorded, and the place to correct it.</p>
+  <p class="help-lead">Everything you've recorded, and the place to correct
+    it.</p>
   <ul class="help-list">
     <li>{{template "icon" "check-circle"}}
-      <span>Filter by type, month, or search the description. The filters carry
-      through to <strong>Export CSV</strong>, so what you download is exactly what
-      is on screen.</span></li>
+      <span>Filter by type, month, or search the description. The filters
+      carry through to <strong>Export CSV</strong>, so the file you download
+      matches exactly what's on screen.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span><strong>Edit</strong> a typo rather than deleting and retyping — an
-      edit keeps the entry in its original place in your history.</span></li>
+      <span><strong>Edit</strong> a typo rather than deleting and retyping —
+      editing keeps the entry in its original place in your history.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Rows tagged <em>To savings</em> or <em>From savings</em> are transfers
-      between your own pots. They cannot be edited here, because that would put a
-      fund's balance out of step with the cash that filled it — use Add or Take out
-      on the <a href="/dashboard?tab=emergency">Emergency Fund</a> tab
-      instead.</span></li>
+      <span>Rows tagged <em>To savings</em> or <em>From savings</em> are
+      transfers between your own funds, not income or spending. They can't be
+      edited here, since that could put a fund's balance out of step with its
+      cash — use Add or Take out on the
+      <a href="/dashboard?tab=emergency">Emergency Fund</a> tab instead.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Anything you change here immediately updates the dashboard totals and
-      recalculates which bills are funded.</span></li>
+      <span>Anything you change here immediately updates the dashboard totals
+      and recalculates which bills are funded.</span></li>
   </ul>
 </div>
 {{end}}
@@ -177,7 +178,7 @@
             {{else if not $.Role.CanEditEntries}}
             <span class="stat-note">View only</span>
             {{else}}
-            <a class="btn btn-small btn-quiet" href="/transactions/{{.ID}}/edit">Edit</a>
+            <a class="btn btn-small btn-quiet" href="/transactions/{{.ID}}/edit?back={{$.BackQS}}">Edit</a>
             <!-- POST, not a link. The old route was
                  GET /delete-transaction?id=N, which any prefetch or embedded
                  image could fire. -->
@@ -185,7 +186,7 @@
                   class="inline-form danger-form"
                   data-confirm="Delete this {{.Kind.Label}} of {{money .Amount}}?">
               {{template "csrf" $}}
-              <input type="hidden" name="back" value="/transactions?page={{$.Page}}">
+              <input type="hidden" name="back" value="{{$.BackPath}}">
               <button type="submit" class="btn btn-small btn-danger">Delete</button>
             </form>
             {{end}}

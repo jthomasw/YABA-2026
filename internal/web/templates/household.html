@@ -1,34 +1,37 @@
 {{define "helptopics"}}
 <div class="help-topic" data-topic="_">
   <h3>Sharing</h3>
-  <p class="help-lead">Work on one budget with other people, each with their own level of access.</p>
+  <p class="help-lead">Work on one budget with other people — like a partner
+    or family member — each with their own level of access.</p>
   <ul class="help-list">
     <li>{{template "icon" "check-circle"}}
-      <span>Your own budget is private and always stays that way. To share, create
-      a <strong>shared budget</strong> and invite people to that — nothing you have
-      already recorded moves into it.</span></li>
+      <span>Your own budget always stays private. To share your finances, you
+      create a separate <strong>shared budget</strong> and invite people to
+      that one — nothing you've already recorded gets moved or copied into
+      it.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span><strong>Owner</strong> controls everything, including members and
-      savings. <strong>Editor</strong> records income and expenses but cannot move
-      money in or out of savings funds. <strong>Viewer</strong> can look and
-      nothing more.</span></li>
+      <span>Each person gets one of three roles: <strong>Owner</strong> (full
+      control, including members and savings), <strong>Editor</strong> (can add
+      income and expenses, but can't move money in or out of savings funds), or
+      <strong>Viewer</strong> (can only look).</span></li>
     <li>{{template "icon" "check-circle"}}
-      {{if .MailEnabled}}
-      <span>An invitation is emailed to them, and also appears as a banner the
-      next time they sign in. It expires in 24 hours.</span></li>
-      {{else}}
-      <span>There is no email server configured, so an invitation appears as a
-      banner the next time that person signs in. Tell them to expect it.</span></li>
-      {{end}}
+        {{if .MailEnabled}}
+        <span>They'll get an email with the invite, and it also shows up as a
+        banner the next time they sign in. It expires after 24 hours.</span></li>
+        {{else}}
+        <span>There's no email set up for this app right now, so they won't get
+        an email — but the invite will show up as a banner the next time
+        they sign in, so let them know to expect it.</span></li>
+        {{end}}
     <li>{{template "icon" "check-circle"}}
-      <span>Use the picker in the top bar to move between your own budget and any
-      shared ones. Whatever is selected there is what
+      <span>Use the picker at the top of the page to switch between your own
+      budget and any shared ones — whichever is selected there is what
       <a href="/dashboard">Dashboard</a> and
-      <a href="/transactions">Transactions</a> show.</span></li>
+      <a href="/transactions">Transactions</a> show you.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Removing someone leaves everything they entered in place — the
-      entries belong to the budget, not to them, so your totals do not
-      change.</span></li>
+      <span>Removing someone leaves everything they entered exactly where it
+      is — the entries belong to the budget, not to the person, so your
+      totals won't change.</span></li>
   </ul>
 </div>
 {{end}}

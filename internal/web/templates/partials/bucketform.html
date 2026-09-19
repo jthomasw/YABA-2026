@@ -23,6 +23,23 @@
     </select>
   </div>
 
+  {{/* Cosmetic only, to match the schedule picker on the Add Expense page --
+       every bucket is still funded monthly regardless of what's picked here.
+       Not read by the server (see handleBucketCreate), on purpose: buckets are
+       a monthly funding planner, not a per-bill schedule. */}}
+  <div class="field">
+    <label for="bucket-frequency">Repeat every</label>
+    <select id="bucket-frequency" name="frequency_preset">
+      <option value="weekly">Weekly</option>
+      <option value="biweekly">Every 2 weeks (bi-weekly)</option>
+      <option value="monthly" selected>Monthly</option>
+      <option value="quarterly">Every 3 months (quarterly)</option>
+      <option value="semiannual">Every 6 months</option>
+      <option value="yearly">Yearly</option>
+      <option value="custom">Custom&hellip;</option>
+    </select>
+  </div>
+
   <div class="field" data-bucket-amount>
     <label for="bucket-amount">Amount per month</label>
     <input id="bucket-amount" name="amount" type="number" step="0.01" min="0.01"

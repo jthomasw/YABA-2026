@@ -132,8 +132,12 @@
      border still reads and the interface keeps its layers. And the accents step
      two stops lighter than their light-mode counterparts -- indigo-400 for
      indigo-600, emerald-400 for emerald-600 -- because a hue that looks
-     confident on white glares on a dark ground. */
-  :root {
+     confident on white glares on a dark ground.
+
+     :not([data-theme="light"]) so somebody who has explicitly picked light
+     mode with the toggle in the header keeps it even when their system is set
+     to dark -- an explicit choice always beats the system default. */
+  :root:not([data-theme="light"]) {
     --bg:            #0B0D12;
     --surface:       #12151C;
     --surface-2:     #181C25;
@@ -183,6 +187,61 @@
 
     color-scheme: dark;
   }
+}
+
+/* The explicit override: same values as the media query above, applied
+   whenever the toggle in the header has set data-theme="dark" directly,
+   regardless of what the system prefers. Kept as a plain duplicate rather
+   than merged into the media query, since a browser cannot combine "OS says
+   dark" and "the attribute says dark" into one selector without matching
+   the "OS says light, attribute says dark" case too. */
+:root[data-theme="dark"] {
+  --bg:            #0B0D12;
+  --surface:       #12151C;
+  --surface-2:     #181C25;
+  --surface-3:     #1F242F;
+  --border:        #262C38;
+  --border-strong: #3A4252;
+
+  --text:       #F3F4F6;
+  --text-muted: #9CA3AF;
+
+  --brand:          #818CF8;
+  --brand-dark:     #A5B4FC;
+  --brand-soft:     #1E1B4B;
+  --brand-contrast: #0B0D12;
+
+  --income:      #34D399;
+  --income-dark: #6EE7B7;
+  --income-soft: #052E22;
+  --expense:     #F87171;
+  --expense-dark:#FCA5A5;
+  --expense-soft:#2A1214;
+
+  --warn:    #FBBF24;
+  --warn-bg: #271B06;
+
+  --card-current-bg:     #1A1A3E;
+  --card-current-edge:   #312E81;
+  --card-current-ink:    #C7D2FE;
+
+  --card-emergency-bg:   #271B06;
+  --card-emergency-edge: #5C400C;
+  --card-emergency-ink:  #FCD34D;
+
+  --card-income-bg:      #062B20;
+  --card-income-edge:    #0F5542;
+  --card-income-ink:     #6EE7B7;
+
+  --card-expenses-bg:    #2A1214;
+  --card-expenses-edge:  #5E2023;
+  --card-expenses-ink:   #FCA5A5;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .40);
+  --shadow:    0 1px 2px rgba(0, 0, 0, .40);
+  --shadow-lg: 0 10px 20px -4px rgba(0, 0, 0, .70), 0 4px 8px -4px rgba(0, 0, 0, .60);
+
+  color-scheme: dark;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -985,6 +1044,17 @@ a:hover { text-decoration: underline; }
   .panel-frame { border-radius: var(--radius); padding: 1rem; min-height: 0; }
 }
 
+/* A plain <hr> defaults to the browser's own grey, which reads as a stray
+   line against this theme's dark surfaces. Separates the savings section
+   from whatever sits above it in a panel (the balance chart on Current
+   Funds), without a heading of its own. */
+.panel-divider {
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0;
+}
+
 /* ── the three pinned action buttons ─────────────────────────────────────── */
 
 .actionbar {
@@ -992,17 +1062,51 @@ a:hover { text-decoration: underline; }
   flex-wrap: wrap;
   justify-content: center;
   gap: 2rem;
-  margin: 1.5rem 0 .5rem;
+  margin: 1.5rem auto .5rem;
+  /* Row reads as three deliberate actions, not three small buttons floating in
+     a big row -- capping the row at 74% and letting each button grow to fill
+     it (flex: 1 below) makes the group itself larger and more prominent
+     without stretching all the way to the panel's edges. */
+  max-width: 74%;
 }
 .actionbar .btn {
-  min-width: 11rem;
-  min-height: 44px;
+  flex: 1 1 0;
+  min-width: 9rem;
+  min-height: 48px;
+  padding: .65rem 1.1rem;
+  font-size: 1.02rem;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
   font-weight: 500;
 }
 .actionbar .btn:hover { background: var(--surface-2); border-color: var(--brand); }
+
+/* .actionbar .btn above is two chained classes (specificity 0,2,0), which beats
+   a single .btn-income/.btn-expense/.btn-primary (0,1,0) regardless of source
+   order -- without these, every actionbar button rendered as the same plain
+   bordered box no matter which color class it had. */
+.actionbar .btn-income {
+  background: var(--income);
+  border-color: var(--income);
+  color: #fff;
+}
+.actionbar .btn-income:hover { background: var(--income-dark); border-color: var(--income-dark); }
+
+.actionbar .btn-expense {
+  background: var(--expense);
+  border-color: var(--expense);
+  color: #fff;
+}
+.actionbar .btn-expense:hover { background: var(--expense-dark); border-color: var(--expense-dark); }
+
+.actionbar .btn-primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--brand-contrast);
+}
+.actionbar .btn-primary:hover { background: var(--brand-dark); border-color: var(--brand-dark); }
+
 .pending-note { text-align: center; }
 
 /* ── recurring expense priority list ─────────────────────────────────────── */
@@ -1312,7 +1416,7 @@ a:hover { text-decoration: underline; }
 /* ── narrow screens ──────────────────────────────────────────────────────── */
 
 @media (max-width: 640px) {
-  .actionbar { gap: .5rem; flex-direction: column; }
+  .actionbar { gap: .5rem; flex-direction: column; max-width: 100%; }
   .actionbar .btn { width: 100%; min-width: 0; }
 
   .item-row { grid-template-columns: 1fr; }
@@ -2158,6 +2262,35 @@ dialog::backdrop {
 .hh-link:hover, .hh-link:focus-visible { background: var(--surface-3); color: var(--text); }
 .hh-link.is-current { background: var(--brand-soft); color: var(--brand); }
 .hh-link .icon { width: 1.15rem; height: 1.15rem; }
+
+/* Same footprint as .hh-link, its neighbour in the header. Only one of the
+   two icons is ever visible; which one is decided purely by CSS from the
+   effective theme (see the data-theme rules below), so the toggle shows the
+   right icon even for the instant before ui.js's script has run. */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: .34rem .5rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.theme-toggle:hover, .theme-toggle:focus-visible { background: var(--surface-3); color: var(--text); }
+.theme-toggle .icon { width: 1.15rem; height: 1.15rem; }
+
+.theme-icon-sun { display: none; }
+.theme-icon-moon { display: block; }
+
+:root[data-theme="dark"] .theme-icon-sun { display: block; }
+:root[data-theme="dark"] .theme-icon-moon { display: none; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-icon-sun { display: block; }
+  :root:not([data-theme="light"]) .theme-icon-moon { display: none; }
+}
 
 /* Shown only for a role that cannot manage members, so its presence itself
    carries the message "you have limited access here". */

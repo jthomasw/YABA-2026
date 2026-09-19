@@ -11,23 +11,24 @@
 */}}
 {{define "actionbar"}}
 <div class="actionbar">
-  {{/* Green for money in, red for money out, neutral for the list. The colour
-       alone tells you which direction each button moves money.
+  {{/* Green for money in, red for money out, brand blue for the list -- three
+       distinct colours so the row reads as three actions rather than one
+       button and two grey afterthoughts.
 
        A viewer keeps only View Transactions. Both Add buttons lead to pages the
        canEdit middleware would refuse them, and offering a form that cannot be
        submitted is worse than not offering it. */}}
   {{if .Role.CanEditEntries}}
   <a class="btn btn-income" href="/income">
-    {{template "icon" "plus"}} Add Income
+    Add Income
   </a>
   {{end}}
-  <a class="btn btn-quiet" href="/transactions">
+  <a class="btn btn-primary" href="/transactions">
     {{template "icon" "list"}} View Transactions
   </a>
   {{if .Role.CanEditEntries}}
   <a class="btn btn-expense" href="/expense">
-    {{template "icon" "minus"}} Add Expense
+    Add Expense
   </a>
   {{end}}
 </div>

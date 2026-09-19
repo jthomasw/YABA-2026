@@ -1,23 +1,26 @@
 {{define "helptopics"}}
 <div class="help-topic" data-topic="_">
   <h3>Add Income</h3>
-  <p class="help-lead">Record money coming in. That is all this page does.</p>
+  <p class="help-lead">Record money coming in. That's all this page does.</p>
   <ul class="help-list">
     <li>{{template "icon" "check-circle"}}
-      <span><strong>Source</strong> is where the money came from — Salary,
-      freelance, a scholarship. It is what the income chart groups by, so reuse the
-      same wording each month and the chart stays meaningful.</span></li>
+      <span><strong>Source</strong> is simply where the money came from —
+      Salary, freelance work, a scholarship. It's what the income chart groups
+      by, so reuse the same wording each time so the chart stays
+      meaningful.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span><strong>Date</strong> decides which month it counts towards. Backdating
-      is fine; it will be filed under that month.</span></li>
+      <span><strong>Date</strong> decides which month it's counted towards.
+      Logging something from a few days ago is fine — it's filed under the
+      month it actually happened.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Saving it immediately raises your Current Funds and funds your
-      recurring expenses down the priority list.</span></li>
+      <span>Saving it immediately raises your Current Funds balance, and can
+      also help pay off your recurring bills automatically, down the priority
+      list you set.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>See the breakdown on the <a href="/dashboard?tab=income">Monthly
-      Income</a> tab, or the full list under
-      <a href="/transactions?type=income">Transactions</a> — where you can also
-      edit or delete anything.</span></li>
+      <span>See the breakdown on the
+      <a href="/dashboard?tab=income">Monthly Income</a> tab, or the full list
+      under <a href="/transactions?type=income">Transactions</a> — where you
+      can also edit or delete anything.</span></li>
   </ul>
 </div>
 {{end}}
@@ -33,7 +36,7 @@
 */}}
 
 <div class="page-head">
-  <h1><span class="head-icon head-income">{{template "icon" "plus"}}</span> Add Income</h1>
+  <h1>Add Income</h1>
   <a class="btn btn-quiet" href="/dashboard">Back to dashboard</a>
 </div>
 
@@ -91,14 +94,29 @@
   </p>
 </div>
 
-{{/* Shipped VISIBLE; the script below hides it until Recurring is chosen.
+{{/* Shipped VISIBLE; the script below hides it until Recurring is chosen,
+     and hides the raw interval fields unless "Custom..." is picked below.
      A server-rendered display:none could only be undone by that script, so
      with scripting off somebody who chose Recurring got an every-2-weeks
-     schedule they never saw and could not change. */}}
+     schedule they never saw and could not change -- and the raw fields stay
+     reachable without scripting too, for anyone who needs a custom interval. */}}
 <fieldset class="field" id="recurring-fields">
   <legend>Repeat every</legend>
 
-  <div class="form-row">
+  <div class="field">
+    <label for="frequency_preset">How often</label>
+    <select id="frequency_preset" name="frequency_preset" data-frequency-preset>
+      <option value="weekly">Weekly</option>
+      <option value="biweekly" selected>Every 2 weeks (bi-weekly)</option>
+      <option value="monthly">Monthly</option>
+      <option value="quarterly">Every 3 months (quarterly)</option>
+      <option value="semiannual">Every 6 months</option>
+      <option value="yearly">Yearly</option>
+      <option value="custom">Custom&hellip;</option>
+    </select>
+  </div>
+
+  <div class="form-row" data-frequency-custom>
     <label class="visually-hidden" for="frequency_n">How many</label>
     <input
       type="number"
@@ -119,7 +137,7 @@
   </div>
 
   <p class="hint">
-    Example: every 2 weeks for a biweekly paycheck.
+    Choose a common schedule above, or Custom&hellip; to set your own.
     At most 365 days, 52 weeks or 120 months.
   </p>
 </fieldset>
@@ -174,7 +192,7 @@
 
       <div class="form-actions">
         <button type="submit" class="btn btn-income btn-lg">
-          {{template "icon" "plus"}} Add Income
+          Add Income
         </button>
         <a class="btn btn-quiet" href="/dashboard">Cancel</a>
       </div>
@@ -186,4 +204,6 @@
     <a href="/dashboard?tab=income">Expected Monthly Income</a> tab.
   </p>
 </div>
+
+<script src="{{asset "form.js"}}" defer></script>
 {{end}}

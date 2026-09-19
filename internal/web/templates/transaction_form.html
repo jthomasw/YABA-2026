@@ -1,11 +1,13 @@
 {{define "helptopics"}}
 <div class="help-topic" data-topic="_">
   <h3>Edit an entry</h3>
-  <p class="help-lead">Change something already recorded, without losing its place.</p>
+  <p class="help-lead">Change something already recorded, without losing its
+    place.</p>
   <ul class="help-list">
     <li>{{template "icon" "check-circle"}}
-      <span>Editing keeps the entry where it is in your history, which
-      deleting-and-retyping would not.</span></li>
+      <span>Editing keeps the entry exactly where it is in your history —
+      same date, same order — instead of deleting it and starting
+      over.</span></li>
     <li>{{template "icon" "check-circle"}}
       <span>Changing the amount or the date recalculates your totals and which
       recurring bills are funded for that month.</span></li>
@@ -215,6 +217,11 @@
            refused if somebody else edited the row while this page was open --
            without it, the second save silently discarded the first. */}}
       <input type="hidden" name="version" value="{{.Version}}">
+      {{/* Where Cancel and, after a successful save, the redirect should
+           return to -- the filtered, paginated transactions list this edit
+           was opened from. Only a same-path value is ever honoured
+           server-side, so this cannot become an open redirect. */}}
+      {{if .Back}}<input type="hidden" name="back" value="{{.Back}}">{{end}}
       {{end}}
 
       {{if .ReceiptMissing}}
@@ -310,7 +317,7 @@
         <button type="submit" class="btn btn-primary">
           {{if .Editing}}Save changes{{else}}Submit{{end}}
         </button>
-        <a class="btn btn-quiet" href="{{if .Editing}}/transactions{{else}}/dashboard{{end}}">Cancel</a>
+        <a class="btn btn-quiet" href="{{if .Editing}}{{if .Back}}{{.Back}}{{else}}/transactions{{end}}{{else}}/dashboard{{end}}">Cancel</a>
       </div>
     </form>
   </div>

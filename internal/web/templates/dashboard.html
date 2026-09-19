@@ -6,97 +6,105 @@
 <div class="help-topic" data-topic="current" hidden>
   <h3>Current Funds</h3>
   <p class="help-lead">
-    What you actually have left to spend, and how it has moved over time.
+    The money you actually have left to spend right now, and how it's changed
+    over time.
   </p>
   <ul class="help-list">
     <li>{{template "icon" "check-circle"}}
-      <span>The figure is <strong>income − expenses − money moved into savings</strong>.
-      It is worked out from your transactions every time the page loads, so it is
-      never a stale number.</span></li>
+      <span>This number is <strong>everything you've earned, minus what you've
+      spent, minus what you've moved into savings</strong>. It's worked out fresh
+      every time you open the page, so it's always up to date.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>The chart plots your balance day by day. The dashed line is a trend
-      fitted through it — a quick read on whether you are drifting up or down over
-      the period, rather than reacting to one big week.</span></li>
+      <span>The chart plots your balance day by day. The dashed line is a simple
+      trend line — it shows whether you're generally trending up or down,
+      instead of reacting to one unusual day.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Moving money to a savings fund lowers this figure but not your net
-      worth: it is a transfer, not spending, so it stays out of your expense
-      totals.</span></li>
+      <span>Moving money into a savings fund isn't "spending" — it's just
+      moved to a different pot. So sending $100 to your Emergency Fund lowers
+      this number, but it doesn't hurt your net worth or count as an
+      expense.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Use <strong>Add Income</strong> and <strong>Add Expense</strong> below
-      to change it, and <strong>Transactions</strong> to see or correct anything
-      already recorded.</span></li>
+      <span>Use <strong>Add Income</strong> and <strong>Add Expense</strong>
+      below to record something new, and <strong>Transactions</strong> to see
+      everything you've entered — or fix a mistake.</span></li>
   </ul>
 </div>
 
 <div class="help-topic" data-topic="emergency" hidden>
   <h3>Emergency Fund</h3>
   <p class="help-lead">
-    Your savings, and whether they would actually carry you through a bad month.
+    Money set aside to get you through a rough month, like a lost job or an
+    unexpected bill.
   </p>
   <ul class="help-list">
     <li>{{template "icon" "check-circle"}}
-      <span>The target is <strong>three months of the expenses you marked
-      essential</strong>. Mark them on the <em>Expected Monthly Expenses</em> tab —
-      the target sizes itself from your real bills rather than a round number.</span></li>
+      <span>The target is set automatically to <strong>3 months of the bills
+      you've marked essential</strong> (on the Monthly Expenses tab) — so
+      it's based on your real bills, not a guess.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span><strong>Covers</strong> is how many months of essentials the balance
-      would pay for. <strong>Will last</strong> is different: it projects from the
-      rate you have actually been taking money out.</span></li>
+      <span><strong>Covers</strong> is how many months of essential bills your
+      current balance could pay for today. <strong>Will last</strong> is
+      different — it looks at how fast you've actually been withdrawing and
+      estimates when the fund would run dry at that pace.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span><strong>Add</strong> moves cash in, <strong>Take out</strong> moves it
-      back. Neither counts as income or spending, so your monthly figures stay
-      honest.</span></li>
+      <span><strong>Add</strong> puts money in, <strong>Take out</strong> takes
+      it back out. Neither counts as income or an expense — it's just money
+      moving between pots, so your monthly totals stay accurate.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>You can keep several funds — a holiday, a car — each with its own
-      target and a projection of when you will reach it at your current rate.</span></li>
+      <span>You can keep several funds — a holiday, a car — each with
+      its own target and its own estimate of when you'll reach it at your
+      current pace.</span></li>
   </ul>
 </div>
 
 <div class="help-topic" data-topic="income" hidden>
   <h3>Monthly Income</h3>
   <p class="help-lead">
-    What you earn, where it comes from, and what to expect next month.
+    What you've earned, where it came from, and roughly what to expect next.
   </p>
   <ul class="help-list">
     <li>{{template "icon" "check-circle"}}
-      <span>The doughnut groups income by the <strong>source</strong> you type in,
-      so keep the wording consistent — "Salary" every month rather than "salary"
-      then "pay".</span></li>
+      <span>The chart groups income by whatever you type into
+      <strong>Source</strong> — so use the same wording every time (always
+      "Salary", not "salary" one month and "pay" the next), or the chart will
+      split it into separate slices by mistake.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Once there are three months of history you get an expected
-      <strong>range</strong> rather than one average, because a single figure is
-      misleading if your income varies.</span></li>
+      <span>Once you have 3 months of history, you get an expected
+      <strong>range</strong> instead of one average — a single number can be
+      misleading if your income changes month to month.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Adding income automatically funds your recurring expenses, top of the
-      priority list first. Check the result on the
-      <em>Expected Monthly Expenses</em> tab.</span></li>
+      <span>Adding income here also automatically helps pay off your recurring
+      bills, starting with whichever one you ranked highest. Check the result on
+      the Monthly Expenses tab.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Record one with <strong>Add Income</strong> below.</span></li>
+      <span>Record a new payment with <strong>Add Income</strong> below.</span></li>
   </ul>
 </div>
 
 <div class="help-topic" data-topic="expenses" hidden>
   <h3>Monthly Expenses</h3>
   <p class="help-lead">
-    What you spent, on what, and whether your bills are covered.
+    What you've spent, broken down by category, and whether your bills are
+    covered.
   </p>
   <ul class="help-list">
     <li>{{template "icon" "check-circle"}}
-      <span>The doughnut groups spending by the <strong>category</strong> you enter
-      — add $500 of Food and Food becomes a slice. Split a shop trip into items and
-      each one counts under its own category.</span></li>
+      <span>The chart groups spending by whatever <strong>category</strong> you
+      choose — like "Food" or "Rent". If one shopping trip covers several
+      categories, split it into items so each part counts correctly.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>The <strong>essential / non-essential</strong> split under the total is
-      the needs-versus-wants view, and it is what sizes your emergency fund
-      target.</span></li>
+      <span><strong>Essential vs. non-essential</strong> just means needs versus
+      wants. It matters because your essential spending is what sets your
+      Emergency Fund target.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Open <strong>Recurring monthly expenses</strong> to list bills like
-      rent and rank them. Income fills that list from the top down, so you find out
-      you are short <em>before</em> a payment is due — and which bill is at
-      risk.</span></li>
+      <span>Open <strong>Recurring monthly expenses</strong> to list regular
+      bills (like rent) and rank them by importance. As income comes in, it pays
+      off the list from the top down — so you find out ahead of time if
+      you're short, and exactly which bill is at risk.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>A bill that varies, like electricity, learns its own cost from the
-      payments you record against it. Link one on the Add Expense form.</span></li>
+      <span>A bill that changes every month, like electricity, can learn its
+      typical cost from the payments you record against it — just link it
+      when adding the expense.</span></li>
   </ul>
 </div>
 {{end}}
@@ -136,6 +144,28 @@
       <span class="tab-icon">{{template "icon" "wallet"}}</span>
       <span class="tab-label">Current Funds</span>
       <span class="tab-value {{if negative .Cash}}is-negative{{end}}">{{money .Cash}}</span>
+
+      {{/* Every savings fund except the emergency fund, as "saved / target" --
+           it lives on its own Emergency Fund tab instead. A fund you're
+           actively filling was otherwise invisible here until you opened the
+           panel, so each one gets a line of its own.
+
+           Funds with no target show their balance and say so, rather than
+           printing "/ $0.00", which reads as a goal of nothing. */}}
+      {{if .Funds}}
+      <span class="tab-funds">
+        {{range .Funds}}
+        {{if not .IsEmergency}}
+        <span class="tab-fund">
+          <span class="tab-fund-name">{{.Name}}</span>
+          <span class="tab-fund-figure">
+            {{money .Balance}}{{if .Goal}} / {{money .Goal}}{{else}} saved{{end}}
+          </span>
+        </span>
+        {{end}}
+        {{end}}
+      </span>
+      {{end}}
     </button>
 
     {{/* "(x months)" in the mockup is the cover figure, so it is filled in. */}}
@@ -149,27 +179,6 @@
       <span class="tab-value">
         {{money .Runway.Balance}}{{if .Runway.Target}} / {{money .Runway.Target}}{{end}}
       </span>
-
-      {{/* Every fund, not only the emergency one, as "saved / target".
-           The headline above is the emergency fund alone, because that is what
-           the runway and the months-of-cover figure are about. But this tab owns
-           all savings, and a fund you are actively filling was invisible here
-           until you opened the panel — so each one gets a line of its own.
-
-           Funds with no target show their balance and say so, rather than
-           printing "/ $0.00", which reads as a goal of nothing. */}}
-      {{if .Funds}}
-      <span class="tab-funds">
-        {{range .Funds}}
-        <span class="tab-fund">
-          <span class="tab-fund-name">{{.Name}}</span>
-          <span class="tab-fund-figure">
-            {{money .Balance}}{{if .Goal}} / {{money .Goal}}{{else}} saved{{end}}
-          </span>
-        </span>
-        {{end}}
-      </span>
-      {{end}}
     </button>
 
     <button type="button" role="tab" class="tab-card tab-income"
@@ -229,6 +238,129 @@
         <a class="btn btn-primary" href="/income">Add your first income</a>
         {{end}}
       </div>
+      {{end}}
+
+      <!-- ── your other savings funds ────────────────────────────────────────── -->
+      <hr class="panel-divider">
+
+      {{if .Funds}}
+      <h2 class="panel-subhead">
+        Your funds — {{money .Totals.Saved}} set aside, {{money .Totals.Cash}} available to move
+      </h2>
+
+      <div class="fund-grid">
+        {{range .Funds}}
+        {{if not .IsEmergency}}
+        <div class="card fund">
+          <div class="fund-head">
+            <h3>{{.Name}}</h3>
+            <p class="fund-balance">{{money .Balance}}</p>
+          </div>
+
+          {{if .HasGoal}}
+          <div class="progress" role="progressbar"
+               aria-valuenow="{{pctInt .Progress}}" aria-valuemin="0" aria-valuemax="100"
+               aria-label="Progress towards {{money .Goal}}">
+            <div class="progress-bar {{if .Complete}}is-complete{{end}}"
+                 style="width: {{pct .Progress}}%"></div>
+          </div>
+          <p class="stat-note">
+            {{pctInt .Progress}}% of {{money .Goal}} · {{money .Remaining}} to go
+          </p>
+          {{end}}
+
+          <p class="projection">{{.Projection.Note}}</p>
+
+          {{/* Moving money in or out of a fund is the owner's alone -- see
+               store.Role.CanMoveFunds for why this is stricter than editing an
+               expense. An editor still sees the balance and the target. */}}
+          {{if $.Role.CanMoveFunds}}
+          <div class="fund-actions">
+            <form method="POST" action="/funds/{{.ID}}/deposit" class="inline-form">
+              {{template "csrf" $}}
+              <input type="hidden" name="back" value="/dashboard?tab=current">
+              <label class="visually-hidden" for="dep-{{.ID}}">Add to {{.Name}}</label>
+              <input id="dep-{{.ID}}" name="amount" type="number" step="0.01" min="0.01"
+                     inputmode="decimal" placeholder="0.00" required>
+              <button type="submit" class="btn btn-small btn-income">Add</button>
+            </form>
+
+            <form method="POST" action="/funds/{{.ID}}/withdraw" class="inline-form">
+              {{template "csrf" $}}
+              <input type="hidden" name="back" value="/dashboard?tab=current">
+              <label class="visually-hidden" for="wd-{{.ID}}">Take out of {{.Name}}</label>
+              <input id="wd-{{.ID}}" name="amount" type="number" step="0.01" min="0.01"
+                     inputmode="decimal" placeholder="0.00" required>
+              <button type="submit" class="btn btn-small">Take out</button>
+            </form>
+          </div>
+          {{else if $.Shared}}
+          <p class="stat-note">Only the owner can move money in or out of this fund.</p>
+          {{end}}
+
+          {{if $.Role.CanEditEntries}}
+          <details class="fund-settings">
+            <summary>Edit target</summary>
+            <form method="POST" action="/funds/{{.ID}}/goal" class="row-form">
+              {{template "csrf" $}}
+              <input type="hidden" name="back" value="/dashboard?tab=current">
+              <div class="field">
+                <label for="fname-{{.ID}}">Name</label>
+                <input id="fname-{{.ID}}" name="name" type="text" value="{{.Name}}" maxlength="40">
+              </div>
+              <div class="field">
+                <label for="fgoal-{{.ID}}">Target</label>
+                <input id="fgoal-{{.ID}}" name="goal" type="number" step="0.01" min="0"
+                       inputmode="decimal" value="{{amount .Goal}}">
+              </div>
+              <div class="field">
+                <label for="fmon-{{.ID}}">Within (months)</label>
+                <input id="fmon-{{.ID}}" name="target_months" type="number" min="0" max="600"
+                       value="{{.TargetMonths}}">
+              </div>
+              <button type="submit" class="btn btn-small btn-primary">Save</button>
+            </form>
+
+            {{if $.Role.CanMoveFunds}}
+            <form method="POST" action="/funds/{{.ID}}/close" class="inline-form danger-form"
+                  data-confirm="Close &quot;{{.Name}}&quot;? Any remaining {{money .Balance}} returns to available cash.">
+              {{template "csrf" $}}
+              <input type="hidden" name="back" value="/dashboard?tab=current">
+              <button type="submit" class="btn btn-small btn-danger">Close fund</button>
+            </form>
+            {{end}}
+          </details>
+          {{end}}
+        </div>
+        {{end}}
+        {{end}}
+      </div>
+      {{end}}
+
+      {{if .Role.CanEditEntries}}
+      <details class="fund-add"{{if .FundAddOpen}} open{{end}}>
+        <summary>New savings fund</summary>
+        <form method="POST" action="/funds" class="row-form">
+          {{template "csrf" .}}
+          <input type="hidden" name="back" value="/dashboard?tab=current">
+          <div class="field">
+            <label for="new-fund-name">Name</label>
+            <input id="new-fund-name" name="name" type="text" required maxlength="40"
+                   placeholder="Holiday">
+          </div>
+          <div class="field">
+            <label for="new-fund-goal">Target amount</label>
+            <input id="new-fund-goal" name="goal" type="number" step="0.01" min="0"
+                   inputmode="decimal" placeholder="Optional">
+          </div>
+          <div class="field">
+            <label for="new-fund-months">Within (months)</label>
+            <input id="new-fund-months" name="target_months" type="number" min="0" max="600"
+                   placeholder="Optional">
+          </div>
+          <button type="submit" class="btn btn-primary">Create fund</button>
+        </form>
+      </details>
       {{end}}
     </div>
 
@@ -296,19 +428,16 @@
         <a href="?tab=expenses">Expected Monthly Expenses</a> tab.
       </p>
 
-      <!-- ── every fund ────────────────────────────────────────────────────── -->
-      <h2 class="panel-subhead">
-        Your funds — {{money .Totals.Saved}} set aside, {{money .Totals.Cash}} available to move
-      </h2>
-
-      {{if .Funds}}
+      <!-- ── the emergency fund's own card -- this tab shows nothing else;
+           every other fund lives on Current Funds now ─────────────────────── -->
+      {{range .Funds}}
+      {{if .IsEmergency}}
       <div class="fund-grid">
-        {{range .Funds}}
-        <div class="card fund {{if .IsEmergency}}fund-emergency{{end}}">
+        <div class="card fund fund-emergency">
           <div class="fund-head">
             <h3>
               {{.Name}}
-              {{if .IsEmergency}}<span class="tag tag-essential">emergency</span>{{end}}
+              <span class="tag tag-essential">emergency</span>
             </h3>
             <p class="fund-balance">{{money .Balance}}</p>
           </div>
@@ -327,24 +456,20 @@
 
           <p class="projection">{{.Projection.Note}}</p>
 
-          {{/* Moving money in or out of a fund is the owner's alone -- see
-               store.Role.CanMoveFunds for why this is stricter than editing an
-               expense. An editor still sees the balance and the target. */}}
           {{if $.Role.CanMoveFunds}}
           <div class="fund-actions">
             <form method="POST" action="/funds/{{.ID}}/deposit" class="inline-form">
               {{template "csrf" $}}
+              <input type="hidden" name="back" value="/dashboard?tab=emergency">
               <label class="visually-hidden" for="dep-{{.ID}}">Add to {{.Name}}</label>
               <input id="dep-{{.ID}}" name="amount" type="number" step="0.01" min="0.01"
                      inputmode="decimal" placeholder="0.00" required>
               <button type="submit" class="btn btn-small btn-income">Add</button>
             </form>
 
-            {{/* The old app had no withdrawal path at all: the only way to get
-                 money out was to delete the whole fund, which is where the
-                 money-minting exploit lived. */}}
             <form method="POST" action="/funds/{{.ID}}/withdraw" class="inline-form">
               {{template "csrf" $}}
+              <input type="hidden" name="back" value="/dashboard?tab=emergency">
               <label class="visually-hidden" for="wd-{{.ID}}">Take out of {{.Name}}</label>
               <input id="wd-{{.ID}}" name="amount" type="number" step="0.01" min="0.01"
                      inputmode="decimal" placeholder="0.00" required>
@@ -360,6 +485,7 @@
             <summary>Edit target</summary>
             <form method="POST" action="/funds/{{.ID}}/goal" class="row-form">
               {{template "csrf" $}}
+              <input type="hidden" name="back" value="/dashboard?tab=emergency">
               <div class="field">
                 <label for="fname-{{.ID}}">Name</label>
                 <input id="fname-{{.ID}}" name="name" type="text" value="{{.Name}}" maxlength="40">
@@ -376,49 +502,13 @@
               </div>
               <button type="submit" class="btn btn-small btn-primary">Save</button>
             </form>
-
-            {{/* No close button on the emergency fund: this tab needs it to exist,
-                 and closing it would only cause it to be recreated.
-
-                 Closing returns the balance to cash, so it is a money movement
-                 and belongs to the owner rather than to any editor. */}}
-            {{if and (not .IsEmergency) $.Role.CanMoveFunds}}
-            <form method="POST" action="/funds/{{.ID}}/close" class="inline-form danger-form"
-                  data-confirm="Close &quot;{{.Name}}&quot;? Any remaining {{money .Balance}} returns to available cash.">
-              {{template "csrf" $}}
-              <button type="submit" class="btn btn-small btn-danger">Close fund</button>
-            </form>
-            {{end}}
+            {{/* No close button on the emergency fund: this tab needs it to
+                 exist, and closing it would only cause it to be recreated. */}}
           </details>
           {{end}}
         </div>
-        {{end}}
       </div>
       {{end}}
-
-      {{if .Role.CanEditEntries}}
-      <details class="fund-add">
-        <summary>New savings fund</summary>
-        <form method="POST" action="/funds" class="row-form">
-          {{template "csrf" .}}
-          <div class="field">
-            <label for="new-fund-name">Name</label>
-            <input id="new-fund-name" name="name" type="text" required maxlength="40"
-                   placeholder="Holiday">
-          </div>
-          <div class="field">
-            <label for="new-fund-goal">Target amount</label>
-            <input id="new-fund-goal" name="goal" type="number" step="0.01" min="0"
-                   inputmode="decimal" placeholder="Optional">
-          </div>
-          <div class="field">
-            <label for="new-fund-months">Within (months)</label>
-            <input id="new-fund-months" name="target_months" type="number" min="0" max="600"
-                   placeholder="Optional">
-          </div>
-          <button type="submit" class="btn btn-primary">Create fund</button>
-        </form>
-      </details>
       {{end}}
     </div>
 
@@ -570,7 +660,7 @@
         tab opens on is "what did I spend", so the form no longer sits out on the
         tab competing with the chart.
       */}}
-      <details class="bucket-planner">
+      <details class="bucket-planner"{{if .PlannerOpen}} open{{end}}>
         <summary>
           {{if .Buckets}}Recurring monthly expenses ({{len .Buckets}})
           {{else}}Set up recurring monthly expenses{{end}}

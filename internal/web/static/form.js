@@ -169,9 +169,32 @@
     recalc();
   }
 
+  /* Recurring frequency preset.
+   *
+   * The preset select is itself a real, submitted form field (frequency_preset)
+   * that the server checks first -- so this toggle is cosmetic only: it just
+   * hides the raw "every N day/week/month" row when a named preset covers what
+   * was picked, and shows it again for "Custom...". With scripting off, both
+   * the preset and the raw fields stay visible and the server falls back to the
+   * raw fields whenever frequency_preset is "custom" or unrecognised.
+   */
+  function initFrequencyPreset() {
+    var preset = document.querySelector("[data-frequency-preset]");
+    var custom = document.querySelector("[data-frequency-custom]");
+    if (!preset || !custom) return;
+
+    function apply() {
+      custom.hidden = preset.value !== "custom";
+    }
+
+    preset.addEventListener("change", apply);
+    apply();
+  }
+
   function init() {
     initTypeToggle();
     initLineItems();
+    initFrequencyPreset();
   }
 
   if (document.readyState === "loading") {
