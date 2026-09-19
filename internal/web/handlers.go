@@ -2090,6 +2090,11 @@ type entryView struct {
 	Categories []string
 	Buckets    []store.Bucket
 
+	// RecurringIncomes lists this household's recurring income schedules, for
+	// the income page's own management list. Empty (never nil) on the expense
+	// page and on income pages with none set up yet.
+	RecurringIncomes []store.RecurringIncome
+
 	// FormToken is a one-time token, so a double click or a back-then-save does
 	// not record the same money twice.
 	FormToken string
@@ -2119,6 +2124,12 @@ func (s *Server) handleIncomePage(w http.ResponseWriter, r *http.Request) {
 
 	v, ok := s.buildEntryView(w, r, store.KindIncome, "Add Income", "income")
 	if !ok {
+		return
+	}
+
+	var err error
+	if v.RecurringIncomes, err = s.store.ListRecurringIncome(r.Context(), scopeOf(r)); err != nil {
+		s.serverError(w, r, err)
 		return
 	}
 
@@ -2287,6 +2298,88 @@ func (s *Server) handleIncomeCreate(w http.ResponseWriter, r *http.Request) {
 		r,
 		"/income",
 		fmt.Sprintf("Recurring income of %s saved.", in.amount.Display()),
+	)
+}
+
+// recurringIncomeEditForm is what /income/{id}/edit and /income/{id}/cancel
+// share with handleIncomeCreate's own recurring path: a source, an amount, and
+// a frequency, read the same way in both places so a preset picked here means
+// exactly what it meant when the schedule was created.
+func parseRecurringIncomeEditForm(r *http.Request) (source string, amount money.Cents, freqN int, freqUnit string, errMsg string) {
+	source = strings.TrimSpace(r.PostFormValue("label"))
+	amount, err := money.ParsePositive(r.PostFormValue("amount"))
+	if err != nil {
+		return "", 0, 0, "", "Enter an amount greater than zero."
+	}
+	freqN, freqUnit, errMsg = parseRecurringFrequency(r)
+	return source, amount, freqN, freqUnit, errMsg
+}
+
+// handleRecurringIncomeUpdate is POST /income/{id}/edit. It changes what a
+// schedule pays and how often, but never its next_due_date: whatever is
+// already owed under the old terms is still owed, on the day it was already
+// due, and only the cycle after that reflects the change -- the same rule
+// ProcessDueRecurringIncome already applies when it advances the date itself.
+func (s *Server) handleRecurringIncomeUpdate(w http.ResponseWriter, r *http.Request) {
+	sc := scopeOf(r)
+	id, ok := s.pathID(w, r)
+	if !ok {
+		return
+	}
+	if !s.parseForm(w, r) {
+		return
+	}
+
+	existing, err := s.store.RecurringIncomeByID(r.Context(), sc, id)
+	if errors.Is(err, store.ErrNotFound) {
+		s.flashError(w, r, "That recurring income no longer exists.")
+		http.Redirect(w, r, "/income", http.StatusSeeOther)
+		return
+	}
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+
+	source, amount, freqN, freqUnit, msg := parseRecurringIncomeEditForm(r)
+	if msg != "" {
+		s.flashError(w, r, msg)
+		http.Redirect(w, r, "/income", http.StatusSeeOther)
+		return
+	}
+
+	err = s.store.UpdateRecurringIncome(
+		r.Context(), sc, id,
+		source, amount, freqN, freqUnit,
+		existing.StartDate, existing.NextDueDate,
+	)
+	s.redirectAfterStoreOp(w, r, err, "/income",
+		"That recurring income no longer exists.",
+		"That change could not be saved. Try again.",
+		"Recurring income updated.",
+		nil,
+	)
+}
+
+// handleRecurringIncomeCancel is POST /income/{id}/cancel. It stops future
+// occurrences without deleting the schedule or anything it already created --
+// the same one-way, history-keeping shape as archiving a recurring expense,
+// deliberately: undoing a delete on money that already happened is a much
+// worse conversation than turning a schedule back on would ever be, so there
+// is no resume path in this UI even though the store layer could support one.
+func (s *Server) handleRecurringIncomeCancel(w http.ResponseWriter, r *http.Request) {
+	sc := scopeOf(r)
+	id, ok := s.pathID(w, r)
+	if !ok {
+		return
+	}
+
+	err := s.store.SetRecurringIncomeActive(r.Context(), sc, id, false)
+	s.redirectAfterStoreOp(w, r, err, "/income",
+		"That recurring income no longer exists.",
+		"That could not be cancelled. Try again.",
+		"Recurring income cancelled. Its history has been kept.",
+		nil,
 	)
 }
 
@@ -2848,6 +2941,36 @@ func (s *Server) handleBucketCreate(w http.ResponseWriter, r *http.Request) {
 	s.redirectSuccess(w, r, expensesTab, fmt.Sprintf("%q added to your recurring expenses.", n.Name))
 }
 
+// redirectAfterStoreOp is the "edit or remove one row, then bounce back to the
+// list" shape that repeats across the bucket and recurring-income handlers: a
+// missing row gets its own message (someone else archived or deleted it since
+// the page was loaded), any other error is shown safely rather than leaking
+// its raw text, and success runs an optional follow-up (reallocating, say)
+// before the flash. Centralised so the three-way switch is written once.
+func (s *Server) redirectAfterStoreOp(
+	w http.ResponseWriter,
+	r *http.Request,
+	err error,
+	path string,
+	notFoundMsg string,
+	failMsg string,
+	successMsg string,
+	onSuccess func(),
+) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		s.flashError(w, r, notFoundMsg)
+	case err != nil:
+		s.flashError(w, r, s.safeMessage(r, err, failMsg))
+	default:
+		if onSuccess != nil {
+			onSuccess()
+		}
+		s.flashSuccess(w, r, successMsg)
+	}
+	http.Redirect(w, r, path, http.StatusSeeOther)
+}
+
 func (s *Server) handleBucketUpdate(w http.ResponseWriter, r *http.Request) {
 	sc := scopeOf(r)
 	id, ok := s.pathID(w, r)
@@ -2865,16 +2988,12 @@ func (s *Server) handleBucketUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err := s.store.UpdateBucket(r.Context(), sc, id, n)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		s.flashError(w, r, "That expense no longer exists.")
-	case err != nil:
-		s.flashError(w, r, s.safeMessage(r, err, "That change could not be saved. Try again."))
-	default:
-		s.reallocateNow(w, r)
-		s.flashSuccess(w, r, "Recurring expense updated.")
-	}
-	http.Redirect(w, r, expensesTab, http.StatusSeeOther)
+	s.redirectAfterStoreOp(w, r, err, expensesTab,
+		"That expense no longer exists.",
+		"That change could not be saved. Try again.",
+		"Recurring expense updated.",
+		func() { s.reallocateNow(w, r) },
+	)
 }
 
 func (s *Server) handleBucketUp(w http.ResponseWriter, r *http.Request) {
@@ -2915,17 +3034,12 @@ func (s *Server) handleBucketArchive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err := s.store.ArchiveBucket(r.Context(), sc, id)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		s.flashError(w, r, "That expense no longer exists.")
-	case err != nil:
-		s.serverError(w, r, err)
-		return
-	default:
-		s.reallocateNow(w, r)
-		s.flashSuccess(w, r, "Recurring expense removed. Its history has been kept.")
-	}
-	http.Redirect(w, r, expensesTab, http.StatusSeeOther)
+	s.redirectAfterStoreOp(w, r, err, expensesTab,
+		"That expense no longer exists.",
+		"That could not be removed. Try again.",
+		"Recurring expense removed. Its history has been kept.",
+		func() { s.reallocateNow(w, r) },
+	)
 }
 
 // handleReallocate lets the user force a recalculation.

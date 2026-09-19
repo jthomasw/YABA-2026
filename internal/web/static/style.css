@@ -1175,6 +1175,32 @@ a:hover { text-decoration: underline; }
   padding: .3rem 0;
 }
 
+/* ── recurring income list (income.html) ─────────────────────────────────── */
+
+.recurring-list {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: .75rem;
+}
+
+.recurring-item {
+  padding: .8rem;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--positive);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.recurring-item-inactive {
+  border-left-color: var(--border);
+  opacity: .7;
+}
+
+.recurring-head h3 { margin: 0; display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.recurring-head p  { margin: .2rem 0 0; font-size: .9rem; font-variant-numeric: tabular-nums; }
+
 .tag-essential { background: var(--alert-bg); color: var(--negative); }
 .tag-bucket    { background: var(--info-bg); color: var(--brand); }
 

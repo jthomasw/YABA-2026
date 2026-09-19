@@ -195,6 +195,8 @@ func (s *Server) Handler() http.Handler {
 	// the money goes.
 	mux.Handle("GET  /income", s.canEdit(s.handleIncomePage))
 	mux.Handle("POST /income", s.canEdit(s.handleIncomeCreate))
+	mux.Handle("POST /income/{id}/edit", s.canEdit(s.handleRecurringIncomeUpdate))
+	mux.Handle("POST /income/{id}/cancel", s.canEdit(s.handleRecurringIncomeCancel))
 	mux.Handle("GET  /expense", s.canEdit(s.handleExpensePage))
 	mux.Handle("POST /expense", s.canEdit(s.handleExpenseCreate))
 
@@ -909,6 +911,15 @@ var funcs = template.FuncMap{
 	},
 	// negative reports whether an amount should be styled as an outflow.
 	"negative": func(c money.Cents) bool { return c < 0 },
+	// frequencyLabel turns a (n, unit) recurrence into "Every 2 weeks", the same
+	// wording the presets on the income and expense forms already use, so a
+	// saved schedule reads back the way it was chosen rather than as raw numbers.
+	"frequencyLabel": func(n int, unit string) string {
+		if n == 1 {
+			return "Every " + unit
+		}
+		return fmt.Sprintf("Every %d %ss", n, unit)
+	},
 	// pct rounds a percentage for a progress bar width.
 	"pct": func(f float64) string { return fmt.Sprintf("%.1f", f) },
 	// pctInt rounds a percentage for display text.

@@ -32,8 +32,10 @@ func main() {
 		addr      = flag.String("addr", envOr("YABA_ADDR", ":8000"), "address to listen on")
 		dbPath    = flag.String("db", envOr("YABA_DB", "yaba.db"), "path to the SQLite database")
 		uploadDir = flag.String("uploads", envOr("YABA_UPLOADS", "uploads"), "directory for stored receipts")
-		secure    = flag.Bool("secure-cookie", envBool("YABA_SECURE_COOKIE", false),
-			"mark the session cookie Secure (enable when serving over HTTPS)")
+		secure    = flag.Bool("secure-cookie", envBool("YABA_SECURE_COOKIE", true),
+			"mark the session cookie Secure (disable only for local HTTP development)")
+		timezone = flag.String("timezone", envOr("YABA_TIMEZONE", ""),
+			"IANA timezone for date calculations, e.g. America/New_York (default: the server's own local timezone)")
 		maxUpload = flag.Int64("max-upload-mb", envInt64("YABA_MAX_UPLOAD_MB", 5),
 			"maximum receipt upload size in megabytes")
 		backupDir = flag.String("backup-dir", envOr("YABA_BACKUP_DIR", db.DefaultBackupDir()),
@@ -54,8 +56,9 @@ func main() {
 	flag.Parse()
 
 	cfg := config{
-		addr:    *addr,
-		baseURL: *baseURL,
+		addr:     *addr,
+		baseURL:  *baseURL,
+		timezone: *timezone,
 		mail: mail.Config{
 			Host: *smtpHost,
 			Port: *smtpPort,
@@ -88,6 +91,16 @@ func main() {
 		log.Printf("         Set YABA_SECURE_COOKIE=1 (or pass -secure-cookie).")
 	}
 
+	// The cookie is Secure by default now, which a browser will simply not send
+	// back over plain HTTP -- so local development over http://localhost would
+	// silently fail to stay signed in unless this is pointed out once, clearly,
+	// instead of looking like a broken login.
+	if cfg.secureCookie && !strings.HasPrefix(strings.ToLower(cfg.baseURL), "https://") {
+		log.Printf("NOTE: the session cookie is marked Secure, so it will not be sent over plain HTTP.")
+		log.Printf("      For local development at http://localhost, set YABA_SECURE_COOKIE=0")
+		log.Printf("      (or pass -secure-cookie=false).")
+	}
+
 	if err := run(cfg); err != nil {
 		log.Fatalf("fatal: %v", err)
 	}
@@ -100,6 +113,7 @@ type config struct {
 	dbPath       string
 	uploadDir    string
 	secureCookie bool
+	timezone     string
 	maxUploadMB  int64
 	backupDir    string
 	backupEvery  time.Duration
@@ -111,6 +125,17 @@ type config struct {
 func run(cfg config) error {
 	addr, dbPath, uploadDir := cfg.addr, cfg.dbPath, cfg.uploadDir
 	secureCookie, maxUploadMB := cfg.secureCookie, cfg.maxUploadMB
+
+	// Set once, here, before anything starts serving: store.Today() reads this
+	// on every request from then on, with no lock, because it never changes again.
+	if cfg.timezone != "" {
+		loc, err := time.LoadLocation(cfg.timezone)
+		if err != nil {
+			return fmt.Errorf("invalid -timezone %q: %w", cfg.timezone, err)
+		}
+		store.SetLocation(loc)
+	}
+
 	sessionKey, err := sessionKey()
 	if err != nil {
 		return err

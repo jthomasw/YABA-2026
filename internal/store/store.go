@@ -80,9 +80,27 @@ var (
 	ErrInsufficientFund = errors.New("not enough money in that fund")
 )
 
-// Today returns the current date as YYYY-MM-DD.
+// clockLocation is the timezone Today() reads the current date in. It defaults
+// to the server's own local timezone -- which is what every deployment got
+// before this existed -- and is only ever changed once, by SetLocation, before
+// the HTTP server starts accepting requests. Nothing after startup mutates it,
+// so no mutex guards it: concurrent reads of an unchanging pointer are safe.
+var clockLocation = time.Local
+
+// SetLocation points every future Today() call at loc instead of the server's
+// local timezone. Call it once at startup, before serving any request -- a
+// deployment whose server clock is not in the household's own timezone would
+// otherwise file a transaction made just after midnight under the wrong day,
+// because "today" was being decided in the wrong place.
+func SetLocation(loc *time.Location) {
+	if loc != nil {
+		clockLocation = loc
+	}
+}
+
+// Today returns the current date as YYYY-MM-DD, in clockLocation.
 func Today() string {
-	return time.Now().Format(DateLayout)
+	return time.Now().In(clockLocation).Format(DateLayout)
 }
 
 // DateLayout is the storage format for occurred_on.
