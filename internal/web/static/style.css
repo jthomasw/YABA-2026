@@ -934,7 +934,7 @@ a:hover { text-decoration: underline; }
   color: var(--text-muted);
 }
 
-/* ── every fund, on the Emergency Fund card ──────────────────────────────────
+/* ── savings funds, on the Current Funds card ────────────────────────────────
    One line per fund: name on the left, "saved / target" on the right. The card
    is a flex column, so each line is its own flex row and the figures line up
    down the right edge whatever the names are.
@@ -1192,6 +1192,10 @@ a:hover { text-decoration: underline; }
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
+
+/* A recurring expense is money going out, so its edge is red rather than the
+   green an income schedule gets. */
+.recurring-item-expense { border-left-color: var(--negative); }
 
 .recurring-item-inactive {
   border-left-color: var(--border);

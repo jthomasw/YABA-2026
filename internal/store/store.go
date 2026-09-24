@@ -714,6 +714,10 @@ type RecurringExpense struct {
 	BucketID  *int64
 	Essential bool
 
+	// BucketName is the name of that budget line, or "" when there is none or
+	// it has since been archived. Display only.
+	BucketName string
+
 	FrequencyN    int
 	FrequencyUnit string
 	StartDate     string
@@ -721,6 +725,43 @@ type RecurringExpense struct {
 	Active        bool
 	CreatedAt     string
 	UpdatedAt     string
+}
+
+// BucketRef is BucketID as a plain number, 0 for none, so a template can
+// compare it with a bucket's ID to preselect an option.
+func (r RecurringExpense) BucketRef() int64 {
+	if r.BucketID == nil {
+		return 0
+	}
+	return *r.BucketID
+}
+
+// recurringExpenseSelect is the column list and join shared by every read of
+// recurring_expense, in the order scanRecurringExpense expects.
+const recurringExpenseSelect = `
+	SELECT r.id, r.household_id, r.user_id, r.label, r.amount_cents,
+	       r.bucket_id, r.essential, IFNULL(b.name, ''),
+	       r.frequency_n, r.frequency_unit, r.start_date, r.next_due_date,
+	       r.active, r.created_at, r.updated_at
+	FROM recurring_expense r
+	LEFT JOIN expense_buckets b ON b.id = r.bucket_id AND b.archived_at IS NULL`
+
+func scanRecurringExpense(row rowScanner) (RecurringExpense, error) {
+	var r RecurringExpense
+	var amount int64
+	var essential, active int
+	if err := row.Scan(
+		&r.ID, &r.HouseholdID, &r.UserID, &r.Label, &amount,
+		&r.BucketID, &essential, &r.BucketName,
+		&r.FrequencyN, &r.FrequencyUnit, &r.StartDate, &r.NextDueDate,
+		&active, &r.CreatedAt, &r.UpdatedAt,
+	); err != nil {
+		return RecurringExpense{}, err
+	}
+	r.Amount = Cents(amount)
+	r.Essential = essential == 1
+	r.Active = active == 1
+	return r, nil
 }
 
 // CreateRecurringExpense stores a schedule. The first occurrence is startDate
@@ -783,14 +824,9 @@ func (s *Store) CreateRecurringExpense(
 
 // ListRecurringExpense returns this budget's schedules, soonest due first.
 func (s *Store) ListRecurringExpense(ctx context.Context, sc Scope) ([]RecurringExpense, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, household_id, user_id, label, amount_cents,
-		       bucket_id, essential,
-		       frequency_n, frequency_unit, start_date, next_due_date,
-		       active, created_at, updated_at
-		FROM recurring_expense
-		WHERE household_id = ?
-		ORDER BY active DESC, next_due_date ASC, id ASC`, sc.HouseholdID)
+	rows, err := s.db.QueryContext(ctx, recurringExpenseSelect+`
+		WHERE r.household_id = ?
+		ORDER BY r.active DESC, r.next_due_date ASC, r.id ASC`, sc.HouseholdID)
 	if err != nil {
 		return nil, fmt.Errorf("list recurring expenses: %w", err)
 	}
@@ -798,23 +834,85 @@ func (s *Store) ListRecurringExpense(ctx context.Context, sc Scope) ([]Recurring
 
 	out := []RecurringExpense{}
 	for rows.Next() {
-		var r RecurringExpense
-		var amount int64
-		var essential, active int
-		if err := rows.Scan(
-			&r.ID, &r.HouseholdID, &r.UserID, &r.Label, &amount,
-			&r.BucketID, &essential,
-			&r.FrequencyN, &r.FrequencyUnit, &r.StartDate, &r.NextDueDate,
-			&active, &r.CreatedAt, &r.UpdatedAt,
-		); err != nil {
+		r, err := scanRecurringExpense(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan recurring expense: %w", err)
 		}
-		r.Amount = Cents(amount)
-		r.Essential = essential == 1
-		r.Active = active == 1
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// RecurringExpenseByID fetches one schedule in this budget.
+func (s *Store) RecurringExpenseByID(ctx context.Context, sc Scope, id int64) (RecurringExpense, error) {
+	r, err := scanRecurringExpense(s.db.QueryRowContext(ctx, recurringExpenseSelect+`
+		WHERE r.id = ? AND r.household_id = ?`, id, sc.HouseholdID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return RecurringExpense{}, ErrNotFound
+	}
+	if err != nil {
+		return RecurringExpense{}, fmt.Errorf("get recurring expense: %w", err)
+	}
+	return r, nil
+}
+
+// UpdateRecurringExpense changes what an active schedule charges, how often,
+// and where it is attributed. It never moves next_due_date: anything already
+// owed under the old terms is still owed on the day it fell due, and only the
+// occurrences after that reflect the change -- the same rule recurring income
+// follows.
+func (s *Store) UpdateRecurringExpense(
+	ctx context.Context,
+	sc Scope,
+	id int64,
+	label string,
+	amount Cents,
+	bucketID *int64,
+	essential bool,
+	frequencyN int,
+	frequencyUnit string,
+) error {
+	label = cleanLabel(label)
+	if label == "" {
+		return errors.New("a recurring expense needs a name")
+	}
+	if amount <= 0 {
+		return errors.New("a recurring expense needs an amount greater than zero")
+	}
+	if ok, msg := ValidFrequency(frequencyN, frequencyUnit); !ok {
+		return fmt.Errorf("invalid recurring frequency: %s", msg)
+	}
+
+	bucket, err := s.resolveBucket(ctx, sc, bucketID)
+	if err != nil {
+		return err
+	}
+
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE recurring_expense
+		SET label = ?, amount_cents = ?, bucket_id = ?, essential = ?,
+		    frequency_n = ?, frequency_unit = ?, updated_at = datetime('now')
+		WHERE id = ? AND household_id = ? AND active = 1`,
+		label, int64(amount), bucket, boolToInt(essential),
+		frequencyN, frequencyUnit, id, sc.HouseholdID)
+	if err != nil {
+		return fmt.Errorf("update recurring expense: %w", err)
+	}
+	return requireOneRow(res)
+}
+
+// SetRecurringExpenseActive turns a schedule on or off. Turning it off stops
+// future occurrences and leaves every transaction it already created alone.
+func (s *Store) SetRecurringExpenseActive(ctx context.Context, sc Scope, id int64, active bool) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE recurring_expense
+		SET active = ?, updated_at = datetime('now')
+		WHERE id = ? AND household_id = ?`,
+		boolToInt(active), id, sc.HouseholdID)
+	if err != nil {
+		return fmt.Errorf("set recurring expense active: %w", err)
+	}
+	return requireOneRow(res)
 }
 
 // ProcessDueRecurringExpenses creates whatever each schedule owes up to asOf.

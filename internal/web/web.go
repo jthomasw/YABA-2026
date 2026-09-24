@@ -117,8 +117,11 @@ func New(st *store.Store, cfg Config) (*Server, error) {
 	// decode, which signs everybody out once.
 	cookies := sessions.NewCookieStore(cfg.SessionKey, deriveKey(cfg.SessionKey, "cookie-encryption-v1"))
 	cookies.Options = &sessions.Options{
-		Path:     "/",
-		MaxAge:   int((7 * 24 * time.Hour).Seconds()),
+		Path: "/",
+		// The same lifetime as the server-side session row. The row is what
+		// actually decides whether a login is valid (including the idle
+		// timeout); a shorter cookie only signed people out early.
+		MaxAge:   int(store.SessionTTL.Seconds()),
 		HttpOnly: true,
 		// Secure is driven by config rather than hardcoded false, so a deployment behind TLS
 		// gets a cookie the browser will not send over plain HTTP.
@@ -174,8 +177,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET  /dashboard", s.authed(s.handleDashboard))
 	mux.Handle("GET  /notifications", s.authed(s.handleNotifications))
 
-	// Savings moved onto the Emergency Fund tab. The old path redirects rather
-	// than 404ing any bookmark that still points at it.
+	// The old Savings page is gone: savings funds are on the Current Funds tab
+	// (the emergency fund has its own tab). The old path redirects rather than
+	// 404ing any bookmark that still points at it.
 	mux.Handle("GET  /savings", s.authed(s.handleSavingsRedirect))
 	mux.Handle("GET  /reports", s.authed(s.handleReports))
 
@@ -199,6 +203,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /income/{id}/cancel", s.canEdit(s.handleRecurringIncomeCancel))
 	mux.Handle("GET  /expense", s.canEdit(s.handleExpensePage))
 	mux.Handle("POST /expense", s.canEdit(s.handleExpenseCreate))
+	mux.Handle("POST /expense/recurring/{id}/edit", s.canEdit(s.handleRecurringExpenseUpdate))
+	mux.Handle("POST /expense/recurring/{id}/cancel", s.canEdit(s.handleRecurringExpenseCancel))
 
 	mux.Handle("GET  /transactions", s.authed(s.handleTransactions))
 	mux.Handle("GET  /transactions/export.csv", s.authed(s.handleExportCSV))

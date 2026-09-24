@@ -11,6 +11,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/jthomasw/YABA-2026/internal/store"
@@ -294,5 +295,129 @@ func TestCatchUpIsBoundedAndResumes(t *testing.T) {
 			t.Fatalf("two transactions on %s — the catch-up double-charged", tx.OccurredOn)
 		}
 		seen[tx.OccurredOn] = true
+	}
+}
+
+// ── managing a schedule after it is created ──────────────────────────────────
+
+// An edit changes what future occurrences carry, and leaves the next due date
+// -- and everything already recorded -- exactly where it was.
+func TestRecurringExpenseUpdateAppliesToFutureOccurrences(t *testing.T) {
+	st, sc := newTestStore(t)
+	ctx := context.Background()
+
+	id, err := st.CreateRecurringExpense(ctx, sc, "Phone", 3000, nil, false, 1, "month", "2026-01-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ProcessDueRecurringExpenses(ctx, sc, "2026-01-10"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := st.RecurringExpenseByID(ctx, sc, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bucket, err := st.CreateBucket(ctx, sc, store.NewBucket{Name: "Bills", CostKind: store.CostVariable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateRecurringExpense(ctx, sc, id, "Mobile", 4500, &bucket, true, 2, "week"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	after, err := st.RecurringExpenseByID(ctx, sc, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Label != "Mobile" || after.Amount != 4500 || !after.Essential ||
+		after.FrequencyN != 2 || after.FrequencyUnit != "week" {
+		t.Errorf("update not applied: %+v", after)
+	}
+	if after.BucketRef() != bucket || after.BucketName != "Bills" {
+		t.Errorf("bucket = %d %q, want %d \"Bills\"", after.BucketRef(), after.BucketName, bucket)
+	}
+	if after.NextDueDate != before.NextDueDate {
+		t.Errorf("next due moved from %s to %s", before.NextDueDate, after.NextDueDate)
+	}
+
+	// The January charge already recorded is untouched.
+	txs, _, err := st.List(ctx, sc, store.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(txs) != 1 || txs[0].Label != "Phone" || txs[0].Amount != 3000 {
+		t.Errorf("history was rewritten: %+v", txs)
+	}
+}
+
+func TestRecurringExpenseUpdateRefusesNonsense(t *testing.T) {
+	st, sc := newTestStore(t)
+	ctx := context.Background()
+	id, err := st.CreateRecurringExpense(ctx, sc, "Phone", 3000, nil, false, 1, "month", "2026-01-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, call := range map[string]func() error{
+		"blank name":  func() error { return st.UpdateRecurringExpense(ctx, sc, id, "  ", 100, nil, false, 1, "month") },
+		"zero amount": func() error { return st.UpdateRecurringExpense(ctx, sc, id, "X", 0, nil, false, 1, "month") },
+		"overflow":    func() error { return st.UpdateRecurringExpense(ctx, sc, id, "X", 100, nil, false, 2000000000, "month") },
+		"unknown bucket": func() error {
+			b := int64(999999)
+			return st.UpdateRecurringExpense(ctx, sc, id, "X", 100, &b, false, 1, "month")
+		},
+	} {
+		if err := call(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// Cancelling stops future charges and keeps the ones already made.
+func TestCancelledRecurringExpenseStopsCharging(t *testing.T) {
+	st, sc := newTestStore(t)
+	ctx := context.Background()
+	id, err := st.CreateRecurringExpense(ctx, sc, "Gym", 4000, nil, false, 1, "month", "2026-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ProcessDueRecurringExpenses(ctx, sc, "2026-02-15"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRecurringExpenseActive(ctx, sc, id, false); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if err := st.ProcessDueRecurringExpenses(ctx, sc, "2026-06-15"); err != nil {
+		t.Fatal(err)
+	}
+	_, total, err := st.List(ctx, sc, store.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 {
+		t.Errorf("%d charges, want the 2 made before cancelling", total)
+	}
+	// A cancelled schedule can no longer be edited.
+	if err := st.UpdateRecurringExpense(ctx, sc, id, "Gym", 5000, nil, false, 1, "month"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("editing a cancelled schedule: %v, want ErrNotFound", err)
+	}
+}
+
+func TestRecurringExpenseIsScopedToTheHousehold(t *testing.T) {
+	st, alice := newTestStore(t)
+	bob := newSecondUser(t, st, "bob@example.com")
+	ctx := context.Background()
+	id, err := st.CreateRecurringExpense(ctx, alice, "Rent", 90000, nil, true, 1, "month", "2026-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RecurringExpenseByID(ctx, bob, id); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("bob read alice's schedule: %v", err)
+	}
+	if err := st.UpdateRecurringExpense(ctx, bob, id, "Hacked", 1, nil, false, 1, "month"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("bob edited alice's schedule: %v", err)
+	}
+	if err := st.SetRecurringExpenseActive(ctx, bob, id, false); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("bob cancelled alice's schedule: %v", err)
 	}
 }

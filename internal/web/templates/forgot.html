@@ -17,9 +17,10 @@
 
     {{if not .MailEnabled}}
     <p class="callout callout-warn">
-      Email is not configured on this server, so nothing was actually sent — the
-      link was written to the server log instead. Whoever runs this installation
-      can read it from there, or set <code>YABA_SMTP_HOST</code> and restart.
+      Email is not configured on this server, so no reset link was sent. Ask
+      whoever runs this installation to set your password with
+      <code>yaba passwd</code>, or to set <code>YABA_SMTP_HOST</code> and restart
+      so reset links can be emailed.
     </p>
     {{end}}
 

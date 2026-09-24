@@ -2854,3 +2854,125 @@ func TestManualExpenseFormOffersTheRecurringChoice(t *testing.T) {
 		}
 	}
 }
+
+// ── managing recurring expenses over HTTP ─────────────────────────────────────
+
+func TestRecurringExpensesAreListedEditableAndCancellable(t *testing.T) {
+	rig := newRig(t)
+	rig.login()
+	ctx := context.Background()
+
+	// Starts in the future so opening /expense does not charge anything.
+	id, err := rig.store.CreateRecurringExpense(ctx, rig.scope, "Netflix", 1599, nil, false, 1, "month", "2099-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := rig.do("GET", "/expense", nil).Body.String()
+	if !strings.Contains(body, `id="recurring-expenses"`) || !strings.Contains(body, "Netflix") {
+		t.Fatal("the Add Expense page does not list the recurring expense")
+	}
+	if !strings.Contains(body, fmt.Sprintf(`action="/expense/recurring/%d/edit"`, id)) ||
+		!strings.Contains(body, fmt.Sprintf(`action="/expense/recurring/%d/cancel"`, id)) {
+		t.Fatal("the list offers no edit or cancel")
+	}
+
+	rec := rig.post(fmt.Sprintf("/expense/recurring/%d/edit", id), url.Values{
+		"label": {"Netflix Premium"}, "amount": {"22.99"},
+		"frequency_n": {"1"}, "frequency_unit": {"month"}, "essential": {"no"},
+	})
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/expense#recurring-expenses" {
+		t.Fatalf("edit: %d -> %q", rec.Code, rec.Header().Get("Location"))
+	}
+	got, err := rig.store.RecurringExpenseByID(ctx, rig.scope, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Label != "Netflix Premium" || got.Amount != 2299 {
+		t.Errorf("edit not applied: %+v", got)
+	}
+
+	if rec := rig.post(fmt.Sprintf("/expense/recurring/%d/cancel", id), nil); rec.Code != http.StatusSeeOther {
+		t.Fatalf("cancel: %d", rec.Code)
+	}
+	got, _ = rig.store.RecurringExpenseByID(ctx, rig.scope, id)
+	if got.Active {
+		t.Error("the schedule is still active after cancelling")
+	}
+}
+
+func TestViewerCannotEditOrCancelRecurringExpenses(t *testing.T) {
+	rig, hh, _, viewer := sharedRig(t)
+	ctx := context.Background()
+	owner := store.Scope{HouseholdID: hh, UserID: rig.userID}
+	id, err := rig.store.CreateRecurringExpense(ctx, owner, "Rent", 90000, nil, true, 1, "month", "2099-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rig.loginAs(viewer)
+	rig.post(fmt.Sprintf("/expense/recurring/%d/edit", id), url.Values{
+		"label": {"Hacked"}, "amount": {"1.00"}, "frequency_n": {"1"}, "frequency_unit": {"month"},
+	})
+	rig.post(fmt.Sprintf("/expense/recurring/%d/cancel", id), nil)
+	got, err := rig.store.RecurringExpenseByID(ctx, owner, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Label != "Rent" || !got.Active {
+		t.Errorf("a viewer changed the schedule: %+v", got)
+	}
+}
+
+// ── category budgets return to Reports ────────────────────────────────────────
+
+// The budget form lives on Reports; sending the user to the dashboard after a
+// save left them on a page with no budgets on it.
+func TestBudgetActionsReturnToReports(t *testing.T) {
+	rig := newRig(t)
+	rig.login()
+	rec := rig.post("/budgets", url.Values{"category": {"Food"}, "limit": {"200"}})
+	if got := rec.Header().Get("Location"); got != "/reports#budgets" {
+		t.Errorf("saving a budget redirected to %q, want /reports#budgets", got)
+	}
+	if !strings.Contains(rig.do("GET", "/reports", nil).Body.String(), `id="budgets"`) {
+		t.Error("the Reports page has no #budgets anchor to land on")
+	}
+	rec = rig.post("/budgets", url.Values{"category": {"Food"}, "limit": {"nope"}})
+	if got := rec.Header().Get("Location"); got != "/reports#budgets" {
+		t.Errorf("a refused budget redirected to %q, want /reports#budgets", got)
+	}
+}
+
+// ── cookie lifetime ───────────────────────────────────────────────────────────
+
+// The cookie used to expire after 7 days while the session row, and the help
+// text, promised 30 -- so people were signed out three weeks early.
+func TestSessionCookieLastsAsLongAsTheSession(t *testing.T) {
+	rig := newRig(t)
+	rig.login()
+	for _, c := range rig.cookies {
+		if c.Name == sessionName {
+			if want := int(store.SessionTTL.Seconds()); c.MaxAge != want {
+				t.Errorf("cookie MaxAge = %d, want %d (store.SessionTTL)", c.MaxAge, want)
+			}
+			return
+		}
+	}
+	t.Fatal("no session cookie")
+}
+
+// With no SMTP the forgot page used to claim the link "was written to the
+// server log", which is only true with YABA_MAIL_DEBUG set.
+func TestForgotPageDoesNotPromiseALoggedLink(t *testing.T) {
+	rig := newRig(t)
+	body := rig.do("POST", "/forgot", url.Values{
+		"csrf_token": {rig.csrf("/forgot")},
+		"email":      {"someone@example.com"},
+	}).Body.String()
+	if strings.Contains(body, "server log") {
+		t.Error("the page still says the reset link was written to the server log")
+	}
+	if !strings.Contains(body, "no reset link was sent") {
+		t.Error("the page does not say plainly that nothing was sent")
+	}
+}

@@ -15,8 +15,10 @@
       <span>Rows tagged <em>To savings</em> or <em>From savings</em> are
       transfers between your own funds, not income or spending. They can't be
       edited here, since that could put a fund's balance out of step with its
-      cash — use Add or Take out on the
-      <a href="/dashboard?tab=emergency">Emergency Fund</a> tab instead.</span></li>
+      cash — use Add or Take out on the fund instead: savings funds are on
+      the <a href="/dashboard?tab=current">Current Funds</a> tab, and the
+      emergency fund on the <a href="/dashboard?tab=emergency">Emergency
+      Fund</a> tab.</span></li>
     <li>{{template "icon" "check-circle"}}
       <span>Anything you change here immediately updates the dashboard totals
       and recalculates which bills are funded.</span></li>
@@ -37,7 +39,7 @@
     {{end}}
     <a class="btn btn-quiet" href="/dashboard">Dashboard</a>
     {{if .Role.CanEditEntries}}
-    <a class="btn btn-primary" href="/import">Add Expense</a>
+    <a class="btn btn-primary" href="/expense">Add Expense</a>
     {{end}}
   </div>
 </div>

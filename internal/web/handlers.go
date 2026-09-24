@@ -670,7 +670,7 @@ type dashboardView struct {
 	PlannerOpen bool
 
 	// Same idea as PlannerOpen, for the "New savings fund" <details> on the
-	// Emergency Fund tab.
+	// Current Funds tab.
 	FundAddOpen bool
 
 	// Card 1 — Current Funds.
@@ -678,12 +678,14 @@ type dashboardView struct {
 	Balance []store.Point
 	Trend   insight.Trend
 
-	// Card 2 — Emergency Fund. This tab owns every savings fund, not just the
-	// emergency one, so the whole grid and its forms live here.
+	// Card 2 — Emergency Fund: the emergency fund's runway and target.
 	EmergencyFund store.Fund
 	Runway        insight.Runway
-	Funds         []fundCard
-	Totals        store.Totals
+
+	// Every open fund with its projection. The emergency one is drawn on the
+	// Emergency Fund tab; the rest are drawn on Current Funds.
+	Funds  []fundCard
+	Totals store.Totals
 
 	// Card 3 — Monthly Income. Actual first, the forecast range second.
 	IncomeRange    insight.IncomeRange
@@ -870,8 +872,8 @@ func (s *Server) loadEmergencyFund(ctx context.Context, sc store.Scope, v *dashb
 	return nil
 }
 
-// loadSavingsGrid fills every fund with its own projection, for the grid on the
-// savings tab.
+// loadSavingsGrid fills every fund with its own projection. The template splits
+// them: the emergency fund on its own tab, every other fund on Current Funds.
 func (s *Server) loadSavingsGrid(ctx context.Context, sc store.Scope, v *dashboardView) error {
 	var err error
 	if v.Totals, err = s.store.Totals(ctx, sc, ""); err != nil {
@@ -949,9 +951,9 @@ type fundCard struct {
 }
 
 // handleSavingsRedirect keeps the old /savings path working, sending a bookmark to the
-// tab that now does the job rather than 404ing it.
+// tab that now lists the savings funds rather than 404ing it.
 func (s *Server) handleSavingsRedirect(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/dashboard?tab=emergency", http.StatusMovedPermanently)
+	http.Redirect(w, r, "/dashboard?tab=current", http.StatusMovedPermanently)
 }
 
 // ── /reports ──────────────────────────────────────────────────────────────────
@@ -2095,6 +2097,11 @@ type entryView struct {
 	// page and on income pages with none set up yet.
 	RecurringIncomes []store.RecurringIncome
 
+	// RecurringExpenses is the expense page's counterpart: every recurring
+	// expense schedule in this budget, with Edit and Cancel. Empty on the
+	// income page.
+	RecurringExpenses []store.RecurringExpense
+
 	// FormToken is a one-time token, so a double click or a back-then-save does
 	// not record the same money twice.
 	FormToken string
@@ -2197,6 +2204,10 @@ func (s *Server) buildEntryView(w http.ResponseWriter, r *http.Request, kind sto
 	}
 	if kind == store.KindExpense {
 		if v.Buckets, err = s.store.BucketOptions(ctx, sc); err != nil {
+			s.serverError(w, r, err)
+			return v, false
+		}
+		if v.RecurringExpenses, err = s.store.ListRecurringExpense(ctx, sc); err != nil {
 			s.serverError(w, r, err)
 			return v, false
 		}
@@ -2445,6 +2456,90 @@ func (s *Server) handleExpenseCreate(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
+// recurringExpensesAnchor is where the recurring-expense actions return the
+// user: the list they were editing, on the Add Expense page.
+const recurringExpensesAnchor = "/expense#recurring-expenses"
+
+// handleRecurringExpenseUpdate is POST /expense/recurring/{id}/edit. Like its
+// income counterpart it changes what the schedule charges and how often, but
+// never its next_due_date: whatever is already owed stays owed on the day it
+// fell due.
+func (s *Server) handleRecurringExpenseUpdate(w http.ResponseWriter, r *http.Request) {
+	sc := scopeOf(r)
+	id, ok := s.pathID(w, r)
+	if !ok {
+		return
+	}
+	if !s.parseForm(w, r) {
+		return
+	}
+
+	// Checked first, so a missing schedule and a missing bucket -- both
+	// ErrNotFound from the update -- can be told apart in the message.
+	if _, err := s.store.RecurringExpenseByID(r.Context(), sc, id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			s.redirectError(w, r, recurringExpensesAnchor, "That recurring expense no longer exists.")
+			return
+		}
+		s.serverError(w, r, err)
+		return
+	}
+
+	label := strings.TrimSpace(r.PostFormValue("label"))
+	if label == "" {
+		s.redirectError(w, r, recurringExpensesAnchor, "Give the recurring expense a name.")
+		return
+	}
+	amount, err := money.ParsePositive(r.PostFormValue("amount"))
+	if err != nil {
+		s.redirectError(w, r, recurringExpensesAnchor, "Enter an amount greater than zero.")
+		return
+	}
+	freqN, freqUnit, msg := parseRecurringFrequency(r)
+	if msg != "" {
+		s.redirectError(w, r, recurringExpensesAnchor, msg)
+		return
+	}
+	var bucketID *int64
+	if raw := strings.TrimSpace(r.PostFormValue("bucket_id")); raw != "" && raw != "0" {
+		b, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || b <= 0 {
+			s.redirectError(w, r, recurringExpensesAnchor, "That recurring bill could not be recognised.")
+			return
+		}
+		bucketID = &b
+	}
+	essential := r.PostFormValue("essential") != "no"
+
+	err = s.store.UpdateRecurringExpense(r.Context(), sc, id,
+		label, amount, bucketID, essential, freqN, freqUnit)
+	s.redirectAfterStoreOp(w, r, err, recurringExpensesAnchor,
+		"That recurring expense, or the bill it pays towards, no longer exists.",
+		"That change could not be saved. Try again.",
+		"Recurring expense updated.",
+		nil,
+	)
+}
+
+// handleRecurringExpenseCancel is POST /expense/recurring/{id}/cancel. It stops
+// future charges and keeps every expense the schedule already recorded, the
+// same one-way shape as cancelling recurring income.
+func (s *Server) handleRecurringExpenseCancel(w http.ResponseWriter, r *http.Request) {
+	sc := scopeOf(r)
+	id, ok := s.pathID(w, r)
+	if !ok {
+		return
+	}
+
+	err := s.store.SetRecurringExpenseActive(r.Context(), sc, id, false)
+	s.redirectAfterStoreOp(w, r, err, recurringExpensesAnchor,
+		"That recurring expense no longer exists.",
+		"That could not be cancelled. Try again.",
+		"Recurring expense cancelled. The expenses it already recorded have been kept.",
+		nil,
+	)
+}
+
 // createEntry saves one entry of a fixed kind. The kind comes from the route, never from
 // the form, so a hand-edited request cannot post an expense to the income page.
 func (s *Server) createEntry(w http.ResponseWriter, r *http.Request, kind store.Kind) {
@@ -2525,23 +2620,21 @@ func (s *Server) rerenderEntry(w http.ResponseWriter, r *http.Request, kind stor
 // funds.go
 // ═════════════════════════════════════════════════════════════════════════════
 
-// Fund handlers redirect back to the Emergency Fund tab.
+// savingsAnchor is where a fund action returns when its form did not say it
+// came from Current Funds -- in practice, the emergency fund's own card.
 const savingsAnchor = "/dashboard?tab=emergency"
 
-// currentTab is the other place the savings section renders (see
-// dashboard.html's savingsSection); fundBack needs the literal value to
-// recognise it.
+// currentTab is the Current Funds tab, where every savings fund except the
+// emergency one is listed; fundBack needs the literal value to recognise it.
 const currentTab = "/dashboard?tab=current"
 
 // fundBack says which of the two tabs a fund action's form was submitted
-// from. The savings section (every fund's balance, deposit/withdraw, edit
-// target, close, and "New savings fund") renders identically on both the
-// Current Funds tab and the Emergency Fund tab, each copy carrying a hidden
-// "back" field naming its own tab, so a deposit made from Current Funds
-// returns there instead of jumping to Emergency Fund. Only the two exact,
-// known values are ever honoured -- anything else (missing, tampered,
-// pointed elsewhere) falls back to the Emergency Fund tab, so this can never
-// become an open redirect.
+// from. Ordinary savings funds (and "New savings fund") are on Current Funds;
+// the emergency fund's card is on Emergency Fund. Each form carries a hidden
+// "back" field naming its own tab, so an action returns to where it was taken.
+// Only the two exact, known values are ever honoured -- anything else
+// (missing, tampered, pointed elsewhere) falls back to the Emergency Fund tab,
+// so this can never become an open redirect.
 func fundBack(r *http.Request) string {
 	if r.PostFormValue("back") == currentTab {
 		return currentTab
@@ -2731,13 +2824,13 @@ func (s *Server) handleBudgetSet(w http.ResponseWriter, r *http.Request) {
 
 	category := strings.TrimSpace(r.PostFormValue("category"))
 	if category == "" {
-		s.redirectError(w, r, "/dashboard#budgets", "Choose a category to budget.")
+		s.redirectError(w, r, "/reports#budgets", "Choose a category to budget.")
 		return
 	}
 
 	limit, err := money.ParsePositive(r.PostFormValue("limit"))
 	if err != nil {
-		s.redirectError(w, r, "/dashboard#budgets", "Enter a monthly limit greater than zero.")
+		s.redirectError(w, r, "/reports#budgets", "Enter a monthly limit greater than zero.")
 		return
 	}
 
@@ -2746,7 +2839,7 @@ func (s *Server) handleBudgetSet(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.flashSuccess(w, r, fmt.Sprintf("%s budget set to %s a month.", category, limit.Display()))
 	}
-	http.Redirect(w, r, "/dashboard#budgets", http.StatusSeeOther)
+	http.Redirect(w, r, "/reports#budgets", http.StatusSeeOther)
 }
 
 func (s *Server) handleBudgetDelete(w http.ResponseWriter, r *http.Request) {
@@ -2765,7 +2858,7 @@ func (s *Server) handleBudgetDelete(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.flashSuccess(w, r, "Budget removed.")
 	}
-	http.Redirect(w, r, "/dashboard#budgets", http.StatusSeeOther)
+	http.Redirect(w, r, "/reports#budgets", http.StatusSeeOther)
 }
 
 // ── shared helpers ────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 /* Import chooser.
  *
- * Reveals the upload panel when "Receipt Picture" is chosen. Without JavaScript
+ * Reveals the upload panel when "Upload" is chosen on Add Expense. Without JavaScript
  * the panel is still in the document, so removing the hidden attribute is the
  * only thing this adds — the form itself is a plain POST and works regardless.
  */
@@ -18,9 +18,8 @@
   // reached at all.
   panel.hidden = true;
 
-  // The Upload choice is now a .choice button on /expense rather than a card on
-  // a separate /import page, but the data- hooks are unchanged so this still
-  // finds it.
+  // The Upload choice is a .choice button on /expense. (There used to be a
+  // separate /import page; that path now just redirects to /expense.)
   var open = document.querySelector("[data-open-receipt]");
   var close = document.querySelector("[data-close-receipt]");
   var input = document.getElementById("receipt");

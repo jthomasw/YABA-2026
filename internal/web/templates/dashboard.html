@@ -27,6 +27,11 @@
       <span>Use <strong>Add Income</strong> and <strong>Add Expense</strong>
       below to record something new, and <strong>Transactions</strong> to see
       everything you've entered — or fix a mistake.</span></li>
+    <li>{{template "icon" "check-circle"}}
+      <span>Your savings funds — a holiday, a car — are listed below the
+      chart. Create one with <strong>New savings fund</strong>, then use
+      <strong>Add</strong> and <strong>Take out</strong> to move money in and
+      out. The emergency fund has its own tab.</span></li>
   </ul>
 </div>
 
@@ -51,9 +56,10 @@
       it back out. Neither counts as income or an expense — it's just money
       moving between pots, so your monthly totals stay accurate.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>You can keep several funds — a holiday, a car — each with
-      its own target and its own estimate of when you'll reach it at your
-      current pace.</span></li>
+      <span>This tab shows only your emergency fund. Other savings funds
+      — a holiday, a car — live on the <strong>Current Funds</strong> tab,
+      each with its own target and its own estimate of when you'll reach it
+      at your current pace.</span></li>
   </ul>
 </div>
 
@@ -369,9 +375,9 @@
 
   <!-- ══ EMERGENCY FUND ═════════════════════════════════════════════════════ -->
   {{/*
-    This tab owns every savings fund, not only the emergency one. Money set aside
-    IS the emergency fund from the user's point of view, so a separate Savings
-    page was two names for one idea.
+    This tab shows the emergency fund only: its runway, its target and its own
+    card. Every other savings fund, and the "New savings fund" form, lives on
+    the Current Funds tab.
   */}}
   <section role="tabpanel" id="panel-emergency" aria-labelledby="tab-emergency" tabindex="0">
     <div class="panel-frame">

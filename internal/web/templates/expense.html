@@ -21,7 +21,8 @@
       <strong>Recurring</strong> for something that repeats, like a
       subscription. Set how often — days, weeks or months — and YABA
       records it for you automatically from then on, catching up on anything
-      owed each time you open the page.</span></li>
+      owed each time you open the page. Edit or cancel one from
+      <em>Your recurring expenses</em> at the bottom of this page.</span></li>
     <li>{{template "icon" "check-circle"}}
       <span><strong>What?</strong> is the category, and it drives the spending
       chart. Who, Where and Why are optional — handy if you look back in a
@@ -416,6 +417,102 @@
         });
       </script>
     </form>
+  </div>
+  {{end}}
+
+  {{if .RecurringExpenses}}
+  {{/*
+    Every recurring expense in this budget, editable or cancellable here --
+    the same shape as the recurring income list on Add Income. Cancelling
+    stops future charges and keeps everything already recorded; there is no
+    resume, deliberately, for the same reason as income.
+  */}}
+  <div class="card" id="recurring-expenses">
+    <h2>Your recurring expenses ({{len .RecurringExpenses}})</h2>
+    <ul class="recurring-list">
+      {{range .RecurringExpenses}}
+      <li class="recurring-item recurring-item-expense{{if not .Active}} recurring-item-inactive{{end}}">
+        <div class="recurring-head">
+          <h3>
+            {{.Label}}
+            {{if .Essential}}<span class="tag tag-essential">essential</span>{{end}}
+            {{with .BucketName}}<span class="tag tag-bucket">{{.}}</span>{{end}}
+          </h3>
+          <p>
+            {{money .Amount}} &middot; {{frequencyLabel .FrequencyN .FrequencyUnit}}
+            {{if not .Active}} &middot; <span class="tag">cancelled</span>{{end}}
+          </p>
+          {{if .Active}}<p class="stat-note">Next due {{dateName .NextDueDate}}</p>{{end}}
+        </div>
+
+        {{if .Active}}
+        <details class="bucket-settings">
+          <summary>Edit</summary>
+          <form method="POST" action="/expense/recurring/{{.ID}}/edit" class="row-form">
+            {{template "csrf" $}}
+            <div class="field">
+              <label for="relabel-{{.ID}}">What?</label>
+              <input id="relabel-{{.ID}}" name="label" type="text" value="{{.Label}}" required maxlength="60">
+            </div>
+            <div class="field">
+              <label for="reamt-{{.ID}}">Amount</label>
+              <div class="input-money">
+                <span class="input-prefix" aria-hidden="true">$</span>
+                <input id="reamt-{{.ID}}" name="amount" type="number" step="0.01" min="0.01"
+                       inputmode="decimal" value="{{amount .Amount}}" required>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="field">
+                <label for="refreqn-{{.ID}}">Repeat every</label>
+                <input id="refreqn-{{.ID}}" name="frequency_n" type="number" min="1" max="365"
+                       inputmode="numeric" value="{{.FrequencyN}}">
+              </div>
+              <div class="field">
+                <label for="refrequ-{{.ID}}" class="visually-hidden">Days, weeks or months</label>
+                <select id="refrequ-{{.ID}}" name="frequency_unit">
+                  <option value="day" {{if eq .FrequencyUnit "day"}}selected{{end}}>Day(s)</option>
+                  <option value="week" {{if eq .FrequencyUnit "week"}}selected{{end}}>Week(s)</option>
+                  <option value="month" {{if eq .FrequencyUnit "month"}}selected{{end}}>Month(s)</option>
+                </select>
+              </div>
+            </div>
+            {{if $.Buckets}}
+            <div class="field">
+              <label for="rebucket-{{.ID}}">Pays towards</label>
+              <select id="rebucket-{{.ID}}" name="bucket_id">
+                <option value="">Nothing recurring</option>
+                {{$ref := .BucketRef}}
+                {{range $.Buckets}}
+                <option value="{{.ID}}" {{if eq .ID $ref}}selected{{end}}>{{.Name}}</option>
+                {{end}}
+              </select>
+            </div>
+            {{end}}
+            <fieldset class="field">
+              <legend>Essential?</legend>
+              <div class="radio-row">
+                <label class="radio">
+                  <input type="radio" name="essential" value="yes" {{if .Essential}}checked{{end}}> Yes
+                </label>
+                <label class="radio">
+                  <input type="radio" name="essential" value="no" {{if not .Essential}}checked{{end}}> No
+                </label>
+              </div>
+            </fieldset>
+            <button type="submit" class="btn btn-small btn-primary">Save</button>
+          </form>
+
+          <form method="POST" action="/expense/recurring/{{.ID}}/cancel" class="inline-form danger-form"
+                data-confirm="Cancel &quot;{{.Label}}&quot;? Expenses it already recorded are kept.">
+            {{template "csrf" $}}
+            <button type="submit" class="btn btn-small btn-danger">Cancel</button>
+          </form>
+        </details>
+        {{end}}
+      </li>
+      {{end}}
+    </ul>
   </div>
   {{end}}
 
