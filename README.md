@@ -216,7 +216,7 @@ is ever logged.
 ## Backup and restore
 
 Backups exist and run by default. `YABA_BACKUP_DIR` (default: platform-dependent, see
-`-h`) receives a verified snapshot every `YABA_BACKUP_EVERY` (default 6h), keeping
+`-h`) receives a verified snapshot every `YABA_BACKUP_EVERY` (default 24h), keeping
 `YABA_BACKUP_KEEP` (default 14). A snapshot is also taken immediately before any
 pending migration, and if that backup fails the migration is not attempted.
 
@@ -229,11 +229,11 @@ table is rejected rather than stored as if it were good.
 ./yaba backup -list -dir /var/backups/yaba
 
 # check a snapshot without touching the live database
-./yaba restore -check -from /var/backups/yaba/yaba-2026-09-17T06-00-00.db
+./yaba restore -check -from /var/backups/yaba/yaba-20260917-060000Z.db
 
 # put one back (stop the server first)
 systemctl stop yaba
-./yaba restore -from /var/backups/yaba/yaba-2026-09-17T06-00-00.db -db /var/lib/yaba/yaba.db
+./yaba restore -from /var/backups/yaba/yaba-20260917-060000Z.db -db /var/lib/yaba/yaba.db
 systemctl start yaba
 ```
 
