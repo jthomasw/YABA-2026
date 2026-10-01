@@ -35,6 +35,7 @@
 *.prof
 coverage.out
 coverage.html
+.gocache/
 
 # Local configuration. YABA_SESSION_KEY belongs here, never in a commit.
 .env
