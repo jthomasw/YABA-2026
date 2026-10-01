@@ -2614,14 +2614,41 @@ func (s *Store) CreateBucket(ctx context.Context, sc Scope, n NewBucket) (int64,
 	return id, err
 }
 
-// InitializeBudget records an opening balance and the user's existing monthly
-// expense plan together, so a failed setup cannot leave only half of it saved.
-func (s *Store) InitializeBudget(ctx context.Context, sc Scope, startingBalance, monthlyExpenses Cents) error {
-	if startingBalance < 0 || monthlyExpenses < 0 {
+type SetupRecurringExpense struct {
+	Name          string
+	Amount        Cents
+	FrequencyN    int
+	FrequencyUnit string
+	StartDate     string
+	Essential     bool
+}
+
+// InitializeBudget records an opening balance and the user's recurring
+// expenses together, so a failed setup cannot leave only part of it saved.
+func (s *Store) InitializeBudget(ctx context.Context, sc Scope, startingBalance Cents, expenses []SetupRecurringExpense) error {
+	if startingBalance < 0 {
 		return errors.New("setup amounts cannot be negative")
 	}
 
 	today := Today()
+	for i := range expenses {
+		expenses[i].Name = cleanLabel(expenses[i].Name)
+		if expenses[i].Name == "" {
+			return errors.New("a recurring expense needs a name")
+		}
+		if expenses[i].Amount <= 0 {
+			return errors.New("a recurring expense needs an amount greater than zero")
+		}
+		if ok, msg := ValidFrequency(expenses[i].FrequencyN, expenses[i].FrequencyUnit); !ok {
+			return fmt.Errorf("invalid recurring frequency: %s", msg)
+		}
+		startDate, err := ParseDate(expenses[i].StartDate)
+		if err != nil {
+			return err
+		}
+		expenses[i].StartDate = startDate
+	}
+
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if startingBalance > 0 {
 			res, err := tx.ExecContext(ctx, `
@@ -2642,21 +2669,17 @@ func (s *Store) InitializeBudget(ctx context.Context, sc Scope, startingBalance,
 			}
 		}
 
-		if monthlyExpenses > 0 {
-			var priority int
-			if err := tx.QueryRowContext(ctx, `
-				SELECT IFNULL(MAX(priority), -1) + 1
-				FROM expense_buckets
-				WHERE household_id = ? AND archived_at IS NULL`,
-				sc.HouseholdID).Scan(&priority); err != nil {
-				return fmt.Errorf("choose setup expense priority: %w", err)
-			}
+		for _, expense := range expenses {
 			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO expense_buckets
-					(household_id, user_id, name, priority, cost_kind, fixed_cents, essential)
-				VALUES (?, ?, 'Existing recurring expenses', ?, 'fixed', ?, 0)`,
-				sc.HouseholdID, sc.UserID, priority, int64(monthlyExpenses)); err != nil {
-				return fmt.Errorf("record existing recurring expenses: %w", err)
+				INSERT INTO recurring_expense (
+					household_id, user_id, label, amount_cents, essential,
+					frequency_n, frequency_unit, start_date, next_due_date
+				)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				sc.HouseholdID, sc.UserID, expense.Name, int64(expense.Amount),
+				boolToInt(expense.Essential), expense.FrequencyN, expense.FrequencyUnit,
+				expense.StartDate, expense.StartDate); err != nil {
+				return fmt.Errorf("record recurring expense %q: %w", expense.Name, err)
 			}
 		}
 

@@ -44,8 +44,19 @@ type setupView struct {
 	view
 	Error           string
 	StartingBalance string
-	MonthlyExpenses string
+	Expenses        []setupExpenseView
+	ExpenseCount    int
 	FormToken       string
+}
+
+type setupExpenseView struct {
+	Index         int
+	Name          string
+	Amount        string
+	FrequencyN    string
+	FrequencyUnit string
+	NextDueDate   string
+	Essential     bool
 }
 
 func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
@@ -218,7 +229,9 @@ func (s *Server) handleRegisterSubmit(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	s.renderSetup(w, r, http.StatusOK, setupView{
-		FormToken: s.issueFormToken(r, "setup"),
+		Expenses:     defaultSetupExpenses(),
+		ExpenseCount: 2,
+		FormToken:    s.issueFormToken(r, "setup"),
 	})
 }
 
@@ -230,9 +243,18 @@ func (s *Server) handleSetupSubmit(w http.ResponseWriter, r *http.Request) {
 	user := mustUser(r)
 	v := setupView{
 		StartingBalance: strings.TrimSpace(r.PostFormValue("starting_balance")),
-		MonthlyExpenses: strings.TrimSpace(r.PostFormValue("monthly_expenses")),
 		FormToken:       strings.TrimSpace(r.PostFormValue("form_token")),
 	}
+	count, err := strconv.Atoi(r.PostFormValue("expense_count"))
+	if err != nil || count < 0 || count > 20 {
+		count = 2
+		v.Error = "Please reload setup and try again."
+		v.Expenses = defaultSetupExpenses()
+		v.ExpenseCount = 2
+		s.renderSetup(w, r, http.StatusBadRequest, v)
+		return
+	}
+	v.ExpenseCount = count
 	showError := func(message string) {
 		v.Error = message
 		s.renderSetup(w, r, http.StatusBadRequest, v)
@@ -243,21 +265,85 @@ func (s *Server) handleSetupSubmit(w http.ResponseWriter, r *http.Request) {
 		showError("Enter a valid starting balance, or leave it blank.")
 		return
 	}
-	monthlyExpenses, err := setupAmount(v.MonthlyExpenses)
-	if err != nil {
-		showError("Enter a valid monthly expense amount, or leave it blank.")
-		return
+	expenses := make([]store.SetupRecurringExpense, 0, count)
+	for i := 0; i < count; i++ {
+		expense := setupExpenseView{
+			Index:         i,
+			Name:          strings.TrimSpace(r.PostFormValue(fmt.Sprintf("expense_name_%d", i))),
+			Amount:        strings.TrimSpace(r.PostFormValue(fmt.Sprintf("expense_amount_%d", i))),
+			FrequencyN:    strings.TrimSpace(r.PostFormValue(fmt.Sprintf("expense_frequency_n_%d", i))),
+			FrequencyUnit: strings.TrimSpace(r.PostFormValue(fmt.Sprintf("expense_frequency_unit_%d", i))),
+			NextDueDate:   strings.TrimSpace(r.PostFormValue(fmt.Sprintf("expense_start_date_%d", i))),
+			Essential:     r.PostFormValue(fmt.Sprintf("expense_essential_%d", i)) != "no",
+		}
+		if expense.FrequencyN == "" {
+			expense.FrequencyN = "1"
+		}
+		if expense.FrequencyUnit == "" {
+			expense.FrequencyUnit = "month"
+		}
+		if expense.NextDueDate == "" {
+			expense.NextDueDate = store.Today()
+		}
+		v.Expenses = append(v.Expenses, expense)
+	}
+
+	for _, expense := range v.Expenses {
+		if expense.Name == "" && expense.Amount == "" {
+			continue
+		}
+		if expense.Name == "" {
+			showError(fmt.Sprintf("Enter a name for recurring expense %d.", expense.Index+1))
+			return
+		}
+		amount, err := money.ParsePositive(expense.Amount)
+		if err != nil {
+			showError(fmt.Sprintf("Enter a valid amount for %q.", expense.Name))
+			return
+		}
+		frequencyN, frequencyUnit, errMsg := setupRecurringFrequency(expense)
+		if errMsg != "" {
+			showError(fmt.Sprintf("%s (%s)", errMsg, expense.Name))
+			return
+		}
+		startDate, err := store.ParseDate(expense.NextDueDate)
+		if err != nil {
+			showError(fmt.Sprintf("Enter a valid next due date for %q.", expense.Name))
+			return
+		}
+		expenses = append(expenses, store.SetupRecurringExpense{
+			Name: expense.Name, Amount: amount, FrequencyN: frequencyN,
+			FrequencyUnit: frequencyUnit, StartDate: startDate, Essential: expense.Essential,
+		})
 	}
 
 	if s.duplicateSubmit(r, user.ID) {
 		s.redirectSuccess(w, r, "/dashboard", "Welcome to YABA.")
 		return
 	}
-	if err := s.store.InitializeBudget(r.Context(), scopeOf(r), startingBalance, monthlyExpenses); err != nil {
+	if err := s.store.InitializeBudget(r.Context(), scopeOf(r), startingBalance, expenses); err != nil {
 		s.serverError(w, r, err)
 		return
 	}
 	s.redirectSuccess(w, r, "/dashboard", "Welcome to YABA.")
+}
+
+func defaultSetupExpenses() []setupExpenseView {
+	return []setupExpenseView{
+		{Index: 0, FrequencyN: "1", FrequencyUnit: "month", NextDueDate: store.Today(), Essential: true},
+		{Index: 1, FrequencyN: "1", FrequencyUnit: "month", NextDueDate: store.Today(), Essential: true},
+	}
+}
+
+func setupRecurringFrequency(expense setupExpenseView) (int, string, string) {
+	n, err := strconv.Atoi(expense.FrequencyN)
+	if err != nil {
+		return 0, "", "Enter a valid recurring frequency."
+	}
+	if ok, message := store.ValidFrequency(n, expense.FrequencyUnit); !ok {
+		return 0, "", message
+	}
+	return n, expense.FrequencyUnit, ""
 }
 
 func setupAmount(raw string) (money.Cents, error) {

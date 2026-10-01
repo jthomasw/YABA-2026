@@ -7,7 +7,7 @@
     </div>
 
     <h1 class="auth-title">Set up your budget</h1>
-    <p class="auth-sub">A couple of numbers will give your dashboard a useful starting point.</p>
+    <p class="auth-sub">Add your starting balance and any bills you already pay regularly.</p>
 
     {{with .Error}}
     <p class="auth-error" role="alert">
@@ -18,27 +18,148 @@
     <form method="POST" action="/setup" novalidate>
       {{template "csrf" .}}
       {{if .FormToken}}<input type="hidden" name="form_token" value="{{.FormToken}}">{{end}}
+      <input type="hidden" name="expense_count" value="{{.ExpenseCount}}" data-expense-count>
 
-      <div class="float-field">
-        <input id="starting-balance" name="starting_balance" type="number" placeholder=" "
-               min="0" step="0.01" inputmode="decimal" value="{{.StartingBalance}}">
+      <div class="field">
         <label for="starting-balance">How much are you starting with?</label>
+        <input id="starting-balance" name="starting_balance" type="number"
+               min="0" step="0.01" inputmode="decimal" value="{{.StartingBalance}}">
+        <p class="hint">Leave blank or enter 0 if you are not sure yet.</p>
       </div>
-      <p class="auth-hint">This will be recorded as your starting balance. Leave blank or enter 0 if you are not sure yet.</p>
 
-      <div class="float-field">
-        <input id="monthly-expenses" name="monthly_expenses" type="number" placeholder=" "
-               min="0" step="0.01" inputmode="decimal" value="{{.MonthlyExpenses}}">
-        <label for="monthly-expenses">How much are your recurring expenses each month?</label>
+      <h2>Recurring expenses</h2>
+      <p class="hint">Add each bill separately so you can track its name, amount and schedule. These are schedules, not payments.</p>
+
+      <div data-expense-rows>
+        {{range .Expenses}}
+        <fieldset class="field setup-expense">
+          <legend>Recurring expense {{add .Index 1}}</legend>
+          <div class="field">
+            <label for="setup-expense-name-{{.Index}}">Name</label>
+            <input id="setup-expense-name-{{.Index}}" name="expense_name_{{.Index}}"
+                   type="text" maxlength="60" value="{{.Name}}" placeholder="Rent, phone bill…">
+          </div>
+          <div class="field">
+            <label for="setup-expense-amount-{{.Index}}">Amount each time</label>
+            <input id="setup-expense-amount-{{.Index}}" name="expense_amount_{{.Index}}"
+                   type="number" min="0.01" step="0.01" inputmode="decimal"
+                   value="{{.Amount}}" placeholder="0.00">
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="setup-expense-frequency-{{.Index}}">Repeat every</label>
+              <input id="setup-expense-frequency-{{.Index}}" name="expense_frequency_n_{{.Index}}"
+                     type="number" min="1" max="120" value="{{.FrequencyN}}" inputmode="numeric">
+            </div>
+            <div class="field">
+              <label for="setup-expense-unit-{{.Index}}">Unit</label>
+              <select id="setup-expense-unit-{{.Index}}" name="expense_frequency_unit_{{.Index}}">
+                <option value="day" {{if eq .FrequencyUnit "day"}}selected{{end}}>Days</option>
+                <option value="week" {{if eq .FrequencyUnit "week"}}selected{{end}}>Weeks</option>
+                <option value="month" {{if eq .FrequencyUnit "month"}}selected{{end}}>Months</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label for="setup-expense-date-{{.Index}}">Next due date</label>
+            <input id="setup-expense-date-{{.Index}}" name="expense_start_date_{{.Index}}"
+                   type="date" value="{{.NextDueDate}}" max="2200-12-31">
+          </div>
+          <div class="field">
+            <label for="setup-expense-essential-{{.Index}}">Is it essential?</label>
+            <select id="setup-expense-essential-{{.Index}}" name="expense_essential_{{.Index}}">
+              <option value="yes" {{if .Essential}}selected{{end}}>Yes — a need</option>
+              <option value="no" {{if not .Essential}}selected{{end}}>No — a want</option>
+            </select>
+          </div>
+        </fieldset>
+        {{end}}
       </div>
-      <p class="auth-hint">This creates one monthly planning bucket called “Existing recurring expenses,” not a payment. You can rename or change it later.</p>
 
-      <button type="submit" class="btn-auth">Finish setup</button>
+      <button type="button" class="btn btn-quiet" data-add-setup-expense>Add another expense</button>
+      <p class="hint" data-expense-limit hidden>You can add up to 20 recurring expenses.</p>
+      <div class="form-actions">
+        <button type="submit" class="btn-auth">Finish setup</button>
+      </div>
     </form>
 
     <p class="auth-alt"><a href="/dashboard">Skip for now</a></p>
   </div>
 
-  <p class="auth-foot"><a href="/about">What is YABA?</a></p>
+  <template id="setup-expense-template">
+    <fieldset class="field setup-expense">
+      <legend>Recurring expense __INDEX_LABEL__</legend>
+      <div class="field">
+        <label for="setup-expense-name-__INDEX__">Name</label>
+        <input id="setup-expense-name-__INDEX__" name="expense_name___INDEX__"
+               type="text" maxlength="60" placeholder="Rent, phone bill…">
+      </div>
+      <div class="field">
+        <label for="setup-expense-amount-__INDEX__">Amount each time</label>
+        <input id="setup-expense-amount-__INDEX__" name="expense_amount___INDEX__"
+               type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="setup-expense-frequency-__INDEX__">Repeat every</label>
+          <input id="setup-expense-frequency-__INDEX__" name="expense_frequency_n___INDEX__"
+                 type="number" min="1" max="120" value="1" inputmode="numeric">
+        </div>
+        <div class="field">
+          <label for="setup-expense-unit-__INDEX__">Unit</label>
+          <select id="setup-expense-unit-__INDEX__" name="expense_frequency_unit___INDEX__">
+            <option value="day">Days</option>
+            <option value="week">Weeks</option>
+            <option value="month" selected>Months</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="setup-expense-date-__INDEX__">Next due date</label>
+        <input id="setup-expense-date-__INDEX__" name="expense_start_date___INDEX__"
+               type="date" value="{{.Now}}" max="2200-12-31">
+      </div>
+      <div class="field">
+        <label for="setup-expense-essential-__INDEX__">Is it essential?</label>
+        <select id="setup-expense-essential-__INDEX__" name="expense_essential___INDEX__">
+          <option value="yes" selected>Yes — a need</option>
+          <option value="no">No — a want</option>
+        </select>
+      </div>
+    </fieldset>
+  </template>
+
+  <script>
+    (function () {
+      var rows = document.querySelector("[data-expense-rows]");
+      var count = document.querySelector("[data-expense-count]");
+      var add = document.querySelector("[data-add-setup-expense]");
+      var template = document.getElementById("setup-expense-template");
+      var limit = document.querySelector("[data-expense-limit]");
+      if (!rows || !count || !add || !template) return;
+      add.addEventListener("click", function () {
+        var index = Number(count.value);
+        if (index >= 20) {
+          limit.hidden = false;
+          add.disabled = true;
+          return;
+        }
+        var item = template.content.cloneNode(true);
+        item.querySelectorAll("[id], [for], [name]").forEach(function (el) {
+          ["id", "for", "name"].forEach(function (attribute) {
+            var value = el.getAttribute(attribute);
+            if (value) el.setAttribute(attribute, value.replace(/__INDEX__/g, index).replace(/__INDEX_LABEL__/g, index + 1));
+          });
+        });
+        item.querySelector("legend").textContent = "Recurring expense " + (index + 1);
+        rows.appendChild(item);
+        count.value = index + 1;
+        if (index + 1 >= 20) {
+          limit.hidden = false;
+          add.disabled = true;
+        }
+      });
+    })();
+  </script>
 </div>
 {{end}}
