@@ -2614,6 +2614,56 @@ func (s *Store) CreateBucket(ctx context.Context, sc Scope, n NewBucket) (int64,
 	return id, err
 }
 
+// InitializeBudget records an opening balance and the user's existing monthly
+// expense plan together, so a failed setup cannot leave only half of it saved.
+func (s *Store) InitializeBudget(ctx context.Context, sc Scope, startingBalance, monthlyExpenses Cents) error {
+	if startingBalance < 0 || monthlyExpenses < 0 {
+		return errors.New("setup amounts cannot be negative")
+	}
+
+	today := Today()
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if startingBalance > 0 {
+			res, err := tx.ExecContext(ctx, `
+				INSERT INTO transactions
+					(household_id, user_id, kind, label, amount_cents, occurred_on)
+				VALUES (?, ?, 'income', 'Starting balance', ?, ?)`,
+				sc.HouseholdID, sc.UserID, int64(startingBalance), today)
+			if err != nil {
+				return fmt.Errorf("record starting balance: %w", err)
+			}
+			id, err := res.LastInsertId()
+			if err != nil {
+				return err
+			}
+			if err := recordAudit(ctx, tx, sc, "created", "transaction", id,
+				fmt.Sprintf("Starting balance %s on %s", startingBalance.Display(), today)); err != nil {
+				return err
+			}
+		}
+
+		if monthlyExpenses > 0 {
+			var priority int
+			if err := tx.QueryRowContext(ctx, `
+				SELECT IFNULL(MAX(priority), -1) + 1
+				FROM expense_buckets
+				WHERE household_id = ? AND archived_at IS NULL`,
+				sc.HouseholdID).Scan(&priority); err != nil {
+				return fmt.Errorf("choose setup expense priority: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO expense_buckets
+					(household_id, user_id, name, priority, cost_kind, fixed_cents, essential)
+				VALUES (?, ?, 'Existing recurring expenses', ?, 'fixed', ?, 0)`,
+				sc.HouseholdID, sc.UserID, priority, int64(monthlyExpenses)); err != nil {
+				return fmt.Errorf("record existing recurring expenses: %w", err)
+			}
+		}
+
+		return nil
+	})
+}
+
 // UpdateBucket edits a bucket in place.
 func (s *Store) UpdateBucket(ctx context.Context, sc Scope, bucketID int64, n NewBucket) error {
 	if err := n.normalise(); err != nil {

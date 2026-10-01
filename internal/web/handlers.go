@@ -40,6 +40,14 @@ type registerView struct {
 	Email string
 }
 
+type setupView struct {
+	view
+	Error           string
+	StartingBalance string
+	MonthlyExpenses string
+	FormToken       string
+}
+
 func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
 	if s.signedIn(r) {
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
@@ -205,7 +213,67 @@ func (s *Server) handleRegisterSubmit(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	s.redirectSuccess(w, r, "/dashboard", "Welcome to YABA. Add some income to get started.")
+	http.Redirect(w, r, "/setup", http.StatusSeeOther)
+}
+
+func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
+	s.renderSetup(w, r, http.StatusOK, setupView{
+		FormToken: s.issueFormToken(r, "setup"),
+	})
+}
+
+func (s *Server) handleSetupSubmit(w http.ResponseWriter, r *http.Request) {
+	if !s.parseForm(w, r) {
+		return
+	}
+
+	user := mustUser(r)
+	v := setupView{
+		StartingBalance: strings.TrimSpace(r.PostFormValue("starting_balance")),
+		MonthlyExpenses: strings.TrimSpace(r.PostFormValue("monthly_expenses")),
+		FormToken:       strings.TrimSpace(r.PostFormValue("form_token")),
+	}
+	showError := func(message string) {
+		v.Error = message
+		s.renderSetup(w, r, http.StatusBadRequest, v)
+	}
+
+	startingBalance, err := setupAmount(v.StartingBalance)
+	if err != nil {
+		showError("Enter a valid starting balance, or leave it blank.")
+		return
+	}
+	monthlyExpenses, err := setupAmount(v.MonthlyExpenses)
+	if err != nil {
+		showError("Enter a valid monthly expense amount, or leave it blank.")
+		return
+	}
+
+	if s.duplicateSubmit(r, user.ID) {
+		s.redirectSuccess(w, r, "/dashboard", "Welcome to YABA.")
+		return
+	}
+	if err := s.store.InitializeBudget(r.Context(), scopeOf(r), startingBalance, monthlyExpenses); err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	s.redirectSuccess(w, r, "/dashboard", "Welcome to YABA.")
+}
+
+func setupAmount(raw string) (money.Cents, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	amount, err := money.Parse(raw)
+	if err != nil || amount < 0 {
+		return 0, money.ErrInvalidAmount
+	}
+	return amount, nil
+}
+
+func (s *Server) renderSetup(w http.ResponseWriter, r *http.Request, status int, v setupView) {
+	v.view = s.baseView(w, r, "Set up your budget", "setup")
+	s.renderStatus(w, r, status, "setup.html", v)
 }
 
 // loginLimit is the pair of counters guarding one password attempt.

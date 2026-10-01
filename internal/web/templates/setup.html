@@ -1,0 +1,44 @@
+{{define "content"}}
+<div class="auth-wrapper">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <span class="auth-mark" aria-hidden="true">Y</span>
+      <span class="auth-wordmark">YABA</span>
+    </div>
+
+    <h1 class="auth-title">Set up your budget</h1>
+    <p class="auth-sub">A couple of numbers will give your dashboard a useful starting point.</p>
+
+    {{with .Error}}
+    <p class="auth-error" role="alert">
+      <span class="auth-error-mark" aria-hidden="true">!</span><span>{{.}}</span>
+    </p>
+    {{end}}
+
+    <form method="POST" action="/setup" novalidate>
+      {{template "csrf" .}}
+      {{if .FormToken}}<input type="hidden" name="form_token" value="{{.FormToken}}">{{end}}
+
+      <div class="float-field">
+        <input id="starting-balance" name="starting_balance" type="number" placeholder=" "
+               min="0" step="0.01" inputmode="decimal" value="{{.StartingBalance}}">
+        <label for="starting-balance">How much are you starting with?</label>
+      </div>
+      <p class="auth-hint">This will be recorded as your starting balance. Leave blank or enter 0 if you are not sure yet.</p>
+
+      <div class="float-field">
+        <input id="monthly-expenses" name="monthly_expenses" type="number" placeholder=" "
+               min="0" step="0.01" inputmode="decimal" value="{{.MonthlyExpenses}}">
+        <label for="monthly-expenses">How much are your recurring expenses each month?</label>
+      </div>
+      <p class="auth-hint">This creates one monthly planning bucket called “Existing recurring expenses,” not a payment. You can rename or change it later.</p>
+
+      <button type="submit" class="btn-auth">Finish setup</button>
+    </form>
+
+    <p class="auth-alt"><a href="/dashboard">Skip for now</a></p>
+  </div>
+
+  <p class="auth-foot"><a href="/about">What is YABA?</a></p>
+</div>
+{{end}}

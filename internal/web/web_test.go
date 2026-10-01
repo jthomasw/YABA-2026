@@ -955,15 +955,15 @@ func TestSignupRequiresTheConfirmStep(t *testing.T) {
 		t.Fatal("a mismatched confirmation must not create the account")
 	}
 
-	// A matching one creates it and signs the user straight in.
+	// A matching one creates it and sends the signed-in user to setup.
 	rec := rig.do("POST", "/register", url.Values{
 		"csrf_token": {rig.csrf("/register")},
 		"email":      {"fresh@example.com"},
 		"password":   {"longenough123"},
 		"confirm":    {"longenough123"},
 	})
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/dashboard" {
-		t.Fatalf("status %d -> %q, want 303 -> /dashboard", rec.Code, rec.Header().Get("Location"))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
+		t.Fatalf("status %d -> %q, want 303 -> /setup", rec.Code, rec.Header().Get("Location"))
 	}
 	if exists, _ := rig.store.EmailExists(context.Background(), "fresh@example.com"); !exists {
 		t.Error("the account should now exist")
@@ -2479,13 +2479,8 @@ func TestUnknownEmailIsAnsweredInRedOnThePage(t *testing.T) {
 
 }
 
-// TestSignupActuallySignsTheUserIn follows the redirect the way a browser does.
-//
-// The rig above keeps every cookie a response sets and sends them all back, and
-// Go's request.Cookie returns the first match -- which hid a bug for months:
-// signup issued two yaba_session cookies, and the second one, written by the
-// welcome flash, had no session id. A browser keeps the last Set-Cookie for a
-// name, so every new account was bounced straight back to the login page.
+// TestSignupActuallySignsTheUserIn follows signup into the authenticated setup
+// page, completes setup, and checks that the opening values were saved.
 func TestSignupActuallySignsTheUserIn(t *testing.T) {
 	rig := newRig(t)
 
@@ -2497,6 +2492,9 @@ func TestSignupActuallySignsTheUserIn(t *testing.T) {
 	})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("signup: status %d, body %q", rec.Code, extractError(rec.Body.String()))
+	}
+	if got := rec.Header().Get("Location"); got != "/setup" {
+		t.Fatalf("signup redirected to %q, want /setup", got)
 	}
 
 	// Only the last cookie for the name survives, as in a browser.
@@ -2511,13 +2509,72 @@ func TestSignupActuallySignsTheUserIn(t *testing.T) {
 	}
 	rig.cookies = []*http.Cookie{last}
 
-	dash := rig.do("GET", "/dashboard", nil)
-	if dash.Code != http.StatusOK {
-		t.Fatalf("after signup the dashboard answered %d -> %q; the new account is not signed in",
-			dash.Code, dash.Header().Get("Location"))
+	setup := rig.do("GET", "/setup", nil)
+	if setup.Code != http.StatusOK {
+		t.Fatalf("after signup setup answered %d -> %q; the new account is not signed in",
+			setup.Code, setup.Header().Get("Location"))
 	}
-	if !strings.Contains(dash.Body.String(), "Welcome to YABA") {
-		t.Error("the welcome message should be shown on the first dashboard after signup")
+	for _, field := range []string{"starting_balance", "monthly_expenses"} {
+		if !strings.Contains(setup.Body.String(), `name="`+field+`"`) {
+			t.Errorf("setup page is missing %s", field)
+		}
+	}
+
+	formToken := regexp.MustCompile(`name="form_token" value="([^"]+)"`).FindStringSubmatch(setup.Body.String())
+	if formToken == nil {
+		t.Fatal("setup form has no one-time submission token")
+	}
+	finished := rig.do("POST", "/setup", url.Values{
+		"csrf_token":       {rig.csrf("/setup")},
+		"form_token":       {formToken[1]},
+		"starting_balance": {"2500.00"},
+		"monthly_expenses": {"1200.00"},
+	})
+	if finished.Code != http.StatusSeeOther || finished.Header().Get("Location") != "/dashboard" {
+		t.Fatalf("setup: status %d -> %q", finished.Code, finished.Header().Get("Location"))
+	}
+
+	var newUserID int64
+	if err := rig.db.QueryRow(`SELECT id FROM users WHERE email = ?`, "browser@example.com").Scan(&newUserID); err != nil {
+		t.Fatalf("find new user: %v", err)
+	}
+	membership, err := rig.store.ActiveHousehold(context.Background(), store.User{ID: newUserID})
+	if err != nil {
+		t.Fatalf("new user's household: %v", err)
+	}
+	scope := store.Scope{HouseholdID: membership.ID, UserID: newUserID}
+	totals, err := rig.store.Totals(context.Background(), scope, "")
+	if err != nil {
+		t.Fatalf("setup totals: %v", err)
+	}
+	if totals.Income != 250000 {
+		t.Errorf("starting balance recorded as %s, want $2,500.00", totals.Income.Display())
+	}
+	buckets, err := rig.store.Buckets(context.Background(), scope, store.Today()[:7])
+	if err != nil {
+		t.Fatalf("setup buckets: %v", err)
+	}
+	if len(buckets) != 1 || buckets[0].Name != "Existing recurring expenses" || buckets[0].Fixed != 120000 {
+		t.Errorf("setup expense bucket = %+v, want $1,200.00 monthly existing expenses", buckets)
+	}
+	dash := rig.do("GET", "/dashboard", nil)
+	if dash.Code != http.StatusOK || !strings.Contains(dash.Body.String(), "Welcome to YABA") {
+		t.Error("finishing setup should show the welcome message on the dashboard")
+	}
+
+	// Replaying the same form cannot add the starting balance twice.
+	rig.do("POST", "/setup", url.Values{
+		"csrf_token":       {rig.csrf("/setup")},
+		"form_token":       {formToken[1]},
+		"starting_balance": {"2500.00"},
+		"monthly_expenses": {"1200.00"},
+	})
+	totals, err = rig.store.Totals(context.Background(), scope, "")
+	if err != nil {
+		t.Fatalf("totals after repeated submission: %v", err)
+	}
+	if totals.Income != 250000 {
+		t.Errorf("replayed setup changed starting balance to %s", totals.Income.Display())
 	}
 }
 

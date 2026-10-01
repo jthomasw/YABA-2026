@@ -43,7 +43,9 @@ go test ./...
 go run . -db yaba.db -uploads uploads -addr :8000 -backup-dir off
 ```
 
-Then open <http://localhost:8000> and create an account.
+Then open <http://localhost:8000> and create an account. First-time signup continues to
+a short setup page where you can enter your starting balance and existing monthly
+expenses.
 
 Leave `YABA_SECURE_COOKIE` off for local development. A Secure cookie is not sent over
 `http://localhost` at all, so with it on you cannot sign in.
