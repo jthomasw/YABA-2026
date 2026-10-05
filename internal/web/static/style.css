@@ -1307,6 +1307,13 @@ a:hover { text-decoration: underline; }
   font-size: 16px;
   font-family: inherit;
 }
+/* A line the app added (tax, tip, "Other") rather than one read off the
+   receipt: same inputs, set apart so it is never mistaken for a product. */
+.item-row-added input {
+  font-style: italic;
+  border-style: dashed;
+}
+
 .item-tools {
   display: flex;
   flex-wrap: wrap;

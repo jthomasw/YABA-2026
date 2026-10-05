@@ -334,22 +334,51 @@ func TestEstimateMonthlyIncomeNoHistory(t *testing.T) {
 	}
 }
 
-func TestEstimateMonthlyIncomeIgnoresZeroMonths(t *testing.T) {
-	// Two real months of 1000 plus four months of nothing must average 1000,
-	// not 333. A user who joined recently should not see their salary diluted.
+func TestEstimateMonthlyIncomeIgnoresLeadingZeroMonths(t *testing.T) {
+	// Months before the first income are from before the user started
+	// recording. A user who joined recently should not see their salary diluted.
 	series := []store.MonthPoint{
 		{Month: "2026-01"}, {Month: "2026-02"},
 		{Month: "2026-03", Income: 100000},
 		{Month: "2026-04", Income: 100000},
 		{Month: "2026-05", Income: 100000},
-		{Month: "2026-06"},
 	}
 	r := EstimateMonthlyIncome(series)
 	if r.Months != 3 {
-		t.Errorf("Months = %d, want 3 (zero months excluded)", r.Months)
+		t.Errorf("Months = %d, want 3 (leading zero months excluded)", r.Months)
 	}
 	if r.Mean != 100000 {
 		t.Errorf("Mean = %s, want $1,000.00", r.Mean.Display())
+	}
+}
+
+func TestEstimateMonthlyIncomeCountsAMissedPaycheck(t *testing.T) {
+	// A month with no income after income started is real, not missing data.
+	r := EstimateMonthlyIncome(months(100000, 0, 100000, 100000))
+	if r.Months != 4 || r.Mean != 75000 {
+		t.Errorf("Months = %d, Mean = %s; want 4 and $750.00", r.Months, r.Mean.Display())
+	}
+}
+
+func TestExpectedIncomeLeavesOutTheUnfinishedMonth(t *testing.T) {
+	// The last month is this one: payday has not come yet.
+	r := ExpectedIncome(months(100000, 100000, 100000, 20000))
+	if r.Months != 3 || r.Mean != 100000 {
+		t.Errorf("Months = %d, Mean = %s; want 3 and $1,000.00", r.Months, r.Mean.Display())
+	}
+	// Only this month has income: it is all there is to go on.
+	if r := ExpectedIncome(months(0, 0, 50000)); r.Months != 1 || r.Mean != 50000 {
+		t.Errorf("a brand-new user: %+v", r)
+	}
+}
+
+func TestIncomeRangeIsAPredictionIntervalNotTheMeans(t *testing.T) {
+	// Five months spread $800..$1,200 (sd ~ $158). One future month can land
+	// well outside mean +/- 1.645*sd/sqrt(5) (~ $116); the interval must cover
+	// the single-month spread, about mean +/- 1.645*sd*sqrt(1.2) (~ $285).
+	r := EstimateMonthlyIncome(months(80000, 100000, 120000, 90000, 110000))
+	if r.High-r.Mean < 25000 {
+		t.Errorf("interval %s..%s is the mean's, too narrow for one month", r.Low.Display(), r.High.Display())
 	}
 }
 
@@ -510,6 +539,23 @@ func TestFitTrendProducesOneValuePerPoint(t *testing.T) {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			t.Errorf("Values[%d] is not a number: %v", i, v)
 		}
+	}
+}
+
+func TestFitTrendUsesDatesNotPointCount(t *testing.T) {
+	// $0 -> $100 over one day, then flat for 99 days. By index that is a
+	// steep climb (two of three steps rising); by date it is nearly flat.
+	pts := []store.Point{
+		{Date: "2026-01-01", Balance: 0},
+		{Date: "2026-01-02", Balance: 10000},
+		{Date: "2026-04-11", Balance: 10000},
+	}
+	tr := FitTrend(pts)
+	if !tr.OK {
+		t.Fatal("should fit")
+	}
+	if tr.PerStep > 100 { // cents per day
+		t.Errorf("PerStep = %v cents/day; the dates were ignored", tr.PerStep)
 	}
 }
 
@@ -675,5 +721,74 @@ func TestAllocationSummaryClampsAndReports(t *testing.T) {
 	}
 	if p := empty.Progress(); p != 0 {
 		t.Errorf("Progress with no requirement = %v, want 0", p)
+	}
+}
+
+// TestMonthOnMonthIgnoresTheMonthInProgress: on the 3rd, three days of spending
+// against a whole previous month used to read as "Spending is down 85%". The
+// comparison is between the last two complete months, and says which.
+func TestMonthOnMonthIgnoresTheMonthInProgress(t *testing.T) {
+	tests := []struct {
+		name   string
+		months []store.MonthPoint
+		want   string // "" for no month-on-month observation
+	}{
+		{
+			name: "partial current month is not compared",
+			months: []store.MonthPoint{
+				{Month: "2026-08", Expense: 200000},
+				{Month: "2026-09", Expense: 210000},
+				{Month: "2026-10", Expense: 15000}, // the 3rd of October
+			},
+			want: "",
+		},
+		{
+			name: "complete months that rose",
+			months: []store.MonthPoint{
+				{Month: "2026-08", Expense: 100000},
+				{Month: "2026-09", Expense: 150000},
+				{Month: "2026-10", Expense: 1000},
+			},
+			want: "Spending in September was up 50% ($500.00) on August.",
+		},
+		{
+			name: "complete months that fell",
+			months: []store.MonthPoint{
+				{Month: "2026-08", Expense: 200000},
+				{Month: "2026-09", Expense: 100000},
+				{Month: "2026-10", Expense: 900000},
+			},
+			want: "Spending in September was down 50% ($1,000.00) on August.",
+		},
+		{
+			name: "only one complete month",
+			months: []store.MonthPoint{
+				{Month: "2026-09", Expense: 100000},
+				{Month: "2026-10", Expense: 1000},
+			},
+			want: "",
+		},
+		{
+			name: "series that has not reached the current month",
+			months: []store.MonthPoint{
+				{Month: "2026-08", Expense: 100000},
+				{Month: "2026-09", Expense: 200000},
+			},
+			want: "Spending in September was up 100% ($1,000.00) on August.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obs := ObservationsAsOf(store.Totals{}, 0, 0, nil, tt.months, "2026-10")
+			var got string
+			for _, o := range obs {
+				if strings.HasPrefix(o.Text, "Spending in ") {
+					got = o.Text
+				}
+			}
+			if got != tt.want {
+				t.Errorf("month-on-month = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

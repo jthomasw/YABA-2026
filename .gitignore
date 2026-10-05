@@ -9,16 +9,25 @@
 *.db
 *.db-shm
 *.db-wal
+*.db.lock
 *.sqlite
 *.sqlite3
 
 # Uploaded receipts belong to whoever is running the app, not in the repo.
+# Matched at any depth, because the default is relative to wherever the server
+# was started. Safe today: no source directory is called "uploads". Do not name
+# a Go package that.
 /uploads/
+uploads/
 
-# Snapshots live outside the project by default, but `yaba restore` moves the
-# database it replaces aside next to the original, and that copy is real data.
+# Snapshots default to a "backups" directory beside the database, and `yaba
+# restore` moves the database it replaces aside next to the original. All of it
+# is real data: receipts archives, set-aside databases, preserved pre-empty
+# snapshots and release tarballs included.
 *.before-restore-*
 /backups/
+*-uploads.zip
+.yaba-*.tgz
 
 # Build output
 *.exe
@@ -29,6 +38,8 @@
 *.out
 /YABA-2026
 /yaba
+/yaba-server
+/yaba-cli
 
 # Go test and coverage artefacts
 *.test
@@ -36,9 +47,12 @@
 coverage.out
 coverage.html
 
-# Local configuration. YABA_SESSION_KEY belongs here, never in a commit.
+# Local configuration. YABA_SESSION_KEY and YABA_GEMINI_KEY belong here, never
+# in a commit. .env.example is the one exception, and holds no real values.
 .env
 .env.local
+.env.*
+!.env.example
 
 # Editors and OS
 .DS_Store

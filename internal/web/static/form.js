@@ -5,8 +5,9 @@
  * Switching type relabels the description field and hides the expense-only ones.
  *
  * Everything degrades. With JavaScript off the server picks the right labels from
- * ?type=, all fields stay visible, the handler ignores an essential flag on an
- * income row, and the single blank line-item row still submits.
+ * ?type=, all fields stay visible, the handler ignores an essential flag and
+ * any line items on an income row, and the single blank line-item row still
+ * submits.
  */
 (function () {
   "use strict";
@@ -26,6 +27,15 @@
       var isIncome = incomeRadio.checked;
 
       expenseOnly.forEach(function (el) { el.hidden = isIncome; });
+
+      // Hiding is not enough for the line items: a hidden input is still
+      // submitted, so an expense switched to Income carried its item rows
+      // along and was refused for a mismatch the user could no longer see.
+      // A disabled control is left out of the submission entirely. Queried
+      // on every switch rather than once, so rows added since are covered.
+      document.querySelectorAll("[data-line-items] input").forEach(function (el) {
+        el.disabled = isIncome;
+      });
 
       if (labelEl) {
         var t = isIncome
@@ -191,10 +201,48 @@
     apply();
   }
 
+  /* One-time or recurring, on /income and /expense.
+   *
+   * Choosing "recurring" changes what the rest of the form means, so the form
+   * says so as you switch: the date becomes a start date, the frequency fields
+   * appear, and (for an expense) the fields that describe a single purchase go
+   * away. Everything here is presentation: with scripting off the form still
+   * posts and the server still reads income_type / expense_type.
+   */
+  function initRecurringChoice(typeName, dateLabelId, oneTimeLabel, repeatLabel) {
+    var recurring = document.getElementById("recurring-fields");
+    var types = document.querySelectorAll('input[name="' + typeName + '"]');
+    if (!recurring || !types.length) return;
+
+    var dateLabel = document.getElementById(dateLabelId);
+    var saveLabel = document.querySelector("[data-save-label]");
+    var oneTime = document.querySelectorAll("[data-one-time-only]");
+
+    // Hidden from here, not from the server, so it stays reachable without JS.
+    recurring.style.display = "none";
+
+    function update() {
+      var picked = document.querySelector('input[name="' + typeName + '"]:checked');
+      var isRepeat = !!picked && picked.value === "recurring";
+
+      recurring.style.display = isRepeat ? "" : "none";
+      if (dateLabel) dateLabel.textContent = isRepeat ? repeatLabel : oneTimeLabel;
+      if (saveLabel) {
+        saveLabel.textContent = isRepeat ? "Save Recurring Expense" : "Save Expense";
+      }
+      oneTime.forEach(function (el) { el.hidden = isRepeat; });
+    }
+
+    types.forEach(function (input) { input.addEventListener("change", update); });
+    update();
+  }
+
   function init() {
     initTypeToggle();
     initLineItems();
     initFrequencyPreset();
+    initRecurringChoice("income_type", "income-date-label", "Date", "First payday");
+    initRecurringChoice("expense_type", "expense-date-label", "When?", "Starting when?");
   }
 
   if (document.readyState === "loading") {

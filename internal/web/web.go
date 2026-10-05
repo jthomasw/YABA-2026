@@ -62,6 +62,11 @@ type Config struct {
 	// on the next poll.
 	Worker Waker
 
+	// ReceiptReading says receipts are read automatically (a Gemini key is
+	// configured). When false the upload page says so before anything is
+	// uploaded, instead of every receipt coming back "could not be read".
+	ReceiptReading bool
+
 	// Mail sends invitations and password reset links.
 	Mail *mail.Mailer
 }
@@ -288,7 +293,58 @@ func (s *Server) Handler() http.Handler {
 
 	// Note what is absent: no file server rooted at ./uploads.
 
-	return recoverPanics(logRequests(mux))
+	return recoverPanics(logRequests(s.securityHeaders(s.limitBodies(mux))))
+}
+
+// uploadRoutes are the only routes that accept a file, so the only ones whose
+// body may be as large as a receipt. Everything else is a small form.
+var uploadRoutes = map[string]bool{
+	"/import/receipt":   true,
+	"/transactions/new": true,
+	"/expense":          true,
+}
+
+// formBodyLimit bounds every other request body. A form here is a few hundred
+// bytes; a megabyte is generous and keeps an unauthenticated POST to /auth or
+// /forgot from making the server read (or spool to disk) megabytes.
+const formBodyLimit = 1 << 20
+
+// bodyLimit is the most a request to this path may send.
+func (s *Server) bodyLimit(path string) int64 {
+	if uploadRoutes[path] {
+		return s.maxUploadBytes() + bodySlack
+	}
+	return formBodyLimit
+}
+
+// limitBodies bounds the body of every unsafe request, public routes included,
+// before anything parses it: Go's multipart parser would otherwise spool an
+// arbitrarily large body to the temp directory.
+func (s *Server) limitBodies(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isSafeMethod(r.Method) {
+			r.Body = http.MaxBytesReader(w, r.Body, s.bodyLimit(r.URL.Path))
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// securityHeaders sets the headers every response should carry -- error pages,
+// JSON and static files included, not only rendered pages.
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "same-origin")
+		h.Set("X-Frame-Options", "DENY")
+		// Only when the deployment is HTTPS, which is what a Secure cookie
+		// means here: HSTS tells browsers never to try plain HTTP for a year,
+		// which would lock out a local http://localhost setup.
+		if s.cfg.SecureCookie {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // ListenAndServe starts the HTTP server with sane timeouts and serves until ctx
@@ -460,10 +516,21 @@ func (s *Server) authed(next http.HandlerFunc) http.Handler {
 		}
 		uid := user.ID
 
-		// Bound the body before anything parses it: Go's multipart parser will spool an
-		// arbitrarily large upload to the temp directory.
+		// The body is already bounded by limitBodies.
 		if !isSafeMethod(r.Method) {
-			r.Body = http.MaxBytesReader(w, r.Body, s.maxUploadBytes()+bodySlack)
+			// Read the body now, so an oversized one is reported as what it
+			// is. Left to checkCSRF, the parse failed quietly, the token was
+			// never found, and somebody who had picked a large photo was told
+			// "This form has expired" -- and went back to retype everything
+			// only to hit the same wall. Parsing here changes nothing else:
+			// checkCSRF parsed the body at this point anyway, with the same
+			// limit, and the handler reads the already-parsed form.
+			if bodyTooLarge(s.parseBody(r)) {
+				log.Printf("request refused: %s %s user=%d: body over %d bytes",
+					r.Method, r.URL.Path, uid, s.bodyLimit(r.URL.Path))
+				http.Error(w, s.tooLargeMessage(r.URL.Path), http.StatusRequestEntityTooLarge)
+				return
+			}
 		}
 
 		if !isSafeMethod(r.Method) && !s.checkCSRF(r, session) {
@@ -625,6 +692,37 @@ func (s *Server) csrfToken(w http.ResponseWriter, r *http.Request) string {
 		log.Printf("csrf: could not save session: %v", err)
 	}
 	return tok
+}
+
+// parseBody parses a POST body, multipart or URL-encoded, with the same
+// memory limit checkCSRF uses, and returns the parse error.
+func (s *Server) parseBody(r *http.Request) error {
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		return r.ParseMultipartForm(s.maxUploadBytes())
+	}
+	return r.ParseForm()
+}
+
+// bodyTooLarge reports whether a body parse failed because the request was
+// bigger than http.MaxBytesReader allows. The multipart reader does not wrap
+// every error it passes on, so the message is matched as a fallback.
+func bodyTooLarge(err error) bool {
+	if err == nil {
+		return false
+	}
+	var mbe *http.MaxBytesError
+	return errors.As(err, &mbe) || strings.Contains(err.Error(), "request body too large")
+}
+
+// tooLargeMessage is what an oversized submission is told, naming the limit
+// actually in force rather than the configured value, which may be unset.
+func (s *Server) tooLargeMessage(path string) string {
+	if !uploadRoutes[path] {
+		return "That form is too large to accept. Go back, shorten what you entered, and try again."
+	}
+	return fmt.Sprintf("That upload is too large. Receipts can be at most %d MB. "+
+		"Go back, choose a smaller file -- a lower-resolution photo usually works -- and try again.",
+		s.maxUploadMB())
 }
 
 // checkCSRF compares the submitted token with the session's.
@@ -1030,9 +1128,13 @@ type view struct {
 	Now       string
 
 	// Household is the budget on screen and Role is what this user may do to it.
-	Household string
-	Role      store.Role
-	Personal  bool
+	// HouseholdID identifies it: names are not unique (two people can each
+	// invite you to a budget called "Home"), so anything that has to pick the
+	// current budget out of a list compares this, never the name.
+	Household   string
+	HouseholdID int64
+	Role        store.Role
+	Personal    bool
 
 	// Households is every budget this user can switch to, for the nav picker.
 	Households []store.Household
@@ -1068,18 +1170,21 @@ func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Referrer-Policy", "same-origin")
 
 	// no-store on every rendered page. Forms embed a CSRF token tied to the session and
 	// signing in rotates it, so a cached page fails the check with a baffling message.
 	w.Header().Set("Cache-Control", "no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	// Every script is same-origin: Chart.js is vendored into /static rather than
-	// pulled from a CDN, so no third party can reach the page.
+	// pulled from a CDN, so no third party can reach the page. The other
+	// security headers are set for every response in securityHeaders.
 	w.Header().Set("Content-Security-Policy",
 		"default-src 'self'; "+
-			"script-src 'self' 'unsafe-inline'; "+
+			// No 'unsafe-inline': every script is a file under /static and
+			// no template uses an on*= attribute, so an injected <script> or
+			// handler will not run. Inline styles are still allowed; they
+			// cannot execute code.
+			"script-src 'self'; "+
 			"style-src 'self' 'unsafe-inline'; "+
 			"img-src 'self' data:; "+
 			"form-action 'self'; "+
@@ -1102,7 +1207,7 @@ func (s *Server) baseView(w http.ResponseWriter, r *http.Request, title, nav str
 		v.Username = u.Name()
 
 		if m, ok := r.Context().Value(membershipCtxKey{}).(store.Membership); ok {
-			v.Household, v.Role, v.Personal = m.Name, m.Role, m.Personal
+			v.Household, v.HouseholdID, v.Role, v.Personal = m.Name, m.ID, m.Role, m.Personal
 		}
 
 		// Two extra indexed reads on every page: the switcher is in the nav, and an
@@ -1193,7 +1298,15 @@ func isUserFacing(err error) bool {
 		store.ErrConflict,
 		store.ErrEmailTaken,
 		store.ErrInsufficientCash,
+		store.ErrInsufficientFund,
 		store.ErrItemsDoNotBalance,
+		store.ErrNotMember,
+		store.ErrForbidden,
+		store.ErrLastOwner,
+		store.ErrAlreadyMember,
+		store.ErrInviteOpen,
+		store.ErrInviteExpired,
+		store.ErrPersonalHousehold,
 	} {
 		if errors.Is(err, sentinel) {
 			return true

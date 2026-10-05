@@ -56,8 +56,16 @@
       {{range .Waiting}}
       <li>
         <span class="waiting-name">{{.OriginalName}}</span>
-        {{/* What OCR made of it, if anything. A receipt that could not be read
-             says so rather than showing a confident-looking zero. */}}
+        {{/* A receipt the reader gave up on used to vanish from this page once
+             its one-off notification was dismissed, leaving a file nobody
+             could enter or discard. It is listed like any other, and says why
+             there is no amount. (Not .Error: that is the worker's internal
+             cause, and belongs in the log, not the page.) */}}
+        {{if .Failed}}
+          <span class="stat-note">could not be read automatically — enter it by hand</span>
+        {{end}}
+        {{/* What the reader made of it, if anything. A receipt that could not
+             be read says so rather than showing a confident-looking zero. */}}
         {{with .Draft}}
           {{if .HasTotal}}
           <span class="waiting-amount {{if ne .Certainty "high"}}is-uncertain{{end}}">
@@ -75,7 +83,7 @@
                "invent an expense for it". POST, so no prefetch or crawler can
                reach it, and confirmed because the file goes with the row. */}}
           <form method="POST" action="/receipts/{{.ID}}/discard" class="inline-form"
-                onsubmit="return confirm('Discard {{.OriginalName}}? The uploaded file is deleted.')">
+                data-confirm="Discard {{.OriginalName}}? The uploaded file is deleted.">
             {{template "csrf" $}}
             <button type="submit" class="btn btn-small btn-quiet">Discard</button>
           </form>

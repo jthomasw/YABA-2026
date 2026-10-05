@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -113,7 +114,7 @@ func TestBackupCanActuallyBeRestored(t *testing.T) {
 
 	// Restore somewhere else and read it as a live database.
 	restored := filepath.Join(t.TempDir(), "restored.db")
-	if err := db.Restore(context.Background(), snap.Path, restored, false); err != nil {
+	if _, err := db.Restore(context.Background(), snap.Path, restored, false); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 
@@ -252,7 +253,7 @@ func TestVerifyRejectsCorruption(t *testing.T) {
 	if err := os.WriteFile(target, []byte("existing"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Restore(context.Background(), snap.Path, target, true); err == nil {
+	if _, err := db.Restore(context.Background(), snap.Path, target, true); err == nil {
 		t.Fatal("Restore accepted a corrupted snapshot")
 	}
 	if got, _ := os.ReadFile(target); string(got) != "existing" {
@@ -494,10 +495,12 @@ func TestNoUploadsMeansNoEmptyArchive(t *testing.T) {
 
 // ── restore mechanics ─────────────────────────────────────────────────────────
 
-// TestRestoreRemovesStaleSidecars is the easy-to-miss step. A -wal left beside
-// the replaced database belongs to a different file, and SQLite would try to
-// recover it into the restored one.
-func TestRestoreRemovesStaleSidecars(t *testing.T) {
+// TestRestoreSetsStaleSidecarsAsideNotDeletes is the easy-to-miss step. A -wal left
+// beside the replaced database must not be replayed into the restored one -- but it
+// may hold commits nobody checkpointed, so it is moved with the file it belongs to,
+// never deleted. Here the old "database" is junk, so the checkpoint cannot run and
+// the fallback path is the one exercised.
+func TestRestoreSetsStaleSidecarsAsideNotDeletes(t *testing.T) {
 	sqlDB, _ := newDB(t)
 	dir := t.TempDir()
 
@@ -511,17 +514,29 @@ func TestRestoreRemovesStaleSidecars(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, s := range []string{"-wal", "-shm"} {
-		if err := os.WriteFile(target+s, []byte("stale"), 0o600); err != nil {
+		if err := os.WriteFile(target+s, []byte("stale"+s), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if err := db.Restore(context.Background(), snap.Path, target, true); err != nil {
+	aside, err := db.Restore(context.Background(), snap.Path, target, true)
+	if err != nil {
 		t.Fatalf("restore: %v", err)
+	}
+	if len(aside) != 3 {
+		t.Fatalf("want the database and both sidecars set aside, got %v", aside)
+	}
+	if got, _ := os.ReadFile(aside[0]); string(got) != "old database" {
+		t.Errorf("%s does not hold the replaced database", aside[0])
 	}
 	for _, s := range []string{"-wal", "-shm"} {
 		if _, err := os.Stat(target + s); err == nil {
-			t.Errorf("stale %s survived the restore", s)
+			t.Errorf("stale %s was left beside the restored database", s)
+		}
+		// The sidecar keeps its suffix relative to the set-aside name, so SQLite
+		// would pair them up again if that file were opened.
+		if got, err := os.ReadFile(aside[0] + s); err != nil || string(got) != "stale"+s {
+			t.Errorf("%s was not preserved as %s%s: %v", s, aside[0], s, err)
 		}
 	}
 
@@ -532,6 +547,119 @@ func TestRestoreRemovesStaleSidecars(t *testing.T) {
 	defer reopened.Close()
 	if got := count(t, reopened, "transactions"); got != 3 {
 		t.Errorf("restored database has %d transactions, want 3", got)
+	}
+}
+
+// crashImage leaves at a new path what a server killed mid-run leaves on disk: a
+// database whose most recent commits exist only in its -wal. It returns the path and
+// the number of transactions committed, of which extra are in the WAL alone.
+func crashImage(t *testing.T, extra int) (string, int64) {
+	t.Helper()
+	sqlDB, livePath := newDB(t)
+	if _, err := sqlDB.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	if _, err := sqlDB.Exec(`PRAGMA wal_autocheckpoint = 0`); err != nil {
+		t.Fatalf("disable autocheckpoint: %v", err)
+	}
+	var uid, hid int64
+	if err := sqlDB.QueryRow(`SELECT id, active_household_id FROM users LIMIT 1`).Scan(&uid, &hid); err != nil {
+		t.Fatalf("read seed ids: %v", err)
+	}
+	for i := 0; i < extra; i++ {
+		addTransaction(t, sqlDB, uid, hid, 500+i)
+	}
+
+	// Copy while the connection is still open and idle: every frame is a complete
+	// commit, and closing it would checkpoint them away.
+	path := filepath.Join(t.TempDir(), "yaba.db")
+	for _, s := range []string{"", "-wal"} {
+		raw, err := os.ReadFile(livePath + s)
+		if err != nil {
+			t.Fatalf("read %s%s: %v", livePath, s, err)
+		}
+		if s == "-wal" && len(raw) == 0 {
+			t.Fatal("the WAL is empty, so this test would prove nothing")
+		}
+		if err := os.WriteFile(path+s, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path, 3 + int64(extra)
+}
+
+// TestRestoreKeepsUncheckpointedCommits is the bug this guards against: restore used to
+// move only the main file aside and delete the -wal, so the "before-restore" copy
+// silently lacked every commit since the last checkpoint.
+func TestRestoreKeepsUncheckpointedCommits(t *testing.T) {
+	sqlDB, _ := newDB(t)
+	snap, err := db.Backup(context.Background(), sqlDB, db.BackupConfig{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	target, want := crashImage(t, 5)
+
+	aside, err := db.Restore(context.Background(), snap.Path, target, true)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	// The checkpoint folded the WAL in, so the main file is complete on its own.
+	if len(aside) != 1 {
+		t.Errorf("checkpoint should have left no sidecars to move, got %v", aside)
+	}
+	before, err := db.Open(aside[0])
+	if err != nil {
+		t.Fatalf("open set-aside database: %v", err)
+	}
+	defer before.Close()
+	if got := count(t, before, "transactions"); got != want {
+		t.Errorf("set-aside database has %d transactions, want %d — WAL commits were lost", got, want)
+	}
+}
+
+// TestRestoreMovesTheWALWhenItCannotCheckpoint covers the fallback: a reader holding a
+// snapshot stops the checkpoint completing, so the -wal must travel with the file.
+func TestRestoreMovesTheWALWhenItCannotCheckpoint(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows locks open files; rename-while-open is Linux-only behaviour")
+	}
+	sqlDB, _ := newDB(t)
+	snap, err := db.Backup(context.Background(), sqlDB, db.BackupConfig{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	target, want := crashImage(t, 5)
+
+	reader, err := db.Open(target)
+	if err != nil {
+		t.Fatalf("open reader: %v", err)
+	}
+	tx, err := reader.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	var n int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM transactions`).Scan(&n); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	aside, err := db.Restore(context.Background(), snap.Path, target, true)
+	tx.Rollback()
+	reader.Close()
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if len(aside) < 2 || aside[1] != aside[0]+"-wal" {
+		t.Fatalf("the -wal should have been moved with the database, got %v", aside)
+	}
+
+	before, err := db.Open(aside[0])
+	if err != nil {
+		t.Fatalf("open set-aside database: %v", err)
+	}
+	defer before.Close()
+	if got := count(t, before, "transactions"); got != want {
+		t.Errorf("set-aside database has %d transactions, want %d", got, want)
 	}
 }
 
@@ -550,7 +678,7 @@ func TestRestoreWillNotOverwriteWithoutForce(t *testing.T) {
 	if err := os.WriteFile(target, []byte("precious"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Restore(context.Background(), snap.Path, target, false); err == nil {
+	if _, err := db.Restore(context.Background(), snap.Path, target, false); err == nil {
 		t.Fatal("restore overwrote an existing database without -force")
 	}
 	if got, _ := os.ReadFile(target); string(got) != "precious" {

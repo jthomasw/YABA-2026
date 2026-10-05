@@ -177,22 +177,6 @@
       pointRadius: labels.length > 40 ? 0 : 3
     }];
 
-    // The trend line the wireframe asks for. Dashed and point-less so it reads
-    // as a fitted line rather than as more data.
-    var trend = readJSON(el, "data-trend");
-    if (trend && trend.length === values.length) {
-      datasets.push({
-        label: "Trend",
-        data: trend,
-        borderColor: cssVar("--text-muted", "#6b7280"),
-        borderDash: [6, 4],
-        borderWidth: 2,
-        pointRadius: 0,
-        fill: false,
-        tension: 0
-      });
-    }
-
     new Chart(el, { type: "line", data: { labels: labels, datasets: datasets },
                     options: baseOptions() });
   }

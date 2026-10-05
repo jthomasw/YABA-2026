@@ -130,8 +130,23 @@ type Observation struct {
 }
 
 // Observations derives the dashboard's feedback list, alerts first so the thing needing
-// attention is not buried.
+// attention is not buried. months is a MonthlySeries; the month in progress,
+// which it ends with, is left out of the month-on-month comparison (see
+// ObservationsAsOf).
 func Observations(t store.Totals, essential, nonEssential money.Cents, budgets []store.Budget, months []store.MonthPoint) []Observation {
+	return ObservationsWithHoldingsAsOf(t, t, essential, nonEssential, budgets, months, store.Today()[:7])
+}
+
+// ObservationsAsOf is Observations with the current month, as YYYY-MM, given
+// rather than read from the clock, so the comparison can be tested on any day.
+func ObservationsAsOf(t store.Totals, essential, nonEssential money.Cents, budgets []store.Budget, months []store.MonthPoint, currentMonth string) []Observation {
+	return ObservationsWithHoldingsAsOf(t, t, essential, nonEssential, budgets, months, currentMonth)
+}
+
+// ObservationsWithHoldingsAsOf separates the selected reporting period from
+// all-time holdings. A February cash-flow deficit must not be presented as a
+// negative available balance when January income is still available.
+func ObservationsWithHoldingsAsOf(t, holdings store.Totals, essential, nonEssential money.Cents, budgets []store.Budget, months []store.MonthPoint, currentMonth string) []Observation {
 	var alerts, warns, goods, infos []Observation
 
 	// Budget breaches are the most actionable thing on the page.
@@ -155,10 +170,10 @@ func Observations(t store.Totals, essential, nonEssential money.Cents, budgets [
 	}
 
 	// Negative cash means committed money has been double-spent.
-	if t.Cash() < 0 {
+	if holdings.Cash() < 0 {
 		alerts = append(alerts, Observation{Alert, fmt.Sprintf(
 			"Available cash is %s. Check for a mistyped amount or an unrecorded income.",
-			t.Cash().Display())})
+			holdings.Cash().Display())})
 	}
 
 	// Savings rate, the single most informative number in personal finance.
@@ -188,27 +203,41 @@ func Observations(t store.Totals, essential, nonEssential money.Cents, budgets [
 		}
 	}
 
-	// Month-on-month direction, using the two most recent complete data points.
-	if n := len(months); n >= 2 {
-		prev, cur := months[n-2], months[n-1]
+	// Month-on-month direction, between the two most recent COMPLETE months.
+	//
+	// The series ends with the month in progress, and comparing that with last
+	// month compared three days of spending with thirty: on the 3rd it said
+	// "Spending is down 85% on last month" to everybody. Pro-rating the partial
+	// month was the alternative, but a month's spending is lumpy -- rent lands
+	// on the 1st -- so a pro-rated figure would swing wildly in either
+	// direction. Two finished months are a fact, and the sentence names them so
+	// nobody reads it as being about this month.
+	complete := months
+	for len(complete) > 0 && complete[len(complete)-1].Month >= currentMonth {
+		complete = complete[:len(complete)-1]
+	}
+	if n := len(complete); n >= 2 {
+		prev, cur := complete[n-2], complete[n-1]
 		if prev.Expense > 0 && cur.Expense > 0 {
 			delta := cur.Expense - prev.Expense
 			pct := float64(delta) / float64(prev.Expense) * 100
 			switch {
 			case pct >= 25:
 				warns = append(warns, Observation{Warn, fmt.Sprintf(
-					"Spending is up %.0f%% (%s) on last month.", pct, delta.Display())})
+					"Spending in %s was up %.0f%% (%s) on %s.",
+					monthName(cur.Month), pct, delta.Display(), monthName(prev.Month))})
 			case pct <= -15:
 				goods = append(goods, Observation{Good, fmt.Sprintf(
-					"Spending is down %.0f%% (%s) on last month.", -pct, (-delta).Display())})
+					"Spending in %s was down %.0f%% (%s) on %s.",
+					monthName(cur.Month), -pct, (-delta).Display(), monthName(prev.Month))})
 			}
 		}
 	}
 
 	// Savings held.
-	if t.Saved() > 0 {
+	if holdings.Saved() > 0 {
 		infos = append(infos, Observation{Info, fmt.Sprintf(
-			"%s is set aside in savings funds.", t.Saved().Display())})
+			"%s is set aside in savings funds.", holdings.Saved().Display())})
 	}
 
 	out := make([]Observation, 0, len(alerts)+len(warns)+len(goods)+len(infos))
@@ -222,6 +251,17 @@ func Observations(t store.Totals, essential, nonEssential money.Cents, budgets [
 			"Add some income and a few expenses and this panel will start explaining your numbers."})
 	}
 	return out
+}
+
+// monthName renders a YYYY-MM month as "August", or returns it unchanged if it
+// does not parse. The year is left off: the comparison is always between the
+// two months just gone, so it is never ambiguous.
+func monthName(month string) string {
+	t, err := time.Parse(store.MonthLayout, month)
+	if err != nil {
+		return month
+	}
+	return t.Format("January")
 }
 
 func plural(n int, word string) string {
@@ -261,11 +301,34 @@ const zFor90 = 1.645
 // variance to measure, and with two a single unusual month dominates it.
 const minMonthsForInterval = 3
 
-// EstimateMonthlyIncome derives an expected-income range from monthly history.
+// ExpectedIncome is the income range for a MonthlySeries, whose last entry is
+// the current month. That month is not over, so counting it dragged the
+// average down every month until payday; it is left out, and used only when it
+// is the one month with any income at all.
+func ExpectedIncome(series []store.MonthPoint) IncomeRange {
+	if len(series) == 0 {
+		return EstimateMonthlyIncome(nil)
+	}
+	if r := EstimateMonthlyIncome(series[:len(series)-1]); r.Months > 0 {
+		return r
+	}
+	return EstimateMonthlyIncome(series)
+}
+
+// EstimateMonthlyIncome derives an expected-income range from complete months
+// of history, oldest first.
+//
+// Months before the first one with any income are skipped: they are from
+// before the user started recording, and would dilute their salary. A month
+// with no income after that is real -- a missed paycheck -- and is counted.
 func EstimateMonthlyIncome(months []store.MonthPoint) IncomeRange {
 	var vals []float64
+	started := false
 	for _, m := range months {
 		if m.Income > 0 {
+			started = true
+		}
+		if started {
 			vals = append(vals, float64(m.Income))
 		}
 	}
@@ -306,7 +369,11 @@ func EstimateMonthlyIncome(months []store.MonthPoint) IncomeRange {
 		ss += d * d
 	}
 	sd := math.Sqrt(ss / (n - 1))
-	margin := zFor90 * sd / math.Sqrt(n)
+	// A prediction interval for one future month, not a confidence interval
+	// for the average: sd/sqrt(n) answered "where is the true mean", which
+	// narrows with every month recorded and made next month's pay look far
+	// more certain than it is. sqrt(1 + 1/n) widens it to cover one month.
+	margin := zFor90 * sd * math.Sqrt(1+1/n)
 
 	low := mean - margin
 	if low < 0 {
@@ -319,8 +386,8 @@ func EstimateMonthlyIncome(months []store.MonthPoint) IncomeRange {
 	r.High = money.Cents(int64(mean + margin + 0.5))
 	r.Reliable = true
 
-	switch {
-	case sd == 0:
+	switch sd {
+	case 0:
 		r.Note = fmt.Sprintf("Income has been exactly %s for %d months running.",
 			r.Mean.Display(), len(vals))
 	default:
@@ -397,7 +464,8 @@ type Trend struct {
 	// Values is the fitted line, one point per input point, so a chart can plot
 	// it as a second dataset against the same labels.
 	Values []float64
-	// PerStep is the gradient in cents per point.
+	// PerStep is the gradient in cents per day (per point when the points
+	// carry no usable dates).
 	PerStep float64
 	// Rising is true when the line slopes upwards.
 	Rising bool
@@ -408,15 +476,21 @@ type Trend struct {
 }
 
 // FitTrend fits a least-squares line through a running-balance series.
+//
+// x is the number of days since the first point. The series has one point per
+// day that had activity, so the gaps are uneven, and using the point's index
+// as x treated a quiet month the same as a single day and skewed the slope.
+// If the dates cannot be read, or are all the same, the index is used.
 func FitTrend(points []store.Point) Trend {
 	n := len(points)
 	if n < 2 {
 		return Trend{Note: "Not enough history to show a trend yet."}
 	}
+	xs := trendXs(points)
 
 	var sumX, sumY, sumXY, sumXX float64
 	for i, p := range points {
-		x := float64(i)
+		x := xs[i]
 		y := float64(p.Balance)
 		sumX += x
 		sumY += y
@@ -444,10 +518,10 @@ func FitTrend(points []store.Point) Trend {
 	for i := range points {
 		// Divided by 100 because the chart plots dollars, while the series is
 		// held in cents everywhere else.
-		t.Values[i] = (intercept + slope*float64(i)) / 100
+		t.Values[i] = (intercept + slope*xs[i]) / 100
 	}
 
-	change := money.Cents(int64(slope*float64(n-1) + 0.5))
+	change := money.Cents(int64(math.Round(slope * (xs[n-1] - xs[0]))))
 	switch {
 	case slope > 0:
 		t.Note = fmt.Sprintf("Trending up: about %s across this period.", change.Display())
@@ -457,6 +531,31 @@ func FitTrend(points []store.Point) Trend {
 		t.Note = "Flat across this period."
 	}
 	return t
+}
+
+// trendXs returns each point's x for FitTrend: days since the first point, or
+// the plain index when the dates do not give at least two distinct values.
+func trendXs(points []store.Point) []float64 {
+	xs := make([]float64, len(points))
+	first, err := time.Parse(store.DateLayout, points[0].Date)
+	distinct := false
+	for i, p := range points {
+		d, perr := time.Parse(store.DateLayout, p.Date)
+		if err != nil || perr != nil {
+			distinct = false
+			break
+		}
+		xs[i] = d.Sub(first).Hours() / 24
+		if xs[i] != 0 {
+			distinct = true
+		}
+	}
+	if !distinct {
+		for i := range xs {
+			xs[i] = float64(i)
+		}
+	}
+	return xs
 }
 
 // Runway answers how long the emergency fund will last.

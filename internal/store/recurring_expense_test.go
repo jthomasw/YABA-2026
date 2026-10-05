@@ -421,3 +421,97 @@ func TestRecurringExpenseIsScopedToTheHousehold(t *testing.T) {
 		t.Errorf("bob cancelled alice's schedule: %v", err)
 	}
 }
+
+// ── background catch-up ──────────────────────────────────────────────────────
+
+// ProcessAllDueRecurring is what the server's background runner calls. It must
+// catch up every household with something due, attribute the entries to the
+// person who set the schedule up, and re-pour that month's funding waterfall.
+func TestProcessAllDueRecurringCatchesUpEveryHousehold(t *testing.T) {
+	st, alice := newTestStore(t)
+	bob := newSecondUser(t, st, "bob@example.com")
+	ctx := context.Background()
+	today := store.Today()
+
+	rent, err := st.CreateBucket(ctx, alice, store.NewBucket{
+		Name: "Rent", CostKind: store.CostFixed, Fixed: 50000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRecurringIncome(ctx, alice, "Salary", 100000, 1, "month", today); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRecurringExpense(ctx, bob, "Gym", 3000, nil, false, 1, "month", today); err != nil {
+		t.Fatal(err)
+	}
+	// A schedule that is not due yet must be left alone.
+	if _, err := st.CreateRecurringExpense(ctx, bob, "Later", 999, nil, false, 1, "month", "2199-01-01"); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := st.ProcessAllDueRecurring(ctx)
+	if err != nil {
+		t.Fatalf("process all: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("processed %d households, want 2", n)
+	}
+
+	aliceTotals, _ := st.Totals(ctx, alice, "")
+	bobTotals, _ := st.Totals(ctx, bob, "")
+	if aliceTotals.Income != 100000 {
+		t.Errorf("alice income = %s, want $1,000.00", aliceTotals.Income.Display())
+	}
+	if bobTotals.Expense != 3000 {
+		t.Errorf("bob spending = %s, want $30.00 (and nothing from the future schedule)",
+			bobTotals.Expense.Display())
+	}
+
+	// The new income funded the rent bucket without anybody pressing Recalculate.
+	buckets, err := st.Buckets(ctx, alice, today[:7])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range buckets {
+		if b.ID == rent && b.Allocated != 50000 {
+			t.Errorf("rent allocated %s after the catch-up, want $500.00", b.Allocated.Display())
+		}
+	}
+
+	// Running it again creates nothing new.
+	if _, err := st.ProcessAllDueRecurring(ctx); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := st.Totals(ctx, alice, "")
+	if again.Income != 100000 {
+		t.Errorf("second run changed income to %s", again.Income.Display())
+	}
+
+	// The audit entry names the schedule's creator.
+	entries, err := st.AuditLog(ctx, alice, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 || entries[0].Actor == "a removed account" {
+		t.Errorf("recurring entry is not attributed to its creator: %+v", entries)
+	}
+}
+
+// Editing recurring income is held to the same interval ceilings as creating it.
+func TestUpdateRecurringIncomeEnforcesTheCeilings(t *testing.T) {
+	st, sc := newTestStore(t)
+	ctx := context.Background()
+	id, err := st.CreateRecurringIncome(ctx, sc, "Salary", 100000, 2, "week", "2026-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateRecurringIncome(ctx, sc, id, "Salary", 100000,
+		2000000000, "month", "2026-01-01", "2026-01-01"); err == nil {
+		t.Error("an edit stored every 2,000,000,000 months")
+	}
+	if err := st.UpdateRecurringIncome(ctx, sc, id, "Salary", 100000,
+		1, "month", "2026-01-01", "2026-01-01"); err != nil {
+		t.Errorf("a normal edit was refused: %v", err)
+	}
+}

@@ -32,7 +32,7 @@
       {{/* One-time token: a double click, a slow tap repeated, or the back
            button followed by Save would otherwise record this money twice.
            Spent on the first successful submit. */}}
-      {{if .FormToken}}<input type="hidden" name="form_token" value="{{.FormToken}}">{{end}}
+      {{if .FormToken}}<input type="hidden" name="form_token" value="{{.FormToken}}"><input type="hidden" name="form_household" value="{{.HouseholdID}}">{{end}}
       {{template "csrf" .}}
 
       <fieldset class="field">
@@ -144,40 +144,53 @@
         breakdown on what categories the individual line items in the transaction
         belong to?" — collapsed by default, because most entries are one item.
       */}}
-      <details class="field line-items" data-expense-only {{if eq .Kind "income"}}hidden{{end}}
-               {{if .Items}}open{{end}}>
+      {{/* Open whenever there is a receipt draft, not only when it happened to
+           contain items: a photo that was read but came back with no line
+           items is exactly the case where the user most needs this section
+           in front of them, ready to fill in by hand, rather than folded away
+           behind a summary that looks like there is nothing to see. */}}
+      <details class="field line-items" data-line-items data-expense-only {{if eq .Kind "income"}}hidden{{end}}
+               {{if or .Items .Draft}}open{{end}}>
+        {{/* Which sentence depends on where the rows came from, not merely on
+             whether there are any. After a refused submission the rows are
+             the user's own, echoed back: they may have edited the receipt's
+             lines, or deleted every one -- and "none were read off the
+             receipt" would then be false, because the draft did have lines.
+             So "none were read" is decided by the draft itself. */}}
         <summary>
-          {{if and .Draft .Items}}Items read from the receipt ({{len .Items}})
-          {{else}}Break this into items{{if .Items}} ({{len .Items}}){{end}}{{end}}
+          {{if and .Items .Draft .Draft.Items}}{{if .Echoed}}Items from the receipt{{else}}Items read from the receipt{{end}} ({{len .Items}})
+          {{else if .Items}}Break this into items ({{len .Items}})
+          {{else if and .Draft (not .Draft.Items)}}Add items (none were read off the receipt)
+          {{else}}Break this into items{{end}}
         </summary>
 
         <p class="hint">
           For a shop trip that covers several categories. The items must add up to
           the total above, so the category breakdown and your spending total agree.
+          Enter a discount or coupon as a negative amount, for example -2.00.
         </p>
 
         {{/* An added balancing line is called out rather than left to look like
              something the receipt said. Every other row here came off the
              photograph; this one is arithmetic, and the difference matters when
              the user is deciding which number to trust. */}}
-        {{if and .Draft .Draft.ItemsBalanced}}
-        <div class="callout callout-warn">
+        {{/* Only while there are rows for it to point at. */}}
+        {{if and .Items .Draft .Draft.ItemsBalanced}}
+        <div class="callout">
           <p>
-            These lines were read off the receipt, but they came to less than the
-            total. The last one, <strong>Other (not itemised)</strong>, is the
-            difference — not something the receipt listed.
+            Rows in <em>italics with a dashed border</em> were added so the
+            breakdown matches the total you paid: the receipt's tax lines (and
+            tip), and <strong>Other (not itemised)</strong> or
+            <strong>Discount / adjustment</strong> if a price could not be read.
+            They are not products from the receipt.
           </p>
-          <p>
-            A line was probably cut off or a price misread. Correct the row that
-            is wrong and adjust that last line to match, or leave it as it is:
-            either way the breakdown adds up to what you were charged.
-          </p>
+          <p>Check them, correct any price that was misread, then save.</p>
         </div>
         {{end}}
 
         <div data-item-rows>
           {{range .Items}}
-          <div class="item-row">
+          <div class="item-row{{if .Added}} item-row-added{{end}}"{{if .Added}} title="Added so the items add up to the total"{{end}}>
             <label class="visually-hidden" for="item-desc-{{.Position}}">Item description</label>
             <input id="item-desc-{{.Position}}" name="item_description" type="text"
                    maxlength="60" value="{{.Description}}" placeholder="Description">
@@ -189,8 +202,8 @@
 
             <label class="visually-hidden" for="item-amt-{{.Position}}">Item amount</label>
             <input id="item-amt-{{.Position}}" name="item_amount" type="number"
-                   step="0.01" min="0.01" inputmode="decimal"
-                   value="{{amount .Amount}}" placeholder="0.00">
+                   step="0.01" inputmode="decimal"
+                   value="{{.Amount}}" placeholder="0.00">
           </div>
           {{end}}
         </div>
@@ -203,7 +216,7 @@
           <label class="visually-hidden" for="item-cat-new">Item category</label>
           <input id="item-cat-new" name="item_category" type="text" maxlength="60" placeholder="Category" list="category-options">
           <label class="visually-hidden" for="item-amt-new">Item amount</label>
-          <input id="item-amt-new" name="item_amount" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="0.00">
+          <input id="item-amt-new" name="item_amount" type="number" step="0.01" inputmode="decimal" placeholder="0.00">
         </div>
 
         <p class="item-tools">
@@ -219,8 +232,8 @@
       <input type="hidden" name="version" value="{{.Version}}">
       {{/* Where Cancel and, after a successful save, the redirect should
            return to -- the filtered, paginated transactions list this edit
-           was opened from. Only a same-path value is ever honoured
-           server-side, so this cannot become an open redirect. */}}
+           was opened from. Vetted by safeBack before it is printed here or
+           redirected to, so this cannot become an open redirect. */}}
       {{if .Back}}<input type="hidden" name="back" value="{{.Back}}">{{end}}
       {{end}}
 

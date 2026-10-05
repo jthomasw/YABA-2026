@@ -52,7 +52,7 @@
       {{/* One-time token: a double click, a slow tap repeated, or the back
            button followed by Save would otherwise record this money twice.
            Spent on the first successful submit. */}}
-      {{if .FormToken}}<input type="hidden" name="form_token" value="{{.FormToken}}">{{end}}
+      {{if .FormToken}}<input type="hidden" name="form_token" value="{{.FormToken}}"><input type="hidden" name="form_household" value="{{.HouseholdID}}">{{end}}
       {{template "csrf" .}}
 
       {{/* A fieldset with a legend, like every other choice in the app. The
@@ -64,11 +64,11 @@
 
         <div class="radio-row">
           <label class="radio">
-            <input type="radio" name="income_type" value="one_time" checked>
+            <input type="radio" name="income_type" value="one_time" {{if not .Recurring}}checked{{end}}>
             One-time
           </label>
           <label class="radio">
-            <input type="radio" name="income_type" value="recurring">
+            <input type="radio" name="income_type" value="recurring" {{if .Recurring}}checked{{end}}>
             Recurring
           </label>
         </div>
@@ -106,13 +106,7 @@
   <div class="field">
     <label for="frequency_preset">How often</label>
     <select id="frequency_preset" name="frequency_preset" data-frequency-preset>
-      <option value="weekly">Weekly</option>
-      <option value="biweekly" selected>Every 2 weeks (bi-weekly)</option>
-      <option value="monthly">Monthly</option>
-      <option value="quarterly">Every 3 months (quarterly)</option>
-      <option value="semiannual">Every 6 months</option>
-      <option value="yearly">Yearly</option>
-      <option value="custom">Custom&hellip;</option>
+      {{template "frequencyPresets" .FrequencyPreset}}
     </select>
   </div>
 
@@ -125,14 +119,12 @@
       min="1"
       max="365"
       inputmode="numeric"
-      value="2"
+      value="{{.FrequencyN}}"
     >
 
     <label class="visually-hidden" for="frequency_unit">Days, weeks or months</label>
     <select id="frequency_unit" name="frequency_unit">
-      <option value="day">Day(s)</option>
-      <option value="week" selected>Week(s)</option>
-      <option value="month">Month(s)</option>
+      {{template "frequencyUnits" .FrequencyUnit}}
     </select>
   </div>
 
@@ -141,39 +133,6 @@
     At most 365 days, 52 weeks or 120 months.
   </p>
 </fieldset>
-
-<script>
-  document.addEventListener("DOMContentLoaded", function () {
-    const dateLabel = document.getElementById("income-date-label");
-    const recurringFields = document.getElementById("recurring-fields");
-    const incomeTypeInputs = document.querySelectorAll('input[name="income_type"]');
-
-    if (!recurringFields || !incomeTypeInputs.length) return;
-
-    // Hidden from here, not from the server: see the fieldset above.
-    recurringFields.style.display = "none";
-
-    function updateRecurringFields() {
-  const selected = document.querySelector('input[name="income_type"]:checked');
-
-  recurringFields.style.display =
-    selected && selected.value === "recurring"
-      ? ""
-      : "none";
-
-  dateLabel.textContent =
-    selected && selected.value === "recurring"
-      ? "First payday"
-      : "Date";
-}
-
-    incomeTypeInputs.forEach(function (input) {
-      input.addEventListener("change", updateRecurringFields);
-    });
-
-    updateRecurringFields();
-  });
-</script>
 
       <div class="field">
         <label for="date" id="income-date-label">Date</label>

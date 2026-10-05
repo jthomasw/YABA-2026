@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"flag"
@@ -13,12 +14,15 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/jthomasw/YABA-2026/internal/db"
+	"github.com/jthomasw/YABA-2026/internal/envfile"
 	"github.com/jthomasw/YABA-2026/internal/mail"
 	"github.com/jthomasw/YABA-2026/internal/store"
 	"github.com/jthomasw/YABA-2026/internal/web"
@@ -28,18 +32,41 @@ import (
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime)
 
+	// Settings from .env first, so the flags below see them as defaults. A
+	// variable already in the environment wins over the file.
+	{
+		path := envfile.Path()
+		set, err := envfile.Load(path)
+		if err != nil {
+			log.Fatalf("fatal: reading %s: %v", path, err)
+		}
+		if len(set) > 0 {
+			// Names only: the values include secrets.
+			log.Printf("config: loaded %d setting(s) from %s: %s", len(set), path, strings.Join(set, ", "))
+		}
+	}
+
 	var (
-		addr      = flag.String("addr", envOr("YABA_ADDR", ":8000"), "address to listen on")
+		// Loopback by default, so a fresh install is not reachable from the
+		// network until somebody decides it should be (YABA_ADDR=:8000), or
+		// puts a reverse proxy in front -- which is the recommended setup.
+		addr = flag.String("addr", envOr("YABA_ADDR", "127.0.0.1:8000"),
+			"address to listen on (\":8000\" for every interface)")
 		dbPath    = flag.String("db", envOr("YABA_DB", "yaba.db"), "path to the SQLite database")
 		uploadDir = flag.String("uploads", envOr("YABA_UPLOADS", "uploads"), "directory for stored receipts")
 		secure    = flag.Bool("secure-cookie", envBool("YABA_SECURE_COOKIE", true),
 			"mark the session cookie Secure (disable only for local HTTP development)")
 		timezone = flag.String("timezone", envOr("YABA_TIMEZONE", ""),
 			"IANA timezone for date calculations, e.g. America/New_York (default: the server's own local timezone)")
-		maxUpload = flag.Int64("max-upload-mb", envInt64("YABA_MAX_UPLOAD_MB", 5),
+		// 5MB used to be the default here and was too tight: a modern phone
+		// camera photo of a receipt routinely runs 6-10MB, so an upload that
+		// size failed with "that file is larger than 5 MB" and looked, at a
+		// glance, like the page had simply bounced back to the chooser with
+		// nothing having happened.
+		maxUpload = flag.Int64("max-upload-mb", envInt64("YABA_MAX_UPLOAD_MB", 15),
 			"maximum receipt upload size in megabytes")
-		backupDir = flag.String("backup-dir", envOr("YABA_BACKUP_DIR", db.DefaultBackupDir()),
-			`directory for database snapshots, or "off" to disable backups`)
+		backupDir = flag.String("backup-dir", envOr("YABA_BACKUP_DIR", ""),
+			`directory for database snapshots, or "off" to disable backups (default: a "backups" directory next to the database)`)
 		backupEvery = flag.Duration("backup-every", envDuration("YABA_BACKUP_EVERY", db.DefaultBackupEvery),
 			"how often to take a snapshot while running")
 		backupKeep = flag.Int("backup-keep", int(envInt64("YABA_BACKUP_KEEP", db.DefaultBackupKeep)),
@@ -52,8 +79,23 @@ func main() {
 		smtpPort = flag.Int("smtp-port", int(envInt64("YABA_SMTP_PORT", 587)), "SMTP port (587 STARTTLS, 465 TLS)")
 		smtpUser = flag.String("smtp-user", envOr("YABA_SMTP_USER", ""), "SMTP username")
 		smtpFrom = flag.String("smtp-from", envOr("YABA_SMTP_FROM", ""), `sender, e.g. "YABA <you@example.com>"`)
+
+		// The key itself is never a flag, for the same reason as the SMTP
+		// password: a flag value sits in the process list for every other user
+		// on the machine to read.
+		geminiModel = flag.String("gemini-model", envOr("YABA_GEMINI_MODEL", worker.DefaultGeminiModel),
+			"Gemini model used to read receipts")
 	)
 	flag.Parse()
+
+	if err := checkNoArgs(flag.Args()); err != nil {
+		log.Fatalf("fatal: %v", err)
+	}
+
+	geminiKey, geminiModelID, err := geminiSettings(os.Getenv(geminiKeyEnv), *geminiModel)
+	if err != nil {
+		log.Fatalf("fatal: %v", err)
+	}
 
 	cfg := config{
 		addr:     *addr,
@@ -76,9 +118,18 @@ func main() {
 		backupDir:    *backupDir,
 		backupEvery:  *backupEvery,
 		backupKeep:   *backupKeep,
+		geminiKey:    geminiKey,
+		geminiModel:  geminiModelID,
 	}
-	if strings.EqualFold(strings.TrimSpace(cfg.backupDir), "off") {
+	// The default is resolved here, after flag.Parse, so that -db moves the
+	// backups with it. It is the same rule the maintenance CLI uses, which is
+	// what lets `yaba restore` find what the server wrote without being told.
+	switch dir := strings.TrimSpace(cfg.backupDir); {
+	case strings.EqualFold(dir, "off"):
 		cfg.backupDir = ""
+	case dir == "":
+		cfg.backupDir = db.BackupDirFor(cfg.dbPath)
+		warnAboutOldBackupDir(cfg.backupDir)
 	}
 
 	// A deployment that has TLS but forgot the flag sends the session cookie in
@@ -120,6 +171,47 @@ type config struct {
 	backupKeep   int
 	baseURL      string
 	mail         mail.Config
+	geminiKey    string
+	geminiModel  string
+}
+
+// checkNoArgs refuses positional arguments. This binary is the web server and
+// takes only flags, but the README once built it as ./yaba -- the same name as
+// the maintenance tool -- and "./yaba backup" did not fail: flag.Parse stops
+// at the first non-flag, so it quietly started a second server against a
+// yaba.db relative to wherever the command was run.
+func checkNoArgs(args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("unexpected argument %q: this is the web server; "+
+			"the maintenance tool is built from ./cmd/yaba", args[0])
+	}
+	return nil
+}
+
+// geminiSettings cleans and checks the Gemini configuration before anything
+// starts, so a mistake stops the server with a message naming the variable
+// rather than failing every upload later with a 400 or 404 buried in the log.
+// Nothing here touches the network: whether the key is accepted is something
+// only Google can say, and the worker reports that loudly when it happens.
+//
+// The key is trimmed because production had a leading space and an env file
+// with CRLF line endings leaves a \r on the end. It is never echoed back, not
+// even in an error.
+func geminiSettings(rawKey, rawModel string) (key, model string, err error) {
+	key = strings.TrimSpace(rawKey)
+	if strings.IndexFunc(key, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r)
+	}) >= 0 {
+		return "", "", fmt.Errorf("%s contains a space or control character in the middle; "+
+			"an API key is a single unbroken token", geminiKeyEnv)
+	}
+
+	model, err = worker.NormalizeGeminiModel(rawModel)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid YABA_GEMINI_MODEL (or -gemini-model): %w; "+
+			"use the model ID from Google's model list, not its display name", err)
+	}
+	return key, model, nil
 }
 
 func run(cfg config) error {
@@ -141,6 +233,18 @@ func run(cfg config) error {
 		return err
 	}
 
+	// The lock is what lets `yaba restore`, `reset` and `repair` refuse to run
+	// underneath a live server. It is advisory and the OS drops it if this
+	// process dies, so a crash never leaves a stale lock behind.
+	lock, err := db.AcquireLock(dbPath)
+	if errors.Is(err, db.ErrLocked) {
+		return fmt.Errorf("%w (is another yaba-server, or a yaba restore/reset/repair, using %s?)", err, dbPath)
+	}
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+
 	sqlDB, err := db.Open(dbPath)
 	if err != nil {
 		return err
@@ -161,9 +265,27 @@ func run(cfg config) error {
 		}
 		switch {
 		case pending > 0 && db.Version(sqlDB) == 0:
-			// A database with no schema has nothing to lose, and VerifySnapshot refuses a
-			// snapshot with no schema_migrations -- so backing up here would make first run fatal.
-			log.Printf("startup: new database — nothing to back up before migrating")
+			// Version 0 means one of two very different things. A brand-new
+			// file has nothing to lose. A database from before migrations were
+			// versioned has everything to lose, and migration 1 -- which rebuilds
+			// every table around it -- is the riskiest one there is, so it must
+			// not run without a copy. db.Backup cannot take that copy, because
+			// VerifySnapshot rightly refuses a snapshot with no schema_migrations.
+			legacy, err := hasUserTables(sqlDB)
+			if err != nil {
+				return fmt.Errorf("inspect database before migrating: %w", err)
+			}
+			if !legacy {
+				log.Printf("startup: new database — nothing to back up before migrating")
+				break
+			}
+			log.Printf("startup: database has tables but no migration history — copying it before migrating")
+			path, err := preVersioningBackup(context.Background(), sqlDB, backupCfg.Dir)
+			if err != nil {
+				return fmt.Errorf("pre-migration backup of an unversioned database failed, "+
+					"so the migration was not attempted: %w", err)
+			}
+			log.Printf("startup: backed up to %s", path)
 		case pending > 0:
 			log.Printf("startup: %d migration(s) pending — taking a backup first", pending)
 			snap, err := db.Backup(context.Background(), sqlDB, backupCfg)
@@ -183,52 +305,56 @@ func run(cfg config) error {
 
 	st := store.New(sqlDB)
 
-	// Housekeeping. Every query that reads these tables already filters out
-	// expired rows, so a failure here is logged rather than fatal; without the
-	// sweeps the tables simply grow forever.
-	for _, sweep := range []struct {
-		what string
-		run  func(context.Context) (int64, error)
-	}{
-		{"expired session(s)", st.PurgeExpiredSessions},
-		{"expired reset token(s)", st.PurgeExpiredResets},
-		{"stale login-attempt window(s)", st.PurgeOldAttempts},
-		{"long-expired invitation(s)", st.PurgeStaleInvites},
-		{"unused form token(s)", st.PurgeOldFormTokens},
-	} {
-		if n, err := sweep.run(context.Background()); err != nil {
-			log.Printf("startup: could not purge %s: %v", sweep.what, err)
-		} else if n > 0 {
-			log.Printf("startup: purged %d %s", n, sweep.what)
-		}
-	}
-
 	// The receipt queue is drained by a background goroutine, started before the server
 	// so anything left over from a previous run is picked up immediately.
 	ctx, cancelWorker := context.WithCancel(context.Background())
 	defer cancelWorker()
 
-	// The OCR processor reads the amount, date and merchant off the image. It
-	// returns nil when the machine has no tesseract binary, and worker.New turns
-	// a nil processor into the review-only behaviour this had before -- so a
-	// deployment without OCR installed degrades to queueing the receipt for
-	// manual entry rather than failing every upload.
+	// Housekeeping, now and then daily: a server that ran for months used to
+	// sweep only when it started, so the tables grew for as long as it stayed up.
+	go housekeepingLoop(ctx, st, 24*time.Hour)
+
+	// The Gemini processor reads the amount, date and merchant off the image by
+	// sending it to Google's API. It returns nil when YABA_GEMINI_KEY is not
+	// set, and worker.New turns a nil processor into the review-only behaviour
+	// this always had -- so a deployment with no key degrades to queueing the
+	// receipt for manual entry rather than failing every upload.
 	//
 	// Whatever it reads is a draft the user confirms. Nothing here writes a
-	// transaction.
+	// transaction. See internal/worker/gemini_processor.go and about.html: a
+	// deployment that sets this key is sending receipt photos to Google.
 	var processor worker.Processor
-	if p := worker.NewOCRProcessor(); p != nil {
+	if p := worker.NewGeminiProcessor(cfg.geminiKey, cfg.geminiModel); p != nil {
 		processor = p
+		log.Printf("receipts: %s", p.Describe())
+	} else {
+		log.Printf("WARNING: receipts: %s is not set, so receipts will NOT be read automatically;", geminiKeyEnv)
+		log.Printf("         uploads are saved for the user to enter by hand. Put the key in .env")
+		log.Printf("         (see .env.example) or the environment, then restart.")
 	}
 	receipts := worker.New(st, processor, 5*time.Second)
 	go receipts.Run(ctx)
 
+	// Recurring income and expenses are caught up in the background too, not
+	// only when somebody opens Add Income or Add Expense -- otherwise a
+	// paycheck due today was missing from the dashboard until they did.
+	go recurringLoop(ctx, st, time.Hour)
+
 	// Snapshots on a timer, sharing the worker's cancellation so they stop with
 	// the process.
+	//
+	// They read through a handle of their own: the server's handle is a single
+	// connection, and a snapshot taken through it held up every request until
+	// it finished.
 	if backupCfg.Dir != "" {
+		backupSrc, err := db.OpenReadOnly(dbPath)
+		if err != nil {
+			return err
+		}
+		defer backupSrc.Close()
 		log.Printf("backups: %s every %s, keeping %d",
 			backupCfg.Dir, cfg.backupEvery, cfg.backupKeep)
-		go db.BackupLoop(ctx, sqlDB, backupCfg, cfg.backupEvery)
+		go db.BackupLoop(ctx, backupSrc, backupCfg, cfg.backupEvery)
 	}
 
 	mailer := mail.New(cfg.mail)
@@ -242,7 +368,8 @@ func run(cfg config) error {
 		MaxUploadMB:  maxUploadMB,
 		// Passing the worker in lets an upload nudge it awake rather than waiting a whole
 		// interval. web knows it only as a Waker, so the dependency does not point back.
-		Worker: receipts,
+		Worker:         receipts,
+		ReceiptReading: processor != nil,
 	})
 	if err != nil {
 		return err
@@ -259,14 +386,87 @@ func run(cfg config) error {
 	// whatever is in flight finish. Cancelling this context also stops the
 	// worker and the backup loop, and the deferred sqlDB.Close() finally runs --
 	// none of which happened before, because nothing ever returned from here.
-	if err := srv.ListenAndServe(signalled()); err != nil {
-		return err
-	}
+	serveErr := srv.ListenAndServe(signalled())
 
-	// Give the worker a moment to notice and put down whatever it is holding.
+	// Give the worker a moment to notice and put down whatever it is holding. A
+	// receipt it was reading goes back in the queue without losing an attempt
+	// (see Worker.processNext), so a deploy no longer counts against an upload.
+	//
+	// This runs even when serving ended in an error -- a grace period that ran
+	// out, say. Returning first skipped it, and main's log.Fatalf then exited
+	// without the worker stopping or the database closing.
 	cancelWorker()
 	receipts.Stop(5 * time.Second)
-	return nil
+	return serveErr
+}
+
+// housekeepingLoop deletes rows nothing needs any more, once at startup and
+// then every interval, until ctx is cancelled. Every query that reads these
+// tables already ignores expired rows, so a failure is logged, not fatal.
+func housekeepingLoop(ctx context.Context, st *store.Store, every time.Duration) {
+	sweeps := []struct {
+		what string
+		run  func(context.Context) (int64, error)
+	}{
+		{"expired session(s)", st.PurgeExpiredSessions},
+		{"expired reset token(s)", st.PurgeExpiredResets},
+		{"stale rate-limit window(s)", st.PurgeOldAttempts},
+		{"long-expired invitation(s)", st.PurgeStaleInvites},
+		{"unused form token(s)", st.PurgeOldFormTokens},
+		{"old notification(s)", st.PurgeOldNotifications},
+		{"audit entr(ies) past retention", st.PurgeOldAudit},
+	}
+	run := func() {
+		for _, sweep := range sweeps {
+			n, err := sweep.run(ctx)
+			switch {
+			case err != nil && ctx.Err() == nil:
+				log.Printf("housekeeping: could not purge %s: %v", sweep.what, err)
+			case n > 0:
+				log.Printf("housekeeping: purged %d %s", n, sweep.what)
+			}
+		}
+	}
+
+	run()
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			run()
+		}
+	}
+}
+
+// recurringLoop records every recurring income and expense that has fallen
+// due, once at startup and then every interval, until ctx is cancelled. The
+// catch-up is idempotent (one occurrence per schedule per due date), so
+// running it here as well as on page load cannot double-charge anybody.
+func recurringLoop(ctx context.Context, st *store.Store, every time.Duration) {
+	run := func() {
+		n, err := st.ProcessAllDueRecurring(ctx)
+		if err != nil && ctx.Err() == nil {
+			log.Printf("recurring: %v", err)
+		}
+		if n > 0 {
+			log.Printf("recurring: caught up %d household(s)", n)
+		}
+	}
+
+	run()
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			run()
+		}
+	}
 }
 
 // signalled returns a context that is cancelled on SIGINT or SIGTERM.
@@ -290,8 +490,88 @@ func signalled() context.Context {
 	return ctx
 }
 
+// hasUserTables reports whether a database already holds tables of its own,
+// as opposed to a file SQLite has only just created. Together with
+// db.Version == 0 it identifies a database from before schema versioning.
+func hasUserTables(sqlDB *sql.DB) (bool, error) {
+	var n int
+	err := sqlDB.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table'
+		  AND name NOT LIKE 'sqlite\_%' ESCAPE '\'
+		  AND name <> 'schema_migrations'`).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("list tables: %w", err)
+	}
+	return n > 0, nil
+}
+
+// preVersioningBackup copies an unversioned database into dir before its first
+// migration and checks the copy is sound, returning where it went.
+//
+// It is deliberately not named like db.Backup's snapshots: Prune would rotate
+// it away after a couple of weeks, and the snapshot comparison would try to
+// read it as a modern database. This copy is the one that cannot be
+// recreated, so it stays until somebody deletes it by hand.
+func preVersioningBackup(ctx context.Context, sqlDB *sql.DB, dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create %s: %w", dir, err)
+	}
+
+	stamp := time.Now().UTC().Format("20060102-150405Z")
+	var path string
+	for i := 1; ; i++ {
+		path = filepath.Join(dir, fmt.Sprintf("pre-versioning-%s.db", stamp))
+		if i > 1 {
+			path = filepath.Join(dir, fmt.Sprintf("pre-versioning-%s-%d.db", stamp, i))
+		}
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		if i >= 100 {
+			return "", fmt.Errorf("%s already holds too many copies for this second", dir)
+		}
+	}
+
+	if _, err := sqlDB.ExecContext(ctx, `VACUUM INTO ?`, path); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("vacuum into %s: %w", path, err)
+	}
+	if err := checkCopy(ctx, path); err != nil {
+		// A copy that will not open is worse than none, because its presence
+		// implies a safety that is not there.
+		os.Remove(path)
+		return "", err
+	}
+	return path, nil
+}
+
+// checkCopy opens a fresh copy read-only and runs SQLite's integrity check
+// over it, which is as much as can be asked of a database whose schema this
+// build does not yet understand.
+func checkCopy(ctx context.Context, path string) error {
+	c, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
+	if err != nil {
+		return fmt.Errorf("open copy %s: %w", path, err)
+	}
+	defer c.Close()
+
+	var result string
+	if err := c.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&result); err != nil {
+		return fmt.Errorf("check copy %s: %w", path, err)
+	}
+	if result != "ok" {
+		return fmt.Errorf("copy %s failed integrity_check: %s", path, result)
+	}
+	return nil
+}
+
 // sessionKeyEnv is the variable holding the cookie signing key.
 const sessionKeyEnv = "YABA_SESSION_KEY"
+
+// geminiKeyEnv is the variable holding the Gemini API key used to read
+// receipts. Never a flag, and never logged -- same reasoning as sessionKeyEnv.
+const geminiKeyEnv = "YABA_GEMINI_KEY"
 
 // sessionKey loads the cookie signing key, which has to come from the environment:
 // a literal in the source sits in git history, and anyone who has seen it can forge
@@ -377,4 +657,27 @@ func envInt64(key string, fallback int64) int64 {
 		return fallback
 	}
 	return n
+}
+
+// warnAboutOldBackupDir points out snapshots left where older versions wrote
+// them by default (the service account's cache directory). Backups now default
+// to a directory next to the database instead, so those older snapshots are no
+// longer pruned, compared against or found by `yaba restore`. They are not
+// moved automatically: the operator decides whether to keep them.
+func warnAboutOldBackupDir(current string) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return
+	}
+	old := filepath.Join(cache, "YABA", "backups")
+	if old == current {
+		return
+	}
+	matches, err := filepath.Glob(filepath.Join(old, "*.db"))
+	if err != nil || len(matches) == 0 {
+		return
+	}
+	log.Printf("backups: %d older snapshot(s) are still in %s, where previous versions wrote them by default; "+
+		"new snapshots go to %s. Move them there (or set YABA_BACKUP_DIR=%s) to keep using them.",
+		len(matches), old, current, old)
 }

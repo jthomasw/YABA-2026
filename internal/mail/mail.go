@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"mime"
 	"net"
 	"net/smtp"
 	"os"
@@ -149,29 +150,57 @@ func (m *Mailer) Send(ctx context.Context, msg Message) error {
 
 // deliver does the SMTP conversation. Port 465 is implicit TLS while 587 negotiates
 // STARTTLS mid-conversation, and smtp.SendMail cannot do the first.
+//
+// timeout bounds the whole exchange, not just the dial. Send stops waiting at
+// the same moment, but stopping waiting does not stop this goroutine: with
+// only the dial bounded, a relay that accepted the connection and then went
+// quiet held deliver -- and its socket -- forever, one leaked goroutine per
+// message. A deadline on the connection makes every read and write after the
+// dial fail once the budget is spent, so deliver always returns.
 func (m *Mailer) deliver(addr, to string, raw []byte, timeout time.Duration) error {
 	auth := smtp.PlainAuth("", m.cfg.User, m.cfg.Pass, m.cfg.Host)
 	if m.cfg.User == "" {
 		auth = nil // an unauthenticated relay
 	}
 
-	if m.cfg.Port != 465 {
-		conn, err := net.DialTimeout("tcp", addr, timeout)
-		if err != nil {
-			return err
-		}
-		return m.converse(conn, auth, to, raw)
-	}
+	// One deadline for everything, so a slow dial leaves less time for the
+	// conversation rather than resetting the clock.
+	deadline := time.Now().Add(timeout)
+	dialer := &net.Dialer{Deadline: deadline}
 
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", addr,
-		&tls.Config{ServerName: m.cfg.Host, MinVersion: tls.VersionTLS12})
+	var conn net.Conn
+	var err error
+	if m.cfg.Port != 465 {
+		conn, err = dialer.Dial("tcp", addr)
+	} else {
+		conn, err = tls.DialWithDialer(dialer, "tcp", addr,
+			&tls.Config{ServerName: m.cfg.Host, MinVersion: tls.VersionTLS12})
+	}
 	if err != nil {
 		return err
 	}
-	return m.converse(conn, auth, to, raw)
+	// The deadline stays with the underlying socket when STARTTLS wraps it,
+	// so the encrypted half of the conversation is bounded too.
+	if err := conn.SetDeadline(deadline); err != nil {
+		conn.Close()
+		return err
+	}
+	return m.converse(conn, auth, to, raw, m.cfg.Port == 465)
 }
 
-func (m *Mailer) converse(conn net.Conn, auth smtp.Auth, to string, raw []byte) error {
+// isLoopback reports whether host is this machine, where a relay without TLS
+// (a local Postfix, or a development mail catcher) cannot be eavesdropped on.
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// converse runs the SMTP conversation. encrypted says the connection is
+// already TLS (port 465); otherwise it must be upgraded with STARTTLS.
+func (m *Mailer) converse(conn net.Conn, auth smtp.Auth, to string, raw []byte, encrypted bool) error {
 	c, err := smtp.NewClient(conn, m.cfg.Host)
 	if err != nil {
 		conn.Close()
@@ -181,12 +210,20 @@ func (m *Mailer) converse(conn net.Conn, auth smtp.Auth, to string, raw []byte) 
 
 	// On 587 the connection starts in the clear, so upgrade before authenticating
 	// -- otherwise the password crosses the network in plaintext.
+	//
+	// The upgrade is required, not merely attempted. A server that does not
+	// offer STARTTLS -- or an attacker on the path who strips the offer -- used
+	// to get the message in plaintext, and the message is a password-reset
+	// link. Only a relay on this same machine may go without.
 	if ok, _ := c.Extension("STARTTLS"); ok {
 		if err := c.StartTLS(&tls.Config{
 			ServerName: m.cfg.Host, MinVersion: tls.VersionTLS12,
 		}); err != nil {
 			return err
 		}
+	} else if !encrypted && !isLoopback(m.cfg.Host) {
+		return fmt.Errorf("mail server %s does not offer STARTTLS; refusing to send unencrypted "+
+			"(use port 465 for implicit TLS, or a server that supports STARTTLS)", m.cfg.Host)
 	}
 	if auth != nil {
 		if ok, _ := c.Extension("AUTH"); ok {
@@ -224,7 +261,9 @@ func (m *Mailer) compose(msg Message) []byte {
 	}
 	h("From", m.cfg.From)
 	h("To", msg.To)
-	h("Subject", msg.Subject)
+	// A budget name can be in any language, and a raw UTF-8 header is not
+	// valid RFC 5322; RFC 2047 encoding leaves plain ASCII untouched.
+	h("Subject", mime.QEncoding.Encode("utf-8", msg.Subject))
 	h("Date", time.Now().Format(time.RFC1123Z))
 	h("Message-ID", messageID(m.cfg.Host))
 	h("MIME-Version", "1.0")

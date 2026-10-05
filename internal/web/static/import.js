@@ -56,7 +56,7 @@
  * shows the work instead: the server reports which stage the worker has reached
  * and the ring eases towards that stage's ceiling.
  *
- * The percentage is a stage, not a measurement. Tesseract reports nothing at all
+ * The percentage is a stage, not a measurement. The Gemini call reports nothing at all
  * while it runs, so there is no real fraction to draw -- which is why the ring
  * never reaches 100 until the server actually says the receipt is done. A bar
  * that sits full while the work continues is a lie every user catches.
@@ -135,16 +135,20 @@
   }
 
   var delay = 700;
-  var attempts = 0;
+  // Consecutive failures, not polls. Counting every poll meant one network
+  // blip after about eight good answers gave up on a receipt that was being
+  // tracked perfectly well; a success resets it, so only a connection that
+  // stays down for several tries in a row stops the watching.
+  var failures = 0;
 
   function poll() {
-    attempts++;
     fetch(statusURL, { headers: { Accept: "application/json" }, credentials: "same-origin" })
       .then(function (r) {
         if (!r.ok) throw new Error("status " + r.status);
         return r.json();
       })
       .then(function (data) {
+        failures = 0;
         if (typeof data.percent === "number") target = data.percent;
         if (label && data.label) label.textContent = data.label;
         if (detail && data.detail && !data.done && !data.failed) {
@@ -163,7 +167,8 @@
         // A dropped connection is not a failed receipt -- the worker carries on
         // regardless of whether this page is watching. Retry a few times, then
         // say plainly where the result can be found rather than spinning on.
-        if (attempts < 8) {
+        failures++;
+        if (failures < 8) {
           setTimeout(poll, 2000);
           return;
         }

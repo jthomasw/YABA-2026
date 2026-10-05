@@ -4,7 +4,9 @@ package db
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,6 +49,33 @@ func Open(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("ping sqlite %q: %w", path, err)
 	}
 	return sqlDB, nil
+}
+
+// OpenReadOnly opens a second, read-only handle on the database at path, for
+// taking backups.
+//
+// The server's own handle is capped at one connection, so a backup run through
+// it -- VACUUM INTO reads the whole database -- held up every request until it
+// finished. In WAL mode a separate reader does not block the writer, nor the
+// writer it, so snapshots no longer freeze the site.
+func OpenReadOnly(path string) (*sql.DB, error) {
+	sqlDB, err := sql.Open("sqlite", fileURI(path)+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite %q read-only: %w", path, err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	if err := sqlDB.Ping(); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("ping sqlite %q read-only: %w", path, err)
+	}
+	return sqlDB, nil
+}
+
+// fileURI turns a filesystem path into a SQLite "file:" URI, escaping the
+// characters a URI would otherwise read as syntax.
+func fileURI(path string) string {
+	r := strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23", " ", "%20")
+	return "file:" + r.Replace(filepath.ToSlash(path))
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -439,7 +469,173 @@ func migrations() []Migration {
 			`CREATE UNIQUE INDEX idx_budgets_hh_cat
 				ON budgets(household_id, category COLLATE NOCASE)`,
 		),
+
+		// Migration 18 gives a failed receipt somewhere to wait. A failure used
+		// to put the job straight back to 'queued', where the worker's drain
+		// loop claimed it again in the same breath -- production logs showed all
+		// three attempts inside one second, so a 30-second blip at Google cost
+		// the user their receipt. The claim query now skips a job until this
+		// time has passed. NULL means "due now", which is every existing row and
+		// every fresh upload.
+		sqlMigration(18, "receipt jobs wait between retries", `
+			ALTER TABLE receipt_jobs ADD COLUMN next_attempt_at TEXT`,
+		),
+
+		// Monthly schedules used to be stepped with Go's AddDate, which turns
+		// Jan 31 + 1 month into Mar 3: a schedule anchored on the 29th-31st was
+		// pushed into the first days of the month after any shorter one, and
+		// stayed there. The stepping is fixed in the store; this repairs, once,
+		// the next_due_date such schedules were left with. See migrate019.
+		{Version: 19, Name: "repair monthly schedules drifted off a 29th-31st anchor", Run: migrate019},
+
+		// Migration 20 lets a line item be negative: a discount or coupon on a
+		// receipt is a real line, and refusing it meant a scanned receipt with a
+		// coupon could not be saved with its breakdown. Zero is still refused.
+		// SQLite cannot alter a CHECK constraint, so the table is rebuilt.
+		sqlMigration(20, "line items may be negative (discounts)",
+			`CREATE TABLE line_items_new (
+				id             INTEGER PRIMARY KEY AUTOINCREMENT,
+				transaction_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+				description    TEXT    NOT NULL DEFAULT '',
+				category       TEXT    NOT NULL DEFAULT '',
+				amount_cents   INTEGER NOT NULL CHECK (amount_cents <> 0),
+				position       INTEGER NOT NULL DEFAULT 0
+			)`,
+			`INSERT INTO line_items_new (id, transaction_id, description, category, amount_cents, position)
+				SELECT id, transaction_id, description, category, amount_cents, position FROM line_items`,
+			`DROP TABLE line_items`,
+			`ALTER TABLE line_items_new RENAME TO line_items`,
+			`CREATE INDEX idx_items_tx ON line_items(transaction_id, position ASC, id ASC)`,
+		),
+
+		// Migration 21 stops storing bearer tokens. See migrate021.
+		{Version: 21, Name: "store session and reset tokens hashed", Run: migrate021},
+
+		// A snapshot made before shared households existed is still a valid snapshot
+		// to take before migrating it.  The verifier selects its invariant checks
+		// from this recorded version.
+		{Version: 22, Name: "snapshot verification supports pre-household schemas", Run: func(*sql.Tx) error { return nil }},
+		{Version: 23, Name: "form tokens can be restored after a refused write", Run: migrate023},
 	}
+}
+
+func migrate023(tx *sql.Tx) error {
+	rows, err := tx.Query(`PRAGMA table_info(form_tokens)`)
+	if err != nil {
+		return fmt.Errorf("inspect form tokens: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("read form token column: %w", err)
+		}
+		if name == "used_at" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE form_tokens ADD COLUMN used_at TEXT`); err != nil {
+		return fmt.Errorf("add form token use marker: %w", err)
+	}
+	return nil
+}
+
+// ── migration 21 ───────────────────────────────────────────────────────────────
+
+// migrate021 replaces every stored session id and password-reset token with its
+// SHA-256, matching store.TokenHash. The browser keeps the raw token, so every
+// existing login keeps working and every reset link already emailed still
+// works: the lookup now hashes what it is given before comparing.
+//
+// The hashing is repeated here rather than imported from store, because db must
+// not depend on the package that depends on it.
+func migrate021(tx *sql.Tx) error {
+	for _, t := range []struct{ table, column string }{
+		{"sessions", "id"},
+		{"password_resets", "token"},
+	} {
+		rows, err := tx.Query(`SELECT ` + t.column + ` FROM ` + t.table)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", t.table, err)
+		}
+		var tokens []string
+		for rows.Next() {
+			var tok string
+			if err := rows.Scan(&tok); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan %s: %w", t.table, err)
+			}
+			tokens = append(tokens, tok)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for _, tok := range tokens {
+			sum := sha256.Sum256([]byte(tok))
+			if _, err := tx.Exec(`UPDATE `+t.table+` SET `+t.column+` = ? WHERE `+t.column+` = ?`,
+				hex.EncodeToString(sum[:]), tok); err != nil {
+				return fmt.Errorf("hash %s: %w", t.table, err)
+			}
+		}
+	}
+	return nil
+}
+
+// ── migration 19 ───────────────────────────────────────────────────────────────
+
+// migrate019 moves a drifted monthly next_due_date back to its anchor's day.
+//
+// Only the pattern the old arithmetic produces is touched: a monthly schedule
+// whose start_date falls on the 29th-31st, whose next_due_date falls on the
+// 1st-3rd of a later month. The date moves to the anchor's day (clamped to the
+// month's length) in the SAME month, so it only ever moves later and never out
+// of its month -- Jun 3 becomes Jun 30 -- and that month still gets exactly
+// one charge. February, which the drift skipped, is not backfilled: nothing
+// records which month a drifted payment was meant for, and a guessed backdated
+// charge is worse than a missing one the user can add.
+//
+// A row whose drifted date has ALREADY been posted (a catch-up interrupted
+// after posting but before saving next_due_date) is left alone. The catch-up
+// then finds that occurrence, skips it, and steps on from it with the fixed
+// arithmetic -- whereas moving it would have charged that month a second time
+// under a new date.
+//
+// This runs once rather than on every catch-up, so a schedule later switched
+// from weeks to months, whose date is off its anchor's day for a legitimate
+// reason, is never "repaired".
+func migrate019(tx *sql.Tx) error {
+	for _, t := range []struct{ schedules, occurrences, fk string }{
+		{"recurring_income", "recurring_income_occurrences", "recurring_income_id"},
+		{"recurring_expense", "recurring_expense_occurrences", "recurring_expense_id"},
+	} {
+		// Table names come from the fixed list above, never from input.
+		stmt := `
+			UPDATE ` + t.schedules + `
+			SET next_due_date = date(next_due_date, 'start of month',
+				'+' || (MIN(
+					CAST(strftime('%d', start_date) AS INTEGER),
+					CAST(strftime('%d', date(next_due_date, 'start of month', '+1 month', '-1 day')) AS INTEGER)
+				) - 1) || ' days')
+			WHERE frequency_unit = 'month'
+			  AND CAST(strftime('%d', start_date) AS INTEGER) > 28
+			  AND CAST(strftime('%d', next_due_date) AS INTEGER) <= 3
+			  AND next_due_date > start_date
+			  AND NOT EXISTS (
+				SELECT 1 FROM ` + t.occurrences + ` o
+				WHERE o.` + t.fk + ` = ` + t.schedules + `.id
+				  AND o.due_date = ` + t.schedules + `.next_due_date)`
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("repair drifted %s: %w", t.schedules, err)
+		}
+	}
+	return nil
 }
 
 // ── migration 3 ────────────────────────────────────────────────────────────────
@@ -1113,12 +1309,45 @@ const (
 	// DefaultBackupEvery is the interval for the in-process timer.
 	DefaultBackupEvery = 24 * time.Hour
 
+	// DefaultConfirmEmptyAfter is how long a guarded table has to stay empty, across
+	// at least two backup attempts, before Backup believes it is the database's real
+	// state rather than a broken snapshot. See acceptEmptied.
+	DefaultConfirmEmptyAfter = time.Hour
+
+	// AcceptEmptyEnv, set to a true value, makes every backup accept a guarded table
+	// that has gone empty. It exists so a server whose backups are being refused can be
+	// unstuck without a rebuild; unset it again afterwards, or the guard stays off.
+	AcceptEmptyEnv = "YABA_BACKUP_ACCEPT_EMPTY"
+
 	backupPrefix = "yaba-"
 	backupExt    = ".db"
 	uploadsSuf   = "-uploads.zip"
 
-	// Stamps are UTC so names sort chronologically.
+	// preEmptyPrefix marks the last snapshot that still held rows in a table which has
+	// since gone empty. Snapshots does not list it, so retention never removes it.
+	preEmptyPrefix = "pre-empty-"
+
+	// emptiedMarker records, in the backup directory, when the current emptied state
+	// was first seen, so a later attempt can tell "still empty" from "newly empty".
+	emptiedMarker = ".yaba-emptied"
+
+	// Stamps are UTC, and a second snapshot within one second gets a "-2", "-3"...
+	// suffix. Ordering is by the parsed (stamp, suffix) pair, never by name: '-' sorts
+	// before '.', so "…Z-2.db" would sort ahead of the "…Z.db" it follows.
 	stampLayout = "20060102-150405Z"
+)
+
+// Startup and retry timing for BackupLoop. Variables rather than constants so the
+// tests do not have to wait a minute.
+var (
+	// backupStartDelay is the shortest wait before the first scheduled backup. Long
+	// enough that a server crash-looping under systemd does not snapshot on every
+	// restart, short enough that a server restarted daily still gets backed up.
+	backupStartDelay = time.Minute
+
+	// backupRetryAfter caps the wait after a failed backup, so one transient failure
+	// does not cost a whole interval of protection.
+	backupRetryAfter = time.Hour
 )
 
 // guardedTables are the tables whose emptiness means a broken snapshot rather than a
@@ -1151,6 +1380,16 @@ type BackupConfig struct {
 
 	// Keep is how many snapshots to retain. Zero means DefaultBackupKeep.
 	Keep int
+
+	// AcceptEmpty accepts a snapshot in which a guarded table has gone from rows to
+	// none, for an operator who knows the deletion was deliberate (`yaba backup
+	// -accept-empty`). AcceptEmptyEnv does the same for a process that cannot be
+	// given a flag.
+	AcceptEmpty bool
+
+	// ConfirmEmptyAfter is how long an emptied table must persist before it is
+	// accepted without an operator. Zero means DefaultConfirmEmptyAfter.
+	ConfirmEmptyAfter time.Duration
 }
 
 // Backup writes a verified snapshot and sweeps old ones.
@@ -1200,9 +1439,29 @@ func Backup(ctx context.Context, sqlDB *sql.DB, cfg BackupConfig) (Snapshot, err
 	}
 
 	if err := compareCounts(previous, counts, prevPath); err != nil {
-		os.Remove(path)
-		return Snapshot{}, fmt.Errorf("backup: %w", err)
+		var emptied *EmptiedError
+		if !errors.As(err, &emptied) {
+			os.Remove(path)
+			return Snapshot{}, fmt.Errorf("backup: %w", err)
+		}
+		accepted, why := acceptEmptied(cfg, emptied, time.Now())
+		if !accepted {
+			os.Remove(path)
+			return Snapshot{}, fmt.Errorf("backup: %w; %s", err, why)
+		}
+		log.Printf("backup: WARNING: accepting a snapshot in which %s went empty: %s",
+			strings.Join(emptied.Tables, ", "), why)
+		if kept, err := keepPreEmpty(prevPath); err != nil {
+			log.Printf("backup: could not preserve %s outside retention: %v",
+				filepath.Base(prevPath), err)
+		} else {
+			log.Printf("backup: kept %s outside retention, as the last snapshot holding those rows",
+				filepath.Base(kept))
+		}
 	}
+	// Whether the counts were normal or an emptied state has just been accepted,
+	// nothing is pending confirmation any more.
+	clearEmptiedMarker(cfg.Dir)
 
 	snap := Snapshot{Path: path, Bytes: info.Size(), Counts: counts}
 
@@ -1211,9 +1470,11 @@ func Backup(ctx context.Context, sqlDB *sql.DB, cfg BackupConfig) (Snapshot, err
 		n, err := archiveUploads(cfg.UploadDir, dest)
 		switch {
 		case err != nil:
-			// A missing receipt archive does not invalidate the database
-			// snapshot, so this is reported rather than fatal.
-			log.Printf("backup: could not archive %s: %v", cfg.UploadDir, err)
+			// The database refers to these files.  Reporting a snapshot as complete
+			// while pruning the last complete pair makes recovery less safe than no
+			// backup at all.
+			os.Remove(path)
+			return Snapshot{}, fmt.Errorf("backup: archive %s: %w", cfg.UploadDir, err)
 		case n > 0:
 			snap.Uploads = dest
 		}
@@ -1229,13 +1490,28 @@ func Backup(ctx context.Context, sqlDB *sql.DB, cfg BackupConfig) (Snapshot, err
 }
 
 // freeSnapshotPath returns a path that does not exist yet: two backups inside one
-// second collide, so take the next free suffix rather than fail.
+// second collide, so take a suffix rather than fail.
+//
+// The suffix is one past the highest already used for this second, not the first
+// free one. Otherwise, once retention had removed "…Z.db" and kept "…Z-2.db", the
+// next backup in that second would reuse "…Z.db", which sorts as the older of the
+// two, and the following prune would delete the snapshot just taken.
 func freeSnapshotPath(dir string, at time.Time) (string, error) {
 	base := filepath.Join(dir, backupPrefix+at.Format(stampLayout))
-	for i := 0; i < 100; i++ {
+	stamp := at.Truncate(time.Second)
+
+	highest := 0
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if t, seq, ok := parseSnapshotName(e.Name()); ok && t.Equal(stamp) && seq > highest {
+				highest = seq
+			}
+		}
+	}
+	for seq := highest + 1; seq <= highest+100; seq++ {
 		path := base + backupExt
-		if i > 0 {
-			path = fmt.Sprintf("%s-%d%s", base, i+1, backupExt)
+		if seq > 1 {
+			path = fmt.Sprintf("%s-%d%s", base, seq, backupExt)
 		}
 		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			return path, nil
@@ -1309,6 +1585,10 @@ func VerifySnapshot(ctx context.Context, path string) (Counts, error) {
 		return nil, fmt.Errorf("snapshot %s records no applied migrations", filepath.Base(path))
 	}
 
+	if version < 4 {
+		return snapshotCounts(ctx, snap)
+	}
+
 	var unowned, unhoused int
 	if err := snap.QueryRowContext(ctx, `
 		SELECT (SELECT COUNT(*) FROM households h
@@ -1343,6 +1623,25 @@ func VerifySnapshot(ctx context.Context, path string) (Counts, error) {
 	return counts, nil
 }
 
+func snapshotCounts(ctx context.Context, snap *sql.DB) (Counts, error) {
+	counts := Counts{}
+	for _, table := range guardedTables {
+		var exists int
+		if err := snap.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if exists == 0 {
+			continue
+		}
+		var n int64
+		if err := snap.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&n); err != nil {
+			return nil, fmt.Errorf("count %s: %w", table, err)
+		}
+		counts[table] = n
+	}
+	return counts, nil
+}
+
 // openForVerify opens a snapshot read-only. query_only stops the verification
 // modifying what it verifies, but a driver that refuses the pragma falls back rather
 // than blocking startup on every pending migration.
@@ -1371,17 +1670,46 @@ func openForVerify(ctx context.Context, path string) (*sql.DB, error) {
 		filepath.Base(path), lastErr)
 }
 
+// EmptiedError is the shape of a truncated backup: one or more guarded tables that
+// held rows in the previous snapshot and hold none in this one.
+type EmptiedError struct {
+	Tables   []string // guarded tables that went from rows to none, in guardedTables order
+	Was      Counts   // their counts in the previous snapshot
+	Previous string   // the previous snapshot's path
+}
+
+func (e *EmptiedError) Error() string {
+	parts := make([]string, len(e.Tables))
+	for i, t := range e.Tables {
+		parts[i] = fmt.Sprintf("%s held %d row(s)", t, e.Was[t])
+	}
+	return fmt.Sprintf("snapshot looks truncated: %s in %s and holds none now",
+		strings.Join(parts, ", "), filepath.Base(e.Previous))
+}
+
+// key identifies one emptied state, so a marker left by an earlier attempt is only
+// taken as confirmation of the same thing.
+func (e *EmptiedError) key() string {
+	return filepath.Base(e.Previous) + " " + strings.Join(e.Tables, ",")
+}
+
 // compareCounts rejects the shape of a truncated backup: a guarded table that had rows
-// and now has none.
+// and now has none. Shrinking without reaching zero is only logged, because deliberate
+// deletions (`yaba reset -keep`, a user closing their account) do exactly that.
 func compareCounts(prev, now Counts, prevPath string) error {
 	if prev == nil {
 		return nil
 	}
+	var emptied *EmptiedError
 	for _, t := range guardedTables {
 		was, is := prev[t], now[t]
 		if was > 0 && is == 0 {
-			return fmt.Errorf("snapshot looks truncated: %s held %d row(s) in %s and holds none now",
-				t, was, filepath.Base(prevPath))
+			if emptied == nil {
+				emptied = &EmptiedError{Was: Counts{}, Previous: prevPath}
+			}
+			emptied.Tables = append(emptied.Tables, t)
+			emptied.Was[t] = was
+			continue
 		}
 		if is < was {
 			log.Printf("backup: %s shrank from %d to %d since %s "+
@@ -1389,7 +1717,121 @@ func compareCounts(prev, now Counts, prevPath string) error {
 				t, was, is, filepath.Base(prevPath))
 		}
 	}
+	if emptied != nil {
+		return emptied
+	}
 	return nil
+}
+
+// acceptEmptied decides whether an emptied guarded table is the database's real state.
+//
+// Refusing forever is not an option: the comparison is against the newest surviving
+// snapshot, and a refused snapshot is deleted, so once the only household is
+// legitimately deleted every later backup would be refused too and the server would
+// silently go without backups for good. So the emptied state is accepted when either
+//
+//   - an operator says so (cfg.AcceptEmpty, or AcceptEmptyEnv), or
+//   - the same tables have been seen empty, against the same previous snapshot, on
+//     an earlier attempt at least ConfirmEmptyAfter ago. A snapshot that is broken
+//     by accident does not keep coming out broken in exactly the same way across
+//     attempts an hour apart; a database that really is empty does.
+//
+// Either way the snapshot that still held the rows is then preserved outside
+// retention (keepPreEmpty), so accepting cannot rotate the last good copy away.
+func acceptEmptied(cfg BackupConfig, e *EmptiedError, now time.Time) (bool, string) {
+	if cfg.AcceptEmpty {
+		return true, "accepted by the operator (-accept-empty)"
+	}
+	if envTrue(os.Getenv(AcceptEmptyEnv)) {
+		return true, AcceptEmptyEnv + " is set (unset it again, or this check stays off)"
+	}
+
+	wait := cfg.ConfirmEmptyAfter
+	if wait <= 0 {
+		wait = DefaultConfirmEmptyAfter
+	}
+	marker := filepath.Join(cfg.Dir, emptiedMarker)
+	hint := fmt.Sprintf("if that deletion was deliberate, run `yaba backup -accept-empty` "+
+		"or set %s=1 once", AcceptEmptyEnv)
+
+	if key, first, ok := readEmptiedMarker(marker); ok && key == e.key() {
+		if seen := now.Sub(first); seen >= wait {
+			return true, fmt.Sprintf("the same table(s) have been empty on every attempt since %s (%s ago), "+
+				"so this is the database's real state", first.UTC().Format(time.RFC3339),
+				seen.Round(time.Second))
+		}
+		return false, fmt.Sprintf("first seen empty at %s; it will be accepted automatically "+
+			"if it is still the case after %s, or %s",
+			first.UTC().Format(time.RFC3339), first.Add(wait).UTC().Format(time.RFC3339), hint)
+	}
+
+	content := e.key() + "\n" + now.UTC().Format(time.RFC3339Nano) + "\n"
+	if err := os.WriteFile(marker, []byte(content), 0o600); err != nil {
+		log.Printf("backup: could not record %s: %v", marker, err)
+	}
+	return false, fmt.Sprintf("it will be accepted automatically if it is still the case after %s, or %s",
+		now.Add(wait).UTC().Format(time.RFC3339), hint)
+}
+
+func readEmptiedMarker(path string) (key string, first time.Time, ok bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", time.Time{}, false
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 {
+		return "", time.Time{}, false
+	}
+	first, err = time.Parse(time.RFC3339Nano, strings.TrimSpace(lines[1]))
+	if err != nil {
+		return "", time.Time{}, false
+	}
+	return strings.TrimSpace(lines[0]), first, true
+}
+
+func clearEmptiedMarker(dir string) {
+	if err := os.Remove(filepath.Join(dir, emptiedMarker)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("backup: could not remove %s: %v", emptiedMarker, err)
+	}
+}
+
+// keepPreEmpty preserves the snapshot that still held the rows, and its receipts, under
+// a name Snapshots does not list. A hard link costs no space; a copy is the fallback
+// for filesystems without links.
+func keepPreEmpty(prevPath string) (string, error) {
+	dir, base := filepath.Split(prevPath)
+	kept := filepath.Join(dir, preEmptyPrefix+base)
+	pairs := [][2]string{{prevPath, kept}}
+	archive := strings.TrimSuffix(prevPath, backupExt) + uploadsSuf
+	if _, err := os.Stat(archive); err == nil {
+		pairs = append(pairs, [2]string{archive, filepath.Join(dir, preEmptyPrefix+filepath.Base(archive))})
+	}
+	for _, p := range pairs {
+		if _, err := os.Stat(p[1]); err == nil {
+			continue // already preserved by an earlier acceptance
+		}
+		if err := os.Link(p[0], p[1]); err != nil {
+			if err := copyFileTo(p[0], p[1]); err != nil {
+				return "", err
+			}
+		}
+	}
+	return kept, nil
+}
+
+// envTrue reads a boolean the way the server's own envBool does (strconv.ParseBool).
+// Anything unparseable is false: this switches a safety check off, so a typo must not.
+func envTrue(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return false
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		log.Printf("WARNING: %s=%q is not a boolean; treating it as false", AcceptEmptyEnv, v)
+		return false
+	}
+	return b
 }
 
 // lastSnapshotCounts reads the counts out of the newest snapshot itself rather than a
@@ -1411,7 +1853,38 @@ func lastSnapshotCounts(ctx context.Context, dir string) (Counts, string) {
 	return counts, newest
 }
 
+// parseSnapshotName reads the timestamp and same-second sequence number out of a
+// snapshot's file name: "yaba-20260801-030000Z.db" is (that instant, 1) and
+// "yaba-20260801-030000Z-2.db" is (that instant, 2). ok is false for anything
+// freeSnapshotPath would not have written.
+func parseSnapshotName(name string) (at time.Time, seq int, ok bool) {
+	if !strings.HasPrefix(name, backupPrefix) || !strings.HasSuffix(name, backupExt) {
+		return time.Time{}, 0, false
+	}
+	rest := strings.TrimSuffix(strings.TrimPrefix(name, backupPrefix), backupExt)
+	if len(rest) < len(stampLayout) {
+		return time.Time{}, 0, false
+	}
+	at, err := time.Parse(stampLayout, rest[:len(stampLayout)])
+	if err != nil {
+		return time.Time{}, 0, false
+	}
+	suffix := rest[len(stampLayout):]
+	if suffix == "" {
+		return at, 1, true
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(suffix, "-"))
+	if !strings.HasPrefix(suffix, "-") || err != nil || n < 2 {
+		return time.Time{}, 0, false
+	}
+	return at, n, true
+}
+
 // Snapshots lists snapshot paths in the directory, oldest first.
+//
+// Only names freeSnapshotPath writes are listed. Prune deletes from the front of this
+// list, so a file that merely happens to start with "yaba-" and end in ".db" must not
+// be on it.
 func Snapshots(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -1420,17 +1893,46 @@ func Snapshots(dir string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", dir, err)
 	}
-	var found []string
+	type named struct {
+		path string
+		at   time.Time
+		seq  int
+	}
+	var found []named
 	for _, e := range entries {
-		n := e.Name()
-		if e.IsDir() || !strings.HasPrefix(n, backupPrefix) || !strings.HasSuffix(n, backupExt) {
+		if e.IsDir() {
 			continue
 		}
-		found = append(found, filepath.Join(dir, n))
+		at, seq, ok := parseSnapshotName(e.Name())
+		if !ok {
+			continue
+		}
+		found = append(found, named{filepath.Join(dir, e.Name()), at, seq})
 	}
-	// Names carry a UTC timestamp, so lexical order is chronological order.
-	sort.Strings(found)
-	return found, nil
+	// By (timestamp, sequence), not by name: '-' sorts before '.', so lexically
+	// "…Z-2.db" comes before the "…Z.db" it was written after, and prune, the
+	// truncation baseline and "restore the newest" would all pick the wrong file.
+	sort.Slice(found, func(i, j int) bool {
+		if !found[i].at.Equal(found[j].at) {
+			return found[i].at.Before(found[j].at)
+		}
+		return found[i].seq < found[j].seq
+	})
+	paths := make([]string, len(found))
+	for i, f := range found {
+		paths[i] = f.path
+	}
+	return paths, nil
+}
+
+// newestSnapshotTime is when the newest snapshot in dir was taken, read from its name.
+func newestSnapshotTime(dir string) (time.Time, bool) {
+	found, err := Snapshots(dir)
+	if err != nil || len(found) == 0 {
+		return time.Time{}, false
+	}
+	at, _, ok := parseSnapshotName(filepath.Base(found[len(found)-1]))
+	return at, ok
 }
 
 // Prune keeps the newest keep snapshots and the receipt archive belonging to each.
@@ -1465,6 +1967,14 @@ func Prune(dir string, keep int) ([]string, error) {
 }
 
 // archiveUploads zips the receipt directory alongside the snapshot.
+//
+// Receipts change far less often than the database, and every backup used to
+// zip all of them again, so a site keeping fourteen snapshots held fourteen
+// copies of every receipt. Each archive now records a fingerprint of what it
+// holds (in the zip comment); when the newest existing archive already holds
+// exactly these files, the new one is a hard link to it -- the same bytes under
+// a second name, costing no space, and still removed independently by Prune.
+// Restore is unchanged: every snapshot still has its own archive.
 func archiveUploads(uploadDir, dest string) (int, error) {
 	info, err := os.Stat(uploadDir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -1477,11 +1987,28 @@ func archiveUploads(uploadDir, dest string) (int, error) {
 		return 0, fmt.Errorf("%s is not a directory", uploadDir)
 	}
 
+	fingerprint, files, err := uploadsFingerprint(uploadDir)
+	if err != nil || files == 0 {
+		return 0, err
+	}
+	if prev := newestArchiveWith(filepath.Dir(dest), fingerprint); prev != "" {
+		if err := os.Link(prev, dest); err == nil {
+			return files, nil
+		}
+		// A filesystem without hard links: write a fresh archive instead.
+	}
+
 	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return 0, err
 	}
 	zw := zip.NewWriter(out)
+	if err := zw.SetComment(fingerprint); err != nil {
+		zw.Close()
+		out.Close()
+		os.Remove(dest)
+		return 0, err
+	}
 
 	stored := 0
 	walkErr := filepath.WalkDir(uploadDir, func(path string, d os.DirEntry, err error) error {
@@ -1528,27 +2055,285 @@ func archiveUploads(uploadDir, dest string) (int, error) {
 	return stored, nil
 }
 
+// uploadsFingerprint summarises the receipt directory as a hash of every file's
+// relative path, size and modification time, and counts the files. Receipts are
+// written once and never edited, so this changes exactly when one is added or
+// removed.
+func uploadsFingerprint(dir string) (string, int, error) {
+	h := sha256.New()
+	files := 0
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(h, "%s\x00%d\x00%d\n", filepath.ToSlash(rel), info.Size(), info.ModTime().UnixNano())
+		files++
+		return nil
+	})
+	if err != nil {
+		return "", 0, err
+	}
+	return "yaba-uploads-v1 " + hex.EncodeToString(h.Sum(nil)), files, nil
+}
+
+// newestArchiveWith returns the newest receipt archive in dir whose recorded
+// fingerprint is want, or "" when the newest archive differs (or none exists).
+// Only the newest is checked: it is the one the last backup wrote.
+func newestArchiveWith(dir, want string) string {
+	found, err := filepath.Glob(filepath.Join(dir, backupPrefix+"*"+uploadsSuf))
+	if err != nil || len(found) == 0 {
+		return ""
+	}
+	sort.Strings(found)
+	newest := found[len(found)-1]
+	zr, err := zip.OpenReader(newest)
+	if err != nil {
+		return ""
+	}
+	defer zr.Close()
+	if zr.Comment != want {
+		return ""
+	}
+	return newest
+}
+
+// sidecars are the files that, in WAL mode, hold part of a database's committed
+// state. They belong with the main file wherever it goes.
+var sidecars = []string{"-wal", "-shm"}
+
 // Restore puts a snapshot back at dbPath, verifying it first so a corrupt backup
 // cannot destroy a working database on its way to being discovered.
-func Restore(ctx context.Context, snapshotPath, dbPath string, force bool) error {
+//
+// A database already at dbPath is replaced only with force, and even then it is never
+// deleted: it is checkpointed and moved aside, together with any -wal and -shm, as
+// dbPath.before-restore-<stamp>[-wal|-shm]. The paths it was moved to are returned.
+// Because the sidecars keep their suffix relative to the new name, opening the
+// set-aside file with SQLite still sees every commit it held.
+//
+// The caller must hold the database's lock (AcquireLock) for the duration. Moving a
+// database out from under a running server would leave the server writing to a file
+// that is no longer the database, and every write it accepted afterwards would vanish.
+func Restore(ctx context.Context, snapshotPath, dbPath string, force bool) ([]string, error) {
 	if _, err := VerifySnapshot(ctx, snapshotPath); err != nil {
-		return fmt.Errorf("restore refused: %w", err)
+		return nil, fmt.Errorf("restore refused: %w", err)
 	}
 
-	if _, err := os.Stat(dbPath); err == nil && !force {
-		return fmt.Errorf("%s already exists; pass -force to overwrite it", dbPath)
+	existing, statErr := os.Stat(dbPath)
+	if statErr == nil && !force {
+		return nil, fmt.Errorf("%s already exists; pass -force to overwrite it", dbPath)
+	}
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("restore: %w", statErr)
+	}
+	if statErr == nil && existing.IsDir() {
+		return nil, fmt.Errorf("restore: %s is a directory", dbPath)
+	}
+
+	// Anything at dbPath, including sidecars orphaned by a crash, is set aside rather
+	// than deleted. An orphaned -wal left in place would be replayed into the restored
+	// file, which it does not belong to.
+	aside, err := setAside(ctx, dbPath, "before-restore")
+	if err != nil {
+		return nil, fmt.Errorf("restore: %w; nothing was replaced", err)
 	}
 
 	if err := copyFileTo(snapshotPath, dbPath); err != nil {
-		return err
+		// Put the original back, so a failed restore leaves things as they were.
+		if rbErr := moveBack(aside, dbPath); rbErr != nil {
+			return aside, fmt.Errorf("restore: copy %s: %w (and moving the original back failed: %v; "+
+				"it is at %s)", snapshotPath, err, rbErr, strings.Join(aside, ", "))
+		}
+		return nil, fmt.Errorf("restore: copy %s: %w; the original is back in place", snapshotPath, err)
 	}
 
-	// Delete the old sidecars: a -wal left from the database being replaced belongs to a
-	// different file, and SQLite would try to recover it into the restored one.
-	for _, suffix := range []string{"-wal", "-shm"} {
-		if err := os.Remove(dbPath + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("restore: remove stale %s%s: %w", dbPath, suffix, err)
+	// A restore is typically run as root (sudo) on behalf of a service account. A
+	// replacement owned by root would leave the server unable to open its own database,
+	// so the new file takes the owner of the one it replaced.
+	if existing != nil {
+		if err := matchOwner(dbPath, existing); err != nil {
+			log.Printf("restore: could not give %s the owner of the database it replaced: %v", dbPath, err)
 		}
+	}
+	return aside, nil
+}
+
+// setAside moves the database at dbPath, and any sidecars, to dbPath.<label>-<stamp>,
+// first folding the WAL into the main file where it can. It returns the new paths, the
+// main file first, or nil if there was nothing to move.
+func setAside(ctx context.Context, dbPath, label string) ([]string, error) {
+	present := func(p string) bool { _, err := os.Lstat(p); return err == nil }
+
+	mainExists := present(dbPath)
+	var parts []string // suffixes to move: "" for the main file
+	if mainExists {
+		parts = append(parts, "")
+	}
+	for _, s := range sidecars {
+		if present(dbPath + s) {
+			parts = append(parts, s)
+		}
+	}
+	if len(parts) == 0 {
+		return nil, nil
+	}
+	if !mainExists {
+		log.Printf("restore: %s is missing but has sidecars; moving them aside", dbPath)
+	}
+
+	base, err := freeAsidePath(dbPath, label, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+
+	// Fold uncheckpointed commits into the main file, so the set-aside copy is complete
+	// on its own. If that is impossible -- the file being replaced is often the damaged
+	// one -- the sidecars are moved with it instead, which loses nothing either.
+	//
+	// SQLite is not trusted with the only copy of the WAL while it tries: on a file it
+	// cannot read as a database it unlinks the -wal and -shm when the connection
+	// closes. So a raw copy goes to the set-aside name first, and is replaced by the
+	// original below if the original survives, or discarded once a checkpoint has
+	// provably folded every frame into the main file.
+	walCopy := ""
+	if mainExists && isSQLiteFile(dbPath) {
+		if info, err := os.Stat(dbPath + "-wal"); err == nil && info.Size() > 0 {
+			if err := copyFileTo(dbPath+"-wal", base+"-wal"); err != nil {
+				return nil, fmt.Errorf("preserve %s-wal before checkpointing: %w", dbPath, err)
+			}
+			walCopy = base + "-wal"
+		}
+		if err := checkpoint(ctx, dbPath); err != nil {
+			log.Printf("restore: could not checkpoint %s (%v); moving its -wal and -shm aside with it",
+				dbPath, err)
+		} else if walCopy != "" {
+			os.Remove(walCopy)
+			walCopy = ""
+		}
+		// A clean checkpoint and close normally removes the sidecars, so look again.
+		parts = parts[:1]
+		for _, s := range sidecars {
+			if present(dbPath + s) {
+				parts = append(parts, s)
+			}
+		}
+	}
+
+	// Main file first: if a later rename fails, the ones already done are undone, so the
+	// set is never split between two names.
+	var moved []string
+	for _, s := range parts {
+		if err := os.Rename(dbPath+s, base+s); err != nil {
+			if rbErr := moveBack(moved, dbPath); rbErr != nil {
+				return moved, fmt.Errorf("move %s%s aside: %w (and undoing the earlier moves failed: %v)",
+					dbPath, s, err, rbErr)
+			}
+			if walCopy != "" {
+				return nil, fmt.Errorf("move %s%s aside: %w (a copy of its WAL is at %s)",
+					dbPath, s, err, walCopy)
+			}
+			return nil, fmt.Errorf("move %s%s aside: %w", dbPath, s, err)
+		}
+		moved = append(moved, base+s)
+		if base+s == walCopy {
+			walCopy = "" // the original replaced the copy
+		}
+	}
+	if walCopy != "" {
+		// The checkpoint failed and SQLite removed the original: the copy is the WAL now.
+		moved = append(moved, walCopy)
+	}
+	return moved, nil
+}
+
+// isSQLiteFile reports whether path starts with the SQLite header. Anything else is
+// moved aside byte for byte without SQLite ever opening it.
+func isSQLiteFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	header := make([]byte, 16)
+	if _, err := io.ReadFull(f, header); err != nil {
+		return false
+	}
+	return string(header) == "SQLite format 3\x00"
+}
+
+// freeAsidePath returns dbPath.<label>-<stamp>, with a numeric suffix if two set-asides
+// land in the same second, checking every name the set would take.
+func freeAsidePath(dbPath, label string, at time.Time) (string, error) {
+	stem := dbPath + "." + label + "-" + at.Format(stampLayout)
+	for i := 1; i <= 100; i++ {
+		base := stem
+		if i > 1 {
+			base = fmt.Sprintf("%s-%d", stem, i)
+		}
+		free := true
+		for _, s := range append([]string{""}, sidecars...) {
+			if _, err := os.Lstat(base + s); err == nil {
+				free = false
+				break
+			}
+		}
+		if free {
+			return base, nil
+		}
+	}
+	return "", fmt.Errorf("no free name to move %s aside to", dbPath)
+}
+
+// moveBack undoes setAside for the given paths, each of which ends in its suffix
+// relative to the set-aside base name.
+func moveBack(moved []string, dbPath string) error {
+	if len(moved) == 0 {
+		return nil
+	}
+	base := moved[0]
+	for _, s := range sidecars {
+		base = strings.TrimSuffix(base, s)
+	}
+	var errs []error
+	for i := len(moved) - 1; i >= 0; i-- {
+		suffix := strings.TrimPrefix(moved[i], base)
+		if err := os.Rename(moved[i], dbPath+suffix); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// checkpoint copies every committed WAL frame into the main database file and
+// truncates the WAL, using a connection of its own that is closed before returning
+// (Windows cannot rename a file that is still open).
+func checkpoint(ctx context.Context, dbPath string) error {
+	// No journal_mode pragma here, unlike Open: this must not change the file's mode,
+	// only fold in what is already committed. A short busy timeout, because the caller
+	// holds the lock and nothing should be competing.
+	conn, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(2000)")
+	if err != nil {
+		return err
+	}
+	conn.SetMaxOpenConns(1)
+
+	var busy, logFrames, done int
+	err = conn.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logFrames, &done)
+	closeErr := conn.Close()
+	switch {
+	case err != nil:
+		return err
+	case busy != 0:
+		return errors.New("another connection prevented the checkpoint from completing")
+	case closeErr != nil:
+		return closeErr
 	}
 	return nil
 }
@@ -1624,11 +2409,18 @@ func Version(sqlDB *sql.DB) int {
 
 // BackupLoop takes a snapshot on a timer until ctx is cancelled, inside the server
 // process, so backups do not depend on an external scheduler.
+//
+// The schedule is anchored to the newest snapshot on disk rather than to process
+// start. A plain ticker only fired a full interval after start, so a server restarted
+// more often than that (a deploy a day, say) never took a scheduled backup at all.
 func BackupLoop(ctx context.Context, sqlDB *sql.DB, cfg BackupConfig, every time.Duration) {
 	if every <= 0 {
 		every = DefaultBackupEvery
 	}
-	t := time.NewTicker(every)
+	wait := firstBackupDelay(cfg.Dir, every, time.Now())
+	log.Printf("backups: next snapshot in %s", wait.Round(time.Second))
+
+	t := time.NewTimer(wait)
 	defer t.Stop()
 
 	for {
@@ -1636,18 +2428,45 @@ func BackupLoop(ctx context.Context, sqlDB *sql.DB, cfg BackupConfig, every time
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			snap, err := Backup(ctx, sqlDB, cfg)
-			if err != nil {
-				// Loud, and every time. A backup that quietly stopped working two months ago is
-				// worse than none at all, because it removed the worry without removing the risk.
-				log.Printf("BACKUP FAILED: %v", err)
-				continue
-			}
+		}
+
+		next := every
+		snap, err := Backup(ctx, sqlDB, cfg)
+		switch {
+		case err != nil && ctx.Err() != nil:
+			return // shutting down mid-backup is not a failure worth shouting about
+		case err != nil:
+			// Loud, and every time. A backup that quietly stopped working two months ago is
+			// worse than none at all, because it removed the worry without removing the risk.
+			next = min(every, backupRetryAfter)
+			log.Printf("BACKUP FAILED: %v (retrying in %s)", err, next)
+		default:
 			log.Printf("backup: %s (%s) verified in %s%s",
 				filepath.Base(snap.Path), humanBytes(snap.Bytes),
 				snap.Took.Round(time.Millisecond), prunedNote(snap.Pruned))
 		}
+		t.Reset(next)
 	}
+}
+
+// firstBackupDelay is how long BackupLoop waits before its first snapshot: until the
+// newest snapshot is an interval old, but never less than backupStartDelay, and
+// immediately-ish (backupStartDelay) when there is no snapshot or it is overdue.
+func firstBackupDelay(dir string, every time.Duration, now time.Time) time.Duration {
+	newest, ok := newestSnapshotTime(dir)
+	if !ok {
+		return backupStartDelay
+	}
+	wait := newest.Add(every).Sub(now)
+	switch {
+	case wait < backupStartDelay:
+		return backupStartDelay
+	case wait > every:
+		// A snapshot stamped in the future means the clock moved; do not wait longer
+		// than one interval because of it.
+		return every
+	}
+	return wait
 }
 
 func prunedNote(pruned []string) string {
@@ -1668,11 +2487,102 @@ func humanBytes(n int64) string {
 	}
 }
 
-// DefaultBackupDir is outside the project folder: a cloud-synced directory would upload
-// every snapshot forever, and a backup beside its original dies with it.
-func DefaultBackupDir() string {
-	if cache, err := os.UserCacheDir(); err == nil {
-		return filepath.Join(cache, "YABA", "backups")
+// BackupDirFor is where snapshots go when nothing configures a directory: "backups"
+// beside the database file.
+//
+// This used to be os.UserCacheDir(), which depends on who is asking. Under systemd
+// with User=yaba the server wrote to ~yaba/.cache, while `yaba restore` run by an
+// admin looked in the admin's own cache and found nothing -- and a cache directory is
+// by definition something the system may clean. A path derived from the database is
+// the same for every user and every process that agrees on the database. Production
+// should still set YABA_BACKUP_DIR (ideally another disk) and copy snapshots off the
+// machine, because a backup beside its original shares its fate.
+func BackupDirFor(dbPath string) string {
+	dir := filepath.Dir(dbPath)
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
 	}
-	return "backups"
+	return filepath.Join(dir, "backups")
+}
+
+// DefaultBackupDir is BackupDirFor applied to YABA_DB (or "yaba.db", the default both
+// binaries use), for a flag default computed before flags are parsed. A caller that
+// knows its database path after parsing should prefer BackupDirFor(thatPath), so a
+// -db flag moves the default with it.
+func DefaultBackupDir() string {
+	dbPath := strings.TrimSpace(os.Getenv("YABA_DB"))
+	if dbPath == "" {
+		dbPath = "yaba.db"
+	}
+	return BackupDirFor(dbPath)
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// lock
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ErrLocked means another process holds the database's lock: normally the running
+// server, sometimes a second maintenance command.
+var ErrLocked = errors.New("the database is in use by another process")
+
+// Lock is an exclusive, advisory, whole-process hold on a database, taken by the
+// server for its lifetime and by the maintenance commands that replace or rewrite the
+// database underneath it (restore, reset, repair).
+//
+// Why a lock file rather than asking SQLite. In WAL mode an idle server connection
+// holds no lock on the database file at all -- only a shared lock on a byte of the
+// -shm -- so neither BEGIN EXCLUSIVE nor locking_mode=EXCLUSIVE can see that a server
+// is running between requests; they would succeed, and the server's next write would
+// land in a file restore had already moved aside. A separate lock file avoids all of
+// that, and is reliable on both platforms we run on:
+//
+//   - Linux/macOS use flock(2). The kernel drops it when the process exits for any
+//     reason, kill -9 and OOM included, so there is never a stale lock to clean up.
+//     It is per open file, so it also excludes a second holder in the same process,
+//     unlike POSIX fcntl locks, which SQLite uses on the database file itself and
+//     which this deliberately does not touch.
+//   - Windows uses LockFileEx, which has the same released-on-exit behaviour.
+//
+// The file itself is never deleted (unlinking a lock file races with the next
+// opener) and is empty. It is opened read-only, which both APIs accept, and created
+// 0644, so a lock file first created by root through `sudo yaba restore` can still be
+// locked by the service account afterwards.
+type Lock struct {
+	f    *os.File
+	path string
+}
+
+// LockPath is the lock file for the database at dbPath.
+func LockPath(dbPath string) string { return dbPath + ".lock" }
+
+// AcquireLock takes the database's lock without waiting, and returns an error
+// wrapping ErrLocked if another process holds it. Release it when done; the operating
+// system releases it anyway if the process dies.
+func AcquireLock(dbPath string) (*Lock, error) {
+	path := LockPath(dbPath)
+	f, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open lock file %s: %w", path, err)
+	}
+	held, err := lockFile(f)
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	if held {
+		f.Close()
+		return nil, fmt.Errorf("%w (%s is locked)", ErrLocked, path)
+	}
+	return &Lock{f: f, path: path}, nil
+}
+
+// Release gives the lock up. It is safe to call more than once, and on a nil Lock.
+func (l *Lock) Release() error {
+	if l == nil || l.f == nil {
+		return nil
+	}
+	unlockFile(l.f)
+	err := l.f.Close()
+	l.f = nil
+	return err
 }

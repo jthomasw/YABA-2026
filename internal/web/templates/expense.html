@@ -120,7 +120,7 @@
               aria-expanded="false">
         <span class="choice-icon">{{template "icon" "upload"}}</span>
         <span class="choice-name">Upload</span>
-        <span class="choice-desc">Photograph a receipt and we'll read the amount off it.</span>
+        <span class="choice-desc">{{if .ReadingEnabled}}Photograph a receipt and we'll read the amount and items off it.{{else}}Photograph a receipt and attach it, then enter the details.{{end}}</span>
       </button>
     </div>
   </div>
@@ -139,25 +139,25 @@
              input is an ordinary file picker on a desktop browser. One input
              covers both, with no device sniffing. */}}
         <input id="receipt" name="receipt" type="file" required
-               accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+               accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif,application/pdf"
                capture="environment">
-        <p class="hint">JPEG, PNG, WebP, GIF or PDF.</p>
+        <p class="hint">JPEG, PNG, HEIC, WebP, GIF or PDF.</p>
       </div>
 
-      <div class="callout callout-info">
-        <p><strong>Stay on this page.</strong> The receipt is read here and you
-           will see it happen — then the expense form opens with the amount,
-           the shop and the items already filled in.</p>
-        <p class="stat-note">
-          Check the figures against the picture before you save: an amount read
-          off a photograph is a proposal, never a fact. Anything that could not
-          be read is simply left blank for you.
+      {{if not .ReadingEnabled}}
+      <div class="callout callout-warn">
+        <p>
+          <strong>Automatic reading is off on this server.</strong> Your receipt
+          will be saved and attached, but you will type the amount and items in
+          yourself. To turn reading on, set <code>YABA_GEMINI_KEY</code> in the
+          server's <code>.env</code> file and restart it.
         </p>
       </div>
+      {{end}}
 
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">
-          {{template "icon" "upload"}} Upload and read
+          {{template "icon" "upload"}} {{if .ReadingEnabled}}Upload and read{{else}}Upload{{end}}
         </button>
         <button type="button" class="btn btn-quiet" data-close-receipt>Cancel</button>
       </div>
@@ -180,23 +180,24 @@
       {{/* One-time token: a double click, a slow tap repeated, or the back
            button followed by Save would otherwise record this money twice.
            Spent on the first successful submit. */}}
-      {{if .FormToken}}<input type="hidden" name="form_token" value="{{.FormToken}}">{{end}}
+      {{if .FormToken}}<input type="hidden" name="form_token" value="{{.FormToken}}"><input type="hidden" name="form_household" value="{{.HouseholdID}}">{{end}}
       {{template "csrf" .}}
 
       {{/* One-time or repeating. Add Income asks the same question in the same
            place and the same words, so the two forms are learned once rather
            than twice. One-time is preselected: the common case, and the safe
-           default if a script never runs. */}}
+           default if a script never runs. After a refused submission the
+           user's own choice is selected instead -- see formFields. */}}
       <fieldset class="field">
         <legend>Expense type</legend>
 
         <div class="radio-row">
           <label class="radio">
-            <input type="radio" name="expense_type" value="one_time" checked>
+            <input type="radio" name="expense_type" value="one_time" {{if not .Recurring}}checked{{end}}>
             One-time
           </label>
           <label class="radio">
-            <input type="radio" name="expense_type" value="recurring">
+            <input type="radio" name="expense_type" value="recurring" {{if .Recurring}}checked{{end}}>
             Recurring
           </label>
         </div>
@@ -234,26 +235,18 @@
         <div class="field">
           <label for="frequency_preset">How often</label>
           <select id="frequency_preset" name="frequency_preset" data-frequency-preset>
-            <option value="weekly">Weekly</option>
-            <option value="biweekly">Every 2 weeks (bi-weekly)</option>
-            <option value="monthly" selected>Monthly</option>
-            <option value="quarterly">Every 3 months (quarterly)</option>
-            <option value="semiannual">Every 6 months</option>
-            <option value="yearly">Yearly</option>
-            <option value="custom">Custom&hellip;</option>
+            {{template "frequencyPresets" .FrequencyPreset}}
           </select>
         </div>
 
         <div class="form-row" data-frequency-custom>
           <label class="visually-hidden" for="frequency_n">How many</label>
           <input type="number" id="frequency_n" name="frequency_n"
-                 min="1" max="120" value="1" inputmode="numeric">
+                 min="1" max="120" value="{{.FrequencyN}}" inputmode="numeric">
 
           <label class="visually-hidden" for="frequency_unit">Days, weeks or months</label>
           <select id="frequency_unit" name="frequency_unit">
-            <option value="day">Day(s)</option>
-            <option value="week">Week(s)</option>
-            <option value="month" selected>Month(s)</option>
+            {{template "frequencyUnits" .FrequencyUnit}}
           </select>
         </div>
 
@@ -384,38 +377,6 @@
         and the server still reads expense_type, so the feature works -- it is
         just less explained.
       */}}
-      <script>
-        document.addEventListener("DOMContentLoaded", function () {
-          var recurring  = document.getElementById("recurring-fields");
-          var dateLabel  = document.getElementById("expense-date-label");
-          var saveLabel  = document.querySelector("[data-save-label]");
-          var oneTime    = document.querySelectorAll("[data-one-time-only]");
-          var types      = document.querySelectorAll('input[name="expense_type"]');
-
-          if (!recurring || !types.length) return;
-
-          // Hidden from here, not from the server: see the fieldset above.
-          recurring.style.display = "none";
-
-          function update() {
-            var picked = document.querySelector('input[name="expense_type"]:checked');
-            var isRepeat = !!picked && picked.value === "recurring";
-
-            recurring.style.display = isRepeat ? "" : "none";
-
-            if (dateLabel) dateLabel.textContent = isRepeat ? "Starting when?" : "When?";
-            if (saveLabel) saveLabel.textContent = isRepeat ? "Save Recurring Expense" : "Save Expense";
-
-            oneTime.forEach(function (el) { el.hidden = isRepeat; });
-          }
-
-          types.forEach(function (input) {
-            input.addEventListener("change", update);
-          });
-
-          update();
-        });
-      </script>
     </form>
   </div>
   {{end}}

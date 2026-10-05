@@ -457,3 +457,100 @@ func TestHumanDuration(t *testing.T) {
 		}
 	}
 }
+
+// TestDeliverIsBoundedEvenWhenNobodyIsWaiting: Send stops waiting at its
+// deadline, but the goroutine running deliver used to carry on for as long as
+// a stalled relay held the socket -- forever, one leaked goroutine per
+// message. The deadline now covers the whole conversation, so deliver itself
+// returns, whether the relay goes quiet before its greeting or after it.
+func TestDeliverIsBoundedEvenWhenNobodyIsWaiting(t *testing.T) {
+	cases := []struct {
+		name  string
+		greet bool
+	}{
+		{"never greets", false},
+		{"greets, then goes quiet", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close()
+
+			release := make(chan struct{})
+			defer close(release)
+			go func() {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				if c.greet {
+					fmt.Fprintf(conn, "220 fake ESMTP\r\n")
+				}
+				<-release // then say nothing until the test is over
+			}()
+
+			addr := ln.Addr().(*net.TCPAddr)
+			m := New(Config{Host: "127.0.0.1", Port: addr.Port, From: "yaba@example.test"})
+
+			done := make(chan error, 1)
+			start := time.Now()
+			go func() {
+				done <- m.deliver(ln.Addr().String(), "x@example.test", []byte("body"), 200*time.Millisecond)
+			}()
+
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Error("a silent relay was reported as a successful delivery")
+				}
+				if elapsed := time.Since(start); elapsed > 2*time.Second {
+					t.Errorf("deliver took %v with a 200ms budget", elapsed)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("deliver is still blocked on a silent relay; every such message leaks a goroutine")
+			}
+		})
+	}
+}
+
+// TestPlaintextIsRefusedForARemoteServer: a remote relay that does not offer
+// STARTTLS (or whose offer was stripped in transit) must not receive the
+// message in the clear.
+func TestPlaintextIsRefusedForARemoteServer(t *testing.T) {
+	m := New(Config{Host: "smtp.example.test", From: "YABA <yaba@example.test>"})
+	client, server := net.Pipe()
+	defer client.Close()
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 512)
+		server.Write([]byte("220 hi\r\n"))
+		server.Read(buf) // EHLO
+		server.Write([]byte("250-hello\r\n250 AUTH PLAIN\r\n"))
+		for {
+			n, err := server.Read(buf)
+			if err != nil {
+				return
+			}
+			if strings.HasPrefix(string(buf[:n]), "MAIL") {
+				t.Error("the message was started without encryption")
+			}
+			server.Write([]byte("221 bye\r\n"))
+		}
+	}()
+	err := m.converse(client, nil, "someone@example.test", []byte("x"), false)
+	if err == nil || !strings.Contains(err.Error(), "STARTTLS") {
+		t.Fatalf("err = %v, want a refusal naming STARTTLS", err)
+	}
+}
+
+func TestNonASCIISubjectIsEncoded(t *testing.T) {
+	m := New(Config{Host: "127.0.0.1", From: "YABA <y@example.test>"})
+	raw := string(m.compose(Message{To: "a@example.test", Subject: "Café budget", Body: "x"}))
+	if !strings.Contains(raw, "Subject: =?utf-8?q?Caf=C3=A9_budget?=") {
+		t.Errorf("subject not encoded:\n%s", raw)
+	}
+}
