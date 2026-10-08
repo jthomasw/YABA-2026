@@ -343,7 +343,7 @@ func (s *Server) handleSetupSubmit(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if expense.Name == "" {
-			showError(fmt.Sprintf("Enter a name for recurring expense %d.", expense.Index+1))
+			showError(fmt.Sprintf("Enter a name for initial expense %d.", expense.Index+1))
 			return
 		}
 		amount, err := money.ParsePositive(expense.Amount)
