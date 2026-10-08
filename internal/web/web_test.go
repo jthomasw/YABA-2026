@@ -2514,7 +2514,10 @@ func TestSignupActuallySignsTheUserIn(t *testing.T) {
 		t.Fatalf("after signup setup answered %d -> %q; the new account is not signed in",
 			setup.Code, setup.Header().Get("Location"))
 	}
-	for _, field := range []string{"starting_balance", "expense_name_0", "expense_amount_0", "expense_frequency_n_0"} {
+	for _, field := range []string{
+		"starting_balance", "expense_name_0", "expense_amount_0", "expense_frequency_n_0",
+		"income_source_0", "income_amount_0", "income_type_0",
+	} {
 		if !strings.Contains(setup.Body.String(), `name="`+field+`"`) {
 			t.Errorf("setup page is missing %s", field)
 		}
@@ -2539,11 +2542,15 @@ func TestSignupActuallySignsTheUserIn(t *testing.T) {
 		"form_token":               {formToken[1]},
 		"starting_balance":         {"2500.00"},
 		"expense_count":            {"2"},
+		"income_count":             {"1"},
+		"income_source_0":          {""},
+		"income_amount_0":          {""},
 		"expense_name_0":           {"Rent"},
 		"expense_amount_0":         {""},
+		"expense_type_0":           {"recurring"},
 		"expense_frequency_n_0":    {"1"},
 		"expense_frequency_unit_0": {"month"},
-		"expense_start_date_0":     {store.Today()},
+		"expense_date_0":           {store.Today()},
 		"expense_essential_0":      {"yes"},
 	})
 	if invalid.Code != http.StatusBadRequest || !strings.Contains(invalid.Body.String(), "valid amount") {
@@ -2562,19 +2569,37 @@ func TestSignupActuallySignsTheUserIn(t *testing.T) {
 		"csrf_token":               {rig.csrf("/setup")},
 		"form_token":               {formToken[1]},
 		"starting_balance":         {"2500.00"},
-		"expense_count":            {"2"},
+		"expense_count":            {"3"},
+		"income_count":             {"2"},
 		"expense_name_0":           {"Rent"},
 		"expense_amount_0":         {"900.00"},
+		"expense_type_0":           {"recurring"},
 		"expense_frequency_n_0":    {"1"},
 		"expense_frequency_unit_0": {"month"},
-		"expense_start_date_0":     {store.Today()},
+		"expense_date_0":           {store.Today()},
 		"expense_essential_0":      {"yes"},
 		"expense_name_1":           {"Phone"},
 		"expense_amount_1":         {"75.00"},
+		"expense_type_1":           {"recurring"},
 		"expense_frequency_n_1":    {"2"},
 		"expense_frequency_unit_1": {"month"},
-		"expense_start_date_1":     {store.Today()},
+		"expense_date_1":           {store.Today()},
 		"expense_essential_1":      {"no"},
+		"expense_name_2":           {"Moving supplies"},
+		"expense_amount_2":         {"40.00"},
+		"expense_type_2":           {"one_time"},
+		"expense_date_2":           {store.Today()},
+		"expense_essential_2":      {"no"},
+		"income_source_0":          {"Salary"},
+		"income_amount_0":          {"2000.00"},
+		"income_type_0":            {"recurring"},
+		"income_date_0":            {"2099-01-01"},
+		"income_frequency_n_0":     {"2"},
+		"income_frequency_unit_0":  {"week"},
+		"income_source_1":          {"Gift"},
+		"income_amount_1":          {"100.00"},
+		"income_type_1":            {"one_time"},
+		"income_date_1":            {store.Today()},
 	})
 	if finished.Code != http.StatusSeeOther || finished.Header().Get("Location") != "/dashboard" {
 		t.Fatalf("setup: status %d -> %q", finished.Code, finished.Header().Get("Location"))
@@ -2584,8 +2609,8 @@ func TestSignupActuallySignsTheUserIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup totals: %v", err)
 	}
-	if totals.Income != 250000 {
-		t.Errorf("starting balance recorded as %s, want $2,500.00", totals.Income.Display())
+	if totals.Income != 260000 {
+		t.Errorf("starting balance and initial income recorded as %s, want $2,600.00", totals.Income.Display())
 	}
 	expenses, err := rig.store.ListRecurringExpense(context.Background(), scope)
 	if err != nil {
@@ -2602,6 +2627,23 @@ func TestSignupActuallySignsTheUserIn(t *testing.T) {
 		expenses[1].FrequencyN != 2 || expenses[1].FrequencyUnit != "month" || expenses[1].Essential {
 		t.Errorf("second setup expense = %+v, want non-essential phone every two months", expenses[1])
 	}
+	var initialExpenseCount int
+	if err := rig.db.QueryRow(`SELECT COUNT(*) FROM transactions
+		WHERE household_id = ? AND kind = 'expense' AND label = 'Moving supplies'`,
+		scope.HouseholdID).Scan(&initialExpenseCount); err != nil {
+		t.Fatalf("count initial one-time expenses: %v", err)
+	}
+	if initialExpenseCount != 1 {
+		t.Errorf("initial one-time expense count = %d, want 1", initialExpenseCount)
+	}
+	incomes, err := rig.store.ListRecurringIncome(context.Background(), scope)
+	if err != nil {
+		t.Fatalf("setup recurring incomes: %v", err)
+	}
+	if len(incomes) != 1 || incomes[0].Source != "Salary" || incomes[0].Amount != 200000 ||
+		incomes[0].FrequencyN != 2 || incomes[0].FrequencyUnit != "week" {
+		t.Errorf("setup recurring incomes = %+v, want biweekly $2,000 salary", incomes)
+	}
 	dash := rig.do("GET", "/dashboard", nil)
 	if dash.Code != http.StatusOK || !strings.Contains(dash.Body.String(), "Welcome to YABA") {
 		t.Error("finishing setup should show the welcome message on the dashboard")
@@ -2612,25 +2654,43 @@ func TestSignupActuallySignsTheUserIn(t *testing.T) {
 		"csrf_token":               {rig.csrf("/setup")},
 		"form_token":               {formToken[1]},
 		"starting_balance":         {"2500.00"},
-		"expense_count":            {"2"},
+		"expense_count":            {"3"},
+		"income_count":             {"2"},
 		"expense_name_0":           {"Rent"},
 		"expense_amount_0":         {"900.00"},
+		"expense_type_0":           {"recurring"},
 		"expense_frequency_n_0":    {"1"},
 		"expense_frequency_unit_0": {"month"},
-		"expense_start_date_0":     {store.Today()},
+		"expense_date_0":           {store.Today()},
 		"expense_essential_0":      {"yes"},
 		"expense_name_1":           {"Phone"},
 		"expense_amount_1":         {"75.00"},
+		"expense_type_1":           {"recurring"},
 		"expense_frequency_n_1":    {"2"},
 		"expense_frequency_unit_1": {"month"},
-		"expense_start_date_1":     {store.Today()},
+		"expense_date_1":           {store.Today()},
 		"expense_essential_1":      {"no"},
+		"expense_name_2":           {"Moving supplies"},
+		"expense_amount_2":         {"40.00"},
+		"expense_type_2":           {"one_time"},
+		"expense_date_2":           {store.Today()},
+		"expense_essential_2":      {"no"},
+		"income_source_0":          {"Salary"},
+		"income_amount_0":          {"2000.00"},
+		"income_type_0":            {"recurring"},
+		"income_date_0":            {"2099-01-01"},
+		"income_frequency_n_0":     {"2"},
+		"income_frequency_unit_0":  {"week"},
+		"income_source_1":          {"Gift"},
+		"income_amount_1":          {"100.00"},
+		"income_type_1":            {"one_time"},
+		"income_date_1":            {store.Today()},
 	})
 	totals, err = rig.store.Totals(context.Background(), scope, "")
 	if err != nil {
 		t.Fatalf("totals after repeated submission: %v", err)
 	}
-	if totals.Income != 250000 {
+	if totals.Income != 260000 {
 		t.Errorf("replayed setup changed starting balance to %s", totals.Income.Display())
 	}
 	expenses, err = rig.store.ListRecurringExpense(context.Background(), scope)
@@ -2639,6 +2699,21 @@ func TestSignupActuallySignsTheUserIn(t *testing.T) {
 	}
 	if len(expenses) != 2 {
 		t.Errorf("replayed setup created duplicate recurring expenses: %d found", len(expenses))
+	}
+	incomes, err = rig.store.ListRecurringIncome(context.Background(), scope)
+	if err != nil {
+		t.Fatalf("recurring incomes after repeated submission: %v", err)
+	}
+	if len(incomes) != 1 {
+		t.Errorf("replayed setup created duplicate recurring incomes: %d found", len(incomes))
+	}
+	if err := rig.db.QueryRow(`SELECT COUNT(*) FROM transactions
+		WHERE household_id = ? AND kind = 'expense' AND label = 'Moving supplies'`,
+		scope.HouseholdID).Scan(&initialExpenseCount); err != nil {
+		t.Fatalf("count initial expenses after replay: %v", err)
+	}
+	if initialExpenseCount != 1 {
+		t.Errorf("replayed setup created duplicate initial expenses: %d found", initialExpenseCount)
 	}
 }
 
