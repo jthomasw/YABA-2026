@@ -40,6 +40,25 @@ type registerView struct {
 	Email string
 }
 
+type setupView struct {
+	view
+	Error           string
+	StartingBalance string
+	Expenses        []setupExpenseView
+	ExpenseCount    int
+	FormToken       string
+}
+
+type setupExpenseView struct {
+	Index         int
+	Name          string
+	Amount        string
+	FrequencyN    string
+	FrequencyUnit string
+	NextDueDate   string
+	Essential     bool
+}
+
 func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
 	if s.signedIn(r) {
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
