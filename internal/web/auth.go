@@ -216,7 +216,7 @@ func (s *Server) handleRegisterSubmit(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	s.redirectSuccess(w, r, "/dashboard", "Welcome to YABA. Add some income to get started.")
+	http.Redirect(w, r, "/setup", http.StatusSeeOther)
 }
 
 // signupKey is the counter for accounts created from one network address.
