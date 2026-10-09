@@ -1,0 +1,23 @@
+{{/*
+  The "repeat every" choices shared by Add Income and Add Expense, given the
+  value to select. One list rather than two copies, so the pages cannot drift
+  apart -- and so the submitted choice is selected on a re-render instead of
+  whatever was hard-coded as the default.
+
+  Preset values must match recurringPresets in handlers.go ("custom" aside).
+*/}}
+{{define "frequencyPresets"}}
+<option value="weekly" {{if eq . "weekly"}}selected{{end}}>Weekly</option>
+<option value="biweekly" {{if eq . "biweekly"}}selected{{end}}>Every 2 weeks (bi-weekly)</option>
+<option value="monthly" {{if eq . "monthly"}}selected{{end}}>Monthly</option>
+<option value="quarterly" {{if eq . "quarterly"}}selected{{end}}>Every 3 months (quarterly)</option>
+<option value="semiannual" {{if eq . "semiannual"}}selected{{end}}>Every 6 months</option>
+<option value="yearly" {{if eq . "yearly"}}selected{{end}}>Yearly</option>
+<option value="custom" {{if eq . "custom"}}selected{{end}}>Custom&hellip;</option>
+{{end}}
+
+{{define "frequencyUnits"}}
+<option value="day" {{if eq . "day"}}selected{{end}}>Day(s)</option>
+<option value="week" {{if eq . "week"}}selected{{end}}>Week(s)</option>
+<option value="month" {{if eq . "month"}}selected{{end}}>Month(s)</option>
+{{end}}

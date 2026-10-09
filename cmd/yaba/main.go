@@ -8,7 +8,10 @@
 //	restore   put a snapshot back
 //	repair    find fund movements that could not have happened, and remove them
 //
-// Run a subcommand with -h for its own flags.
+// Run a subcommand with -h for its own flags. The defaults come from the same
+// environment variables the server reads (YABA_DB, YABA_UPLOADS, YABA_BACKUP_DIR,
+// YABA_BACKUP_KEEP), so running it with the server's environment file points it at the
+// server's data.
 package main
 
 import (
@@ -18,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -27,129 +31,254 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/jthomasw/YABA-2026/internal/db"
+	"github.com/jthomasw/YABA-2026/internal/envfile"
 	"github.com/jthomasw/YABA-2026/internal/money"
 )
 
-// main dispatches on the subcommand. Each owns its own FlagSet, so two can define
-// -db without colliding and -h prints only the flags that apply.
 func main() {
-	if len(os.Args) < 2 {
-		usage()
-		os.Exit(2)
+	// The same .env the server reads, so the CLI finds the same database,
+	// uploads and backups without being told.
+	if _, err := envfile.Load(envfile.Path()); err != nil {
+		fmt.Fprintf(os.Stderr, "yaba: %v\n", err)
+		os.Exit(1)
+	}
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Getenv))
+}
+
+// app carries the command's input, output and environment, so the tests can drive
+// every subcommand in-process: typed confirmations included, and without os.Exit.
+type app struct {
+	// One reader for the whole run. A fresh bufio.Reader per prompt would buffer past
+	// the first line and silently swallow the answer to the next one.
+	in *bufio.Reader
+	// term is stdin when it is a file (a terminal, usually), so a password
+	// prompt can switch echo off. Nil when the input is not a file, as in tests.
+	term   *os.File
+	out    io.Writer
+	errOut io.Writer
+	getenv func(string) string
+}
+
+// run dispatches on the subcommand and returns the process exit status: 0 success,
+// 1 the command failed, 2 it was used wrongly. Each subcommand owns its own FlagSet, so
+// two can define -db without colliding and -h prints only the flags that apply.
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
+	a := &app{in: bufio.NewReader(stdin), out: stdout, errOut: stderr, getenv: getenv}
+	if f, ok := stdin.(*os.File); ok {
+		a.term = f
 	}
 
-	switch os.Args[1] {
+	if len(args) < 1 {
+		a.usage()
+		return 2
+	}
+	cmd, rest := args[0], args[1:]
+
+	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	// Flags shared by several subcommands, with the server's environment as defaults.
+	dbFlag := func(usage string) *string {
+		return fs.String("db", a.envOr("YABA_DB", "yaba.db"), usage+" (env YABA_DB)")
+	}
+	uploadsFlag := func(usage string) *string {
+		return fs.String("uploads", a.envOr("YABA_UPLOADS", "uploads"), usage+" (env YABA_UPLOADS)")
+	}
+	dirFlag := func(usage string) *string {
+		return fs.String("dir", a.envOr("YABA_BACKUP_DIR", ""),
+			usage+` (env YABA_BACKUP_DIR; default "backups" beside -db, as the server does)`)
+	}
+
+	var exec func() error
+	switch cmd {
 	case "reset":
-		fs := flag.NewFlagSet("reset", flag.ExitOnError)
 		var (
-			dbPath    = fs.String("db", envOr("YABA_DB", "yaba.db"), "path to the SQLite database")
-			uploadDir = fs.String("uploads", envOr("YABA_UPLOADS", "uploads"), "receipt directory to clear")
+			dbPath    = dbFlag("path to the SQLite database")
+			uploadDir = uploadsFlag("receipt directory to clear")
+			dir       = dirFlag("where the safety snapshot goes")
 			keep      = fs.String("keep", "", "email of the one account to keep; everything else is deleted")
 			yes       = fs.Bool("yes", false, "skip the confirmation prompt")
 			backup    = fs.Bool("backup", true, "copy the database aside before wiping it")
 		)
-		fs.Parse(os.Args[2:])
-		if err := runReset(*dbPath, *uploadDir, *keep, *yes, *backup); err != nil {
-			fmt.Fprintf(os.Stderr, "yaba reset: %v\n", err)
-			os.Exit(1)
+		exec = func() error {
+			return a.runReset(*dbPath, *uploadDir, backupDir(*dir, *dbPath), *keep, *yes, *backup)
 		}
 
 	case "passwd":
-		fs := flag.NewFlagSet("passwd", flag.ExitOnError)
 		var (
-			dbPath   = fs.String("db", envOr("YABA_DB", "yaba.db"), "path to the SQLite database")
-			email    = fs.String("email", "", "email address of the account to update")
-			password = fs.String("password", "", "new password (omit to be prompted)")
-			list     = fs.Bool("list", false, "list accounts and exit")
+			dbPath = dbFlag("path to the SQLite database")
+			email  = fs.String("email", "", "email address of the account to update")
+			list   = fs.Bool("list", false, "list accounts and exit")
 		)
-		fs.Parse(os.Args[2:])
-		if err := runPasswd(*dbPath, *email, *password, *list); err != nil {
-			fmt.Fprintf(os.Stderr, "yaba passwd: %v\n", err)
-			os.Exit(1)
-		}
+		// There is deliberately no -password flag: a flag value sits in the
+		// process list and the shell history. The password is read from
+		// stdin -- typed at a prompt that does not echo, or piped in as two
+		// lines (the password and its confirmation).
+		exec = func() error { return a.runPasswd(*dbPath, *email, *list) }
 
 	case "backup":
-		fs := flag.NewFlagSet("backup", flag.ExitOnError)
 		var (
-			dbPath    = fs.String("db", envOr("YABA_DB", "yaba.db"), "path to the SQLite database")
-			dir       = fs.String("dir", envOr("YABA_BACKUP_DIR", db.DefaultBackupDir()), "directory for snapshots")
-			uploadDir = fs.String("uploads", envOr("YABA_UPLOADS", "uploads"), "receipt directory to archive alongside")
-			keep      = fs.Int("keep", int(envInt64("YABA_BACKUP_KEEP", db.DefaultBackupKeep)), "how many snapshots to retain")
-			list      = fs.Bool("list", false, "list existing snapshots and exit")
+			dbPath    = dbFlag("path to the SQLite database")
+			dir       = dirFlag("directory for snapshots")
+			uploadDir = uploadsFlag("receipt directory to archive alongside")
+			keep      = fs.Int("keep", int(a.envInt64("YABA_BACKUP_KEEP", db.DefaultBackupKeep)),
+				"how many snapshots to retain (env YABA_BACKUP_KEEP)")
+			list        = fs.Bool("list", false, "list existing snapshots and exit")
+			acceptEmpty = fs.Bool("accept-empty", false,
+				"accept a snapshot in which users, households, transactions or funds went from rows to none "+
+					"(after a deliberate deletion of the last of them)")
 		)
-		fs.Parse(os.Args[2:])
-		if err := runBackup(*dbPath, *dir, *uploadDir, *keep, *list); err != nil {
-			fmt.Fprintf(os.Stderr, "yaba backup: %v\n", err)
-			os.Exit(1)
+		exec = func() error {
+			return a.runBackup(*dbPath, backupDir(*dir, *dbPath), *uploadDir, *keep, *list, *acceptEmpty)
 		}
 
 	case "restore":
-		fs := flag.NewFlagSet("restore", flag.ExitOnError)
 		var (
 			from   = fs.String("from", "", "snapshot to restore (omit to use the newest in -dir)")
-			dir    = fs.String("dir", envOr("YABA_BACKUP_DIR", db.DefaultBackupDir()), "directory to look in when -from is omitted")
-			dbPath = fs.String("db", envOr("YABA_DB", "yaba.db"), "where to write the restored database")
-			force  = fs.Bool("force", false, "overwrite an existing database")
+			dir    = dirFlag("directory to look in when -from is omitted")
+			dbPath = dbFlag("where to write the restored database; the only command that may create it")
 			check  = fs.Bool("check", false, "verify the snapshot and stop without writing anything")
 		)
-		fs.Parse(os.Args[2:])
-		if err := runRestore(*from, *dir, *dbPath, *force, *check); err != nil {
-			fmt.Fprintf(os.Stderr, "yaba restore: %v\n", err)
-			os.Exit(1)
-		}
+		// Accepted so existing scripts keep working, and otherwise ignored: an existing
+		// database is always moved aside, never overwritten, so there is nothing to force.
+		fs.Bool("force", false, "accepted for compatibility; an existing database is always moved aside, never overwritten")
+		exec = func() error { return a.runRestore(*from, backupDir(*dir, *dbPath), *dbPath, *check) }
 
 	case "repair":
-		fs := flag.NewFlagSet("repair", flag.ExitOnError)
 		var (
-			dbPath    = fs.String("db", envOr("YABA_DB", "yaba.db"), "path to the SQLite database")
-			dir       = fs.String("dir", envOr("YABA_BACKUP_DIR", db.DefaultBackupDir()), "where the safety snapshot goes")
-			uploadDir = fs.String("uploads", envOr("YABA_UPLOADS", "uploads"), "receipt directory to archive with the snapshot")
+			dbPath    = dbFlag("path to the SQLite database")
+			dir       = dirFlag("where the safety snapshot goes")
+			uploadDir = uploadsFlag("receipt directory to archive with the snapshot")
 			del       = fs.String("delete", "", "comma-separated transaction ids to remove; only ids this command reported are accepted")
 			yes       = fs.Bool("yes", false, "skip the confirmation prompt")
 		)
-		fs.Parse(os.Args[2:])
-		if err := runRepair(*dbPath, *dir, *uploadDir, *del, *yes); err != nil {
-			fmt.Fprintf(os.Stderr, "yaba repair: %v\n", err)
-			os.Exit(1)
-		}
+		exec = func() error { return a.runRepair(*dbPath, backupDir(*dir, *dbPath), *uploadDir, *del, *yes) }
+
+	case "help", "-h", "-help", "--help":
+		a.usage()
+		return 0
 
 	default:
-		fmt.Fprintf(os.Stderr, "yaba: unknown subcommand %q\n\n", os.Args[1])
-		usage()
-		os.Exit(2)
+		fmt.Fprintf(stderr, "yaba: unknown subcommand %q\n\n", cmd)
+		a.usage()
+		return 2
 	}
+
+	if err := fs.Parse(rest); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	// "yaba backup list" would otherwise parse as no flags at all and take a backup.
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "yaba %s: unexpected argument %q (flags start with -; see yaba %s -h)\n",
+			cmd, fs.Arg(0), cmd)
+		return 2
+	}
+	if err := exec(); err != nil {
+		fmt.Fprintf(stderr, "yaba %s: %v\n", cmd, err)
+		return 1
+	}
+	return 0
 }
 
-func usage() {
-	fmt.Fprint(os.Stderr, `yaba - maintenance tool for a YABA database
+func (a *app) usage() {
+	fmt.Fprint(a.errOut, `yaba - maintenance tool for a YABA database
 
 Usage:
-  yaba reset   [-db path] [-uploads dir] [-keep email] [-yes] [-backup=false]
-  yaba passwd  [-db path] [-email addr] [-password pw] [-list]
-  yaba backup  [-db path] [-dir path] [-uploads dir] [-keep n] [-list]
-  yaba restore [-from snapshot] [-dir path] [-db path] [-force] [-check]
-  yaba repair  [-db path] [-delete ids] [-yes]
+  yaba reset   [-db path] [-uploads dir] [-dir path] [-keep email] [-yes] [-backup=false]
+  yaba passwd  [-db path] [-email addr] [-list]
+  yaba backup  [-db path] [-dir path] [-uploads dir] [-keep n] [-list] [-accept-empty]
+  yaba restore [-from snapshot] [-dir path] [-db path] [-check]
+  yaba repair  [-db path] [-dir path] [-uploads dir] [-delete ids] [-yes]
+
+Defaults come from YABA_DB, YABA_UPLOADS, YABA_BACKUP_DIR and YABA_BACKUP_KEEP, as
+for the server. Every command except restore refuses a -db that does not exist.
+reset, restore and repair also refuse to run while the server has the database open.
 
 Run "yaba <subcommand> -h" for the flags of one subcommand.
 `)
 }
 
-func runReset(dbPath, uploadDir, keep string, yes, backup bool) error {
-	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
-		fmt.Printf("%s does not exist — nothing to reset. The server will create it.\n", dbPath)
-		return nil
+// backupDir applies the server's rule: an explicit directory wins, otherwise
+// "backups" beside the database.
+func backupDir(dir, dbPath string) string {
+	if strings.TrimSpace(dir) != "" {
+		return dir
 	}
+	return db.BackupDirFor(dbPath)
+}
+
+// requireDB refuses a database path that does not exist. db.Open would otherwise
+// create an empty database there, and the command would go on to fail confusingly
+// ("no such table") or report that there was nothing to do -- typically because it
+// was run from the wrong directory with the relative default.
+func requireDB(dbPath string) error {
+	info, err := os.Stat(dbPath)
+	if errors.Is(err, os.ErrNotExist) {
+		where := ""
+		if !filepath.IsAbs(dbPath) {
+			if abs, err := filepath.Abs(dbPath); err == nil {
+				where = " (" + abs + ", relative to the current directory)"
+			}
+		}
+		return fmt.Errorf("no database at %s%s; nothing was created. "+
+			"Pass -db or set YABA_DB to the server's database "+
+			"(in production, YABA_DB in /etc/yaba.env)", dbPath, where)
+	}
+	if err != nil {
+		return fmt.Errorf("check %s: %w", dbPath, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s is a directory, not a database file", dbPath)
+	}
+	return nil
+}
+
+// lockDB takes the database's lock for a command that must not run beside the server.
+func lockDB(dbPath string) (*db.Lock, error) {
+	lock, err := db.AcquireLock(dbPath)
+	if errors.Is(err, db.ErrLocked) {
+		return nil, fmt.Errorf("%w. Stop the server first (sudo systemctl stop yaba), "+
+			"run this again, then start it", err)
+	}
+	return lock, err
+}
+
+// confirm asks for a typed word, so a destructive step is never one Enter away.
+func (a *app) confirm(question, word string) bool {
+	if question != "" {
+		fmt.Fprint(a.out, question, " ")
+	}
+	fmt.Fprintf(a.out, "Type '%s' to continue: ", word)
+	line, _ := a.in.ReadString('\n')
+	return strings.TrimSpace(line) == word
+}
+
+func (a *app) runReset(dbPath, uploadDir, backupDir, keep string, yes, backup bool) error {
+	// A missing database used to print "nothing to reset" and succeed, which is
+	// exactly what running from the wrong directory looks like.
+	if err := requireDB(dbPath); err != nil {
+		return err
+	}
+	lock, err := lockDB(dbPath)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 
 	sqlDB, err := db.Open(dbPath)
 	if err != nil {
 		return err
 	}
+	defer sqlDB.Close()
 
 	// Show what is about to go, so a confirmation prompt is an informed one
 	// rather than a reflex.
-	if err := summarise(sqlDB); err != nil {
+	if err := a.summarise(sqlDB); err != nil {
 		// A database too old or too broken to summarise can still be reset.
-		fmt.Printf("(could not summarise existing data: %v)\n", err)
+		fmt.Fprintf(a.out, "(could not summarise existing data: %v)\n", err)
 	}
 
 	keep = strings.ToLower(strings.TrimSpace(keep))
@@ -163,15 +292,13 @@ func runReset(dbPath, uploadDir, keep string, yes, backup bool) error {
 			WHERE email = ? COLLATE NOCASE OR username = ? COLLATE NOCASE
 			LIMIT 1`, keep, keep).Scan(&keepID)
 		if errors.Is(err, sql.ErrNoRows) {
-			sqlDB.Close()
 			return fmt.Errorf("no account matches %q — nothing was changed", keep)
 		}
 		if err != nil {
-			sqlDB.Close()
 			return fmt.Errorf("look up the account to keep: %w", err)
 		}
-		fmt.Printf("\nKeeping account %d (%s) and everything belonging to it.\n", keepID, keep)
-		fmt.Println("Every other account and all of its data will be deleted.")
+		fmt.Fprintf(a.out, "\nKeeping account %d (%s) and everything belonging to it.\n", keepID, keep)
+		fmt.Fprintln(a.out, "Every other account and all of its data will be deleted.")
 	}
 
 	if !yes {
@@ -179,10 +306,7 @@ func runReset(dbPath, uploadDir, keep string, yes, backup bool) error {
 		if keep != "" {
 			word = "prune"
 		}
-		fmt.Printf("\nThis permanently deletes the data described above. Type '%s' to continue: ", word)
-		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-		if strings.TrimSpace(line) != word {
-			sqlDB.Close()
+		if !a.confirm("\nThis permanently deletes the data described above.", word) {
 			return errors.New("cancelled")
 		}
 	}
@@ -190,7 +314,7 @@ func runReset(dbPath, uploadDir, keep string, yes, backup bool) error {
 	if backup {
 		// A verified snapshot taken on the open connection.
 		snap, err := db.Backup(context.Background(), sqlDB, db.BackupConfig{
-			Dir:       envOr("YABA_BACKUP_DIR", db.DefaultBackupDir()),
+			Dir:       backupDir,
 			UploadDir: uploadDir,
 		})
 		if err != nil {
@@ -198,27 +322,26 @@ func runReset(dbPath, uploadDir, keep string, yes, backup bool) error {
 			// step is irreversible.
 			return fmt.Errorf("backup failed, so nothing was deleted: %w", err)
 		}
-		fmt.Printf("Backed up to %s\n", snap.Path)
+		fmt.Fprintf(a.out, "Backed up to %s\n", snap.Path)
 		if snap.Uploads != "" {
-			fmt.Printf("Receipts archived to %s\n", snap.Uploads)
+			fmt.Fprintf(a.out, "Receipts archived to %s\n", snap.Uploads)
 		}
 	}
-	defer sqlDB.Close()
 
 	if keep != "" {
-		if err := pruneToOneUser(sqlDB, keepID); err != nil {
+		if err := a.pruneToOneUser(sqlDB, keepID); err != nil {
 			return err
 		}
 		if uploadDir != "" {
-			if err := clearUploadsExcept(uploadDir, keepID); err != nil {
-				fmt.Printf("(could not tidy %s: %v)\n", uploadDir, err)
+			if err := a.clearUploadsExcept(sqlDB, uploadDir, keepID); err != nil {
+				fmt.Fprintf(a.out, "(could not tidy %s: %v)\n", uploadDir, err)
 			}
 		}
-		fmt.Println("\nDone. Only that account and its data remain.")
-		return summarise(sqlDB)
+		fmt.Fprintln(a.out, "\nDone. Only that account and its data remain.")
+		return a.summarise(sqlDB)
 	}
 
-	if err := dropEverything(sqlDB); err != nil {
+	if err := a.dropEverything(sqlDB); err != nil {
 		return err
 	}
 
@@ -230,19 +353,19 @@ func runReset(dbPath, uploadDir, keep string, yes, backup bool) error {
 
 	if uploadDir != "" {
 		if err := clearDir(uploadDir); err != nil {
-			fmt.Printf("(could not clear %s: %v)\n", uploadDir, err)
+			fmt.Fprintf(a.out, "(could not clear %s: %v)\n", uploadDir, err)
 		} else {
-			fmt.Printf("Cleared %s\n", uploadDir)
+			fmt.Fprintf(a.out, "Cleared %s\n", uploadDir)
 		}
 	}
 
-	fmt.Println("\nDone. The database is empty and the schema is current.")
-	fmt.Println("Start the server and sign up to create the first account.")
+	fmt.Fprintln(a.out, "\nDone. The database is empty and the schema is current.")
+	fmt.Fprintln(a.out, "Start the server and sign up to create the first account.")
 	return nil
 }
 
 // pruneToOneUser deletes every account except keepID and everything belonging to it.
-func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
+func (a *app) pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 	var fkOn int
 	if err := sqlDB.QueryRow(`PRAGMA foreign_keys`).Scan(&fkOn); err != nil {
 		return fmt.Errorf("check foreign keys: %w", err)
@@ -256,6 +379,7 @@ func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 	// kept user still sees. Reassigning attribution keeps the rows, and the totals.
 	for _, table := range []string{
 		"transactions", "funds", "expense_buckets", "allocations", "budgets", "receipt_jobs",
+		"recurring_income", "recurring_expense",
 	} {
 		res, err := sqlDB.Exec(`
 			UPDATE `+table+` SET user_id = ?
@@ -266,7 +390,7 @@ func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 			return fmt.Errorf("reassign %s in shared households: %w", table, err)
 		}
 		if n, _ := res.RowsAffected(); n > 0 {
-			fmt.Printf("Kept %d %s row(s) from a shared budget, now credited to you.\n", n, table)
+			fmt.Fprintf(a.out, "Kept %d %s row(s) from a shared budget, now credited to you.\n", n, table)
 		}
 	}
 
@@ -275,7 +399,19 @@ func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 		return fmt.Errorf("delete other accounts: %w", err)
 	}
 	n, _ := res.RowsAffected()
-	fmt.Printf("Deleted %d account(s) and everything belonging to them.\n", n)
+	fmt.Fprintf(a.out, "Deleted %d account(s) and everything belonging to them.\n", n)
+
+	// A kept editor may be the only person left in a shared household.  Promote
+	// that surviving member so the budget remains usable and the database keeps
+	// its invariant that every household has an owner.
+	if _, err := sqlDB.Exec(`
+		UPDATE household_members AS kept
+		SET role = 'owner'
+		WHERE kept.user_id = ?
+		  AND NOT EXISTS (SELECT 1 FROM household_members owner
+		                  WHERE owner.household_id = kept.household_id AND owner.role = 'owner')`, keepID); err != nil {
+		return fmt.Errorf("promote sole remaining shared member: %w", err)
+	}
 
 	// A shared household whose members have all been deleted is unreachable but still on
 	// disk. Personal ones cascade away with their owner, so only shared ones need this.
@@ -287,7 +423,7 @@ func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 		return fmt.Errorf("delete memberless households: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		fmt.Printf("Removed %d shared budget(s) that no longer had any members.\n", n)
+		fmt.Fprintf(a.out, "Removed %d shared budget(s) that no longer had any members.\n", n)
 	}
 
 	// A pending invitation to a deleted account would show a banner to whoever signs up
@@ -301,7 +437,7 @@ func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 
 	// login_attempts is keyed on ip|email, so no foreign key reaches it.
 	if _, err := sqlDB.Exec(`DELETE FROM login_attempts`); err != nil {
-		fmt.Printf("(could not clear login attempts: %v)\n", err)
+		fmt.Fprintf(a.out, "(could not clear login attempts: %v)\n", err)
 	}
 
 	// The legacy_* archives hold the very rows being removed and no cascade reaches them,
@@ -334,14 +470,14 @@ func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 		if _, err := sqlDB.Exec(`DROP TABLE IF EXISTS "` + t + `"`); err != nil {
 			// Report and carry on: the user's own data has already been pruned
 			// correctly, and a leftover archive table is untidy rather than wrong.
-			fmt.Printf("(could not drop %s: %v)\n", t, err)
+			fmt.Fprintf(a.out, "(could not drop %s: %v)\n", t, err)
 			continue
 		}
 		dropped = append(dropped, t)
 	}
 	legacy = dropped
 	if len(legacy) > 0 {
-		fmt.Printf("Dropped %d legacy archive table(s): %s\n", len(legacy), strings.Join(legacy, ", "))
+		fmt.Fprintf(a.out, "Dropped %d legacy archive table(s): %s\n", len(legacy), strings.Join(legacy, ", "))
 	}
 
 	if _, err := sqlDB.Exec(`PRAGMA foreign_keys = ON`); err != nil {
@@ -354,18 +490,18 @@ func pruneToOneUser(sqlDB *sql.DB, keepID int64) error {
 		if bad.Next() {
 			return errors.New("foreign_key_check found orphaned rows after the delete")
 		}
-		fmt.Println("Integrity check: clean.")
+		fmt.Fprintln(a.out, "Integrity check: clean.")
 	}
 
 	if _, err := sqlDB.Exec(`VACUUM`); err != nil {
-		fmt.Printf("(vacuum skipped: %v)\n", err)
+		fmt.Fprintf(a.out, "(vacuum skipped: %v)\n", err)
 	}
 	return nil
 }
 
 // clearUploadsExcept removes every user's receipt directory but the one kept: files
 // under uploads/<user id>/ are on disk, where no database cascade reaches them.
-func clearUploadsExcept(dir string, keepID int64) error {
+func (a *app) clearUploadsExcept(sqlDB *sql.DB, dir string, keepID int64) error {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -374,10 +510,37 @@ func clearUploadsExcept(dir string, keepID int64) error {
 		return err
 	}
 
-	mine := strconv.FormatInt(keepID, 10)
+	// A shared entry is re-attributed to the kept user above, but its receipt is
+	// still physically stored in the uploader's directory.  Preserve every
+	// directory referenced by a surviving row instead of assuming keepID owns it.
+	keep := map[string]bool{strconv.FormatInt(keepID, 10): true}
+	rows, err := sqlDB.Query(`SELECT receipt_path FROM transactions WHERE receipt_path IS NOT NULL AND receipt_path <> ''`)
+	if err != nil {
+		return fmt.Errorf("list surviving receipt paths: %w", err)
+	}
+	for rows.Next() {
+		var stored string
+		if err := rows.Scan(&stored); err != nil {
+			rows.Close()
+			return err
+		}
+		rel, err := filepath.Rel(dir, filepath.FromSlash(stored))
+		if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." {
+			continue
+		}
+		first := strings.Split(filepath.Clean(rel), string(os.PathSeparator))[0]
+		if first != "" && first != "." {
+			keep[first] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
 	removed := 0
 	for _, e := range entries {
-		if e.Name() == mine {
+		if keep[e.Name()] {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
@@ -386,13 +549,13 @@ func clearUploadsExcept(dir string, keepID int64) error {
 		removed++
 	}
 	if removed > 0 {
-		fmt.Printf("Removed %d other user's receipt folder(s).\n", removed)
+		fmt.Fprintf(a.out, "Removed %d other user's receipt folder(s).\n", removed)
 	}
 	return nil
 }
 
 // summarise prints a row count per table.
-func summarise(sqlDB *sql.DB) error {
+func (a *app) summarise(sqlDB *sql.DB) error {
 	rows, err := sqlDB.Query(`
 		SELECT name FROM sqlite_master
 		WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
@@ -414,27 +577,27 @@ func summarise(sqlDB *sql.DB) error {
 		return err
 	}
 	if len(tables) == 0 {
-		fmt.Println("The database has no tables.")
+		fmt.Fprintln(a.out, "The database has no tables.")
 		return nil
 	}
 
-	fmt.Println("Current contents:")
+	fmt.Fprintln(a.out, "Current contents:")
 	for _, t := range tables {
 		var n int
 		// The table name cannot be a bound parameter, and it came from
 		// sqlite_master rather than from user input, so quoting it is enough.
 		if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM "` + t + `"`).Scan(&n); err != nil {
-			fmt.Printf("  %-28s (unreadable)\n", t)
+			fmt.Fprintf(a.out, "  %-28s (unreadable)\n", t)
 			continue
 		}
-		fmt.Printf("  %-28s %d rows\n", t, n)
+		fmt.Fprintf(a.out, "  %-28s %d rows\n", t, n)
 	}
 	return nil
 }
 
 // dropEverything removes every table and view. Dropping rather than deleting the file,
 // which may be held open by a syncing client and would lose its permissions.
-func dropEverything(sqlDB *sql.DB) error {
+func (a *app) dropEverything(sqlDB *sql.DB) error {
 	// Foreign keys off for the duration, or dropping a parent table cascades and the drop
 	// order starts to matter.
 	if _, err := sqlDB.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
@@ -470,7 +633,7 @@ func dropEverything(sqlDB *sql.DB) error {
 			}
 		}
 		if len(names) > 0 {
-			fmt.Printf("Dropped %d %s(s).\n", len(names), kind)
+			fmt.Fprintf(a.out, "Dropped %d %s(s).\n", len(names), kind)
 		}
 	}
 
@@ -479,7 +642,7 @@ func dropEverything(sqlDB *sql.DB) error {
 
 	// Reclaim the space the dropped data occupied.
 	if _, err := sqlDB.Exec(`VACUUM`); err != nil {
-		fmt.Printf("(vacuum skipped: %v)\n", err)
+		fmt.Fprintf(a.out, "(vacuum skipped: %v)\n", err)
 	}
 	return nil
 }
@@ -505,7 +668,15 @@ func findAnomalies(sqlDB *sql.DB) ([]anomaly, error) {
 	rows, err := sqlDB.Query(`
 		SELECT household_id, id, kind, label, amount_cents, occurred_on, IFNULL(fund_id, 0)
 		FROM transactions
-		ORDER BY household_id, occurred_on, id`)
+		ORDER BY household_id, occurred_on,
+			CASE kind
+				WHEN 'income' THEN 0
+				WHEN 'fund_withdrawal' THEN 1
+				WHEN 'expense' THEN 2
+				WHEN 'fund_deposit' THEN 3
+				ELSE 4
+			END,
+			id`)
 	if err != nil {
 		return nil, fmt.Errorf("read ledger: %w", err)
 	}
@@ -562,10 +733,19 @@ func householdCash(sqlDB *sql.DB, household int64, ignoring []int64) (money.Cent
 	return money.Cents(cents), err
 }
 
-func runRepair(dbPath, backupDir, uploadDir, del string, yes bool) error {
-	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("%s does not exist", dbPath)
+func (a *app) runRepair(dbPath, backupDir, uploadDir, del string, yes bool) error {
+	if err := requireDB(dbPath); err != nil {
+		return err
 	}
+	// The diagnosis is a replay of the whole ledger. A server writing while it runs
+	// would make the reported ids and the "cash X → Y" lines describe a ledger that no
+	// longer exists by the time the deletion is confirmed.
+	lock, err := lockDB(dbPath)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+
 	sqlDB, err := db.Open(dbPath)
 	if err != nil {
 		return err
@@ -578,22 +758,22 @@ func runRepair(dbPath, backupDir, uploadDir, del string, yes bool) error {
 	}
 
 	if len(found) == 0 {
-		fmt.Println("No impossible fund movements found.")
+		fmt.Fprintln(a.out, "No impossible fund movements found.")
 		return nil
 	}
 
-	fmt.Printf("%d fund movement(s) that could not have happened when they did:\n\n", len(found))
+	fmt.Fprintf(a.out, "%d fund movement(s) that could not have happened when they did:\n\n", len(found))
 	byHousehold := map[int64][]int64{}
-	for _, a := range found {
-		fmt.Printf("  transaction %d  household %d  %s\n", a.TxID, a.Household, a.OccurredOn)
-		fmt.Printf("      %s of %s labelled %q\n", a.Kind, a.Amount.Display(), a.Label)
-		fmt.Printf("      but only %s was %s at that point\n\n",
-			a.Available.Display(), a.AvailableOf)
-		byHousehold[a.Household] = append(byHousehold[a.Household], a.TxID)
+	for _, an := range found {
+		fmt.Fprintf(a.out, "  transaction %d  household %d  %s\n", an.TxID, an.Household, an.OccurredOn)
+		fmt.Fprintf(a.out, "      %s of %s labelled %q\n", an.Kind, an.Amount.Display(), an.Label)
+		fmt.Fprintf(a.out, "      but only %s was %s at that point\n\n",
+			an.Available.Display(), an.AvailableOf)
+		byHousehold[an.Household] = append(byHousehold[an.Household], an.TxID)
 	}
 
 	// What removing them would do, so the decision is an informed one.
-	fmt.Println("Effect of removing them:")
+	fmt.Fprintln(a.out, "Effect of removing them:")
 	for hh, ids := range byHousehold {
 		before, err := householdCash(sqlDB, hh, nil)
 		if err != nil {
@@ -603,14 +783,14 @@ func runRepair(dbPath, backupDir, uploadDir, del string, yes bool) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("  household %d: cash %s → %s\n", hh, before.Display(), after.Display())
+		fmt.Fprintf(a.out, "  household %d: cash %s → %s\n", hh, before.Display(), after.Display())
 	}
 
 	if del == "" {
-		fmt.Println("\nNothing was changed. To remove specific rows:")
-		fmt.Printf("  yaba repair -delete %s\n", joinIDs(allIDs(found)))
-		fmt.Println("\nRemoving only some of them may leave the household still")
-		fmt.Println("inconsistent, which is why the ids are yours to choose.")
+		fmt.Fprintln(a.out, "\nNothing was changed. To remove specific rows:")
+		fmt.Fprintf(a.out, "  yaba repair -delete %s\n", joinIDs(allIDs(found)))
+		fmt.Fprintln(a.out, "\nRemoving only some of them may leave the household still")
+		fmt.Fprintln(a.out, "inconsistent, which is why the ids are yours to choose.")
 		return nil
 	}
 
@@ -621,8 +801,8 @@ func runRepair(dbPath, backupDir, uploadDir, del string, yes bool) error {
 		return err
 	}
 	flagged := map[int64]anomaly{}
-	for _, a := range found {
-		flagged[a.TxID] = a
+	for _, an := range found {
+		flagged[an.TxID] = an
 	}
 	for _, id := range wanted {
 		if _, ok := flagged[id]; !ok {
@@ -631,14 +811,10 @@ func runRepair(dbPath, backupDir, uploadDir, del string, yes bool) error {
 		}
 	}
 
-	fmt.Printf("\nAbout to permanently delete %d transaction(s): %s\n",
+	fmt.Fprintf(a.out, "\nAbout to permanently delete %d transaction(s): %s\n",
 		len(wanted), joinIDs(wanted))
-	if !yes {
-		fmt.Print("Type 'delete' to continue: ")
-		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-		if strings.TrimSpace(line) != "delete" {
-			return errors.New("cancelled")
-		}
+	if !yes && !a.confirm("", "delete") {
+		return errors.New("cancelled")
 	}
 
 	snap, err := db.Backup(context.Background(), sqlDB, db.BackupConfig{
@@ -647,7 +823,7 @@ func runRepair(dbPath, backupDir, uploadDir, del string, yes bool) error {
 	if err != nil {
 		return fmt.Errorf("backup failed, so nothing was deleted: %w", err)
 	}
-	fmt.Printf("Backed up to %s\n", snap.Path)
+	fmt.Fprintf(a.out, "Backed up to %s\n", snap.Path)
 
 	// One transaction: either every named row goes or none does.
 	tx, err := sqlDB.Begin()
@@ -663,7 +839,7 @@ func runRepair(dbPath, backupDir, uploadDir, del string, yes bool) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit deletions: %w", err)
 	}
-	fmt.Printf("Deleted %d transaction(s).\n\n", len(wanted))
+	fmt.Fprintf(a.out, "Deleted %d transaction(s).\n\n", len(wanted))
 
 	// Re-run the diagnosis so the result is measured, not assumed.
 	left, err := findAnomalies(sqlDB)
@@ -675,14 +851,14 @@ func runRepair(dbPath, backupDir, uploadDir, del string, yes bool) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("  household %d now holds %s in cash\n", hh, c.Display())
+		fmt.Fprintf(a.out, "  household %d now holds %s in cash\n", hh, c.Display())
 	}
 	if len(left) == 0 {
-		fmt.Println("\nNo impossible movements remain.")
+		fmt.Fprintln(a.out, "\nNo impossible movements remain.")
 	} else {
-		fmt.Printf("\n%d impossible movement(s) still present: %s\n",
+		fmt.Fprintf(a.out, "\n%d impossible movement(s) still present: %s\n",
 			len(left), joinIDs(allIDs(left)))
-		fmt.Println("Run this command again to see them.")
+		fmt.Fprintln(a.out, "Run this command again to see them.")
 	}
 	return nil
 }
@@ -723,17 +899,17 @@ func parseIDs(s string) ([]int64, error) {
 }
 
 // runBackup takes one verified snapshot, or lists the existing ones.
-func runBackup(dbPath, dir, uploadDir string, keep int, list bool) error {
+func (a *app) runBackup(dbPath, dir, uploadDir string, keep int, list, acceptEmpty bool) error {
 	if list {
 		found, err := db.Snapshots(dir)
 		if err != nil {
 			return err
 		}
 		if len(found) == 0 {
-			fmt.Printf("No snapshots in %s\n", dir)
+			fmt.Fprintf(a.out, "No snapshots in %s\n", dir)
 			return nil
 		}
-		fmt.Printf("%d snapshot(s) in %s, oldest first:\n", len(found), dir)
+		fmt.Fprintf(a.out, "%d snapshot(s) in %s, oldest first:\n", len(found), dir)
 		for _, p := range found {
 			size := int64(0)
 			if info, err := os.Stat(p); err == nil {
@@ -743,13 +919,15 @@ func runBackup(dbPath, dir, uploadDir string, keep int, list bool) error {
 			if _, err := os.Stat(strings.TrimSuffix(p, ".db") + "-uploads.zip"); err == nil {
 				receipts = "  + receipts"
 			}
-			fmt.Printf("  %-34s %8.1f KiB%s\n", filepath.Base(p), float64(size)/1024, receipts)
+			fmt.Fprintf(a.out, "  %-34s %8.1f KiB%s\n", filepath.Base(p), float64(size)/1024, receipts)
 		}
 		return nil
 	}
 
-	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("%s does not exist, so there is nothing to back up", dbPath)
+	// No lock: VACUUM INTO reads one consistent instant through SQLite's own locking,
+	// so a backup beside the running server is safe and is the normal case.
+	if err := requireDB(dbPath); err != nil {
+		return err
 	}
 
 	sqlDB, err := db.Open(dbPath)
@@ -759,39 +937,41 @@ func runBackup(dbPath, dir, uploadDir string, keep int, list bool) error {
 	defer sqlDB.Close()
 
 	snap, err := db.Backup(context.Background(), sqlDB, db.BackupConfig{
-		Dir: dir, UploadDir: uploadDir, Keep: keep,
+		Dir: dir, UploadDir: uploadDir, Keep: keep, AcceptEmpty: acceptEmpty,
 	})
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Snapshot written and verified in %s\n", snap.Took.Round(time.Millisecond))
-	fmt.Printf("  %s  (%.1f KiB)\n", snap.Path, float64(snap.Bytes)/1024)
+	fmt.Fprintf(a.out, "Snapshot written and verified in %s\n", snap.Took.Round(time.Millisecond))
+	fmt.Fprintf(a.out, "  %s  (%.1f KiB)\n", snap.Path, float64(snap.Bytes)/1024)
 	if snap.Uploads != "" {
-		fmt.Printf("  %s\n", snap.Uploads)
+		fmt.Fprintf(a.out, "  %s\n", snap.Uploads)
 	}
 	for _, t := range []string{"users", "households", "transactions", "funds"} {
-		fmt.Printf("  %-18s %d\n", t, snap.Counts[t])
+		fmt.Fprintf(a.out, "  %-18s %d\n", t, snap.Counts[t])
 	}
 	if len(snap.Pruned) > 0 {
-		fmt.Printf("Pruned %d old file(s), keeping the newest %d snapshots.\n",
+		fmt.Fprintf(a.out, "Pruned %d old file(s), keeping the newest %d snapshots.\n",
 			len(snap.Pruned), keep)
 	}
 	return nil
 }
 
-// runRestore puts a snapshot back after proving it is usable.
-func runRestore(from, dir, dbPath string, force, check bool) error {
+// runRestore puts a snapshot back after proving it is usable. It is the one command
+// allowed to create the database, because restoring onto a fresh machine is what it
+// is for.
+func (a *app) runRestore(from, dir, dbPath string, check bool) error {
 	if from == "" {
 		found, err := db.Snapshots(dir)
 		if err != nil {
 			return err
 		}
 		if len(found) == 0 {
-			return fmt.Errorf("no snapshots found in %s", dir)
+			return fmt.Errorf("no snapshots found in %s (pass -from, or -dir / YABA_BACKUP_DIR)", dir)
 		}
 		from = found[len(found)-1]
-		fmt.Printf("Using the newest snapshot: %s\n", from)
+		fmt.Fprintf(a.out, "Using the newest snapshot: %s\n", from)
 	}
 
 	if check {
@@ -799,29 +979,45 @@ func runRestore(from, dir, dbPath string, force, check bool) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("%s verifies.\n", filepath.Base(from))
+		fmt.Fprintf(a.out, "%s verifies.\n", filepath.Base(from))
 		for _, t := range []string{"users", "households", "transactions", "funds"} {
-			fmt.Printf("  %-18s %d\n", t, counts[t])
+			fmt.Fprintf(a.out, "  %-18s %d\n", t, counts[t])
 		}
 		return nil
 	}
 
-	// Preserve whatever is there before overwriting it: a restore is done under pressure,
-	// and the file just replaced sometimes turns out to have been the good one.
-	if _, err := os.Stat(dbPath); err == nil {
-		aside := dbPath + ".before-restore-" + time.Now().UTC().Format("20060102-150405Z")
-		if err := os.Rename(dbPath, aside); err != nil {
-			return fmt.Errorf("could not move %s aside: %w", dbPath, err)
-		}
-		fmt.Printf("Moved the existing database to %s\n", aside)
-		force = true
+	// The directory has to exist already: creating it would hide a mistyped -db
+	// behind a restore into a brand new, unexpected place.
+	if info, err := os.Stat(filepath.Dir(dbPath)); err != nil || !info.IsDir() {
+		return fmt.Errorf("the directory for %s does not exist; create it first or fix -db / YABA_DB", dbPath)
 	}
 
-	if err := db.Restore(context.Background(), from, dbPath, force); err != nil {
+	lock, err := lockDB(dbPath)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("Restored %s to %s\n", filepath.Base(from), dbPath)
-	fmt.Printf("Receipts are not restored automatically: unzip the matching "+
+	defer lock.Release()
+
+	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(a.out, "There is no database at %s yet; the restore will create it.\n", dbPath)
+	}
+
+	// Whatever is there is preserved before being replaced: a restore is done under
+	// pressure, and the file just replaced sometimes turns out to have been the good
+	// one. db.Restore checkpoints it and moves it aside with its -wal and -shm, so
+	// commits the server had not yet checkpointed travel with it.
+	aside, err := db.Restore(context.Background(), from, dbPath, true)
+	if err != nil {
+		return err
+	}
+	if len(aside) > 0 {
+		fmt.Fprintf(a.out, "Moved the existing database to %s\n", aside[0])
+		for _, p := range aside[1:] {
+			fmt.Fprintf(a.out, "  with %s\n", p)
+		}
+	}
+	fmt.Fprintf(a.out, "Restored %s to %s\n", filepath.Base(from), dbPath)
+	fmt.Fprintf(a.out, "Receipts are not restored automatically: unzip the matching "+
 		"%s-uploads.zip over your uploads directory if you need them.\n",
 		strings.TrimSuffix(filepath.Base(from), ".db"))
 	return nil
@@ -845,22 +1041,24 @@ func clearDir(dir string) error {
 }
 
 // envInt64 reads a positive integer from the environment.
-func envInt64(key string, fallback int64) int64 {
-	v := strings.TrimSpace(os.Getenv(key))
+func (a *app) envInt64(key string, fallback int64) int64 {
+	v := strings.TrimSpace(a.getenv(key))
 	if v == "" {
 		return fallback
 	}
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil || n <= 0 {
-		fmt.Fprintf(os.Stderr, "warning: %s=%q is not a positive integer; using %d\n",
+		fmt.Fprintf(a.errOut, "warning: %s=%q is not a positive integer; using %d\n",
 			key, v, fallback)
 		return fallback
 	}
 	return n
 }
 
-func envOr(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+// envOr matches the server's envOr exactly (trimmed, empty means unset), so both read
+// one environment file the same way.
+func (a *app) envOr(key, fallback string) string {
+	if v := strings.TrimSpace(a.getenv(key)); v != "" {
 		return v
 	}
 	return fallback
@@ -868,7 +1066,12 @@ func envOr(key, fallback string) string {
 
 // ── passwd ────────────────────────────────────────────────────────────────────
 
-func runPasswd(dbPath, email, password string, list bool) error {
+func (a *app) runPasswd(dbPath, email string, list bool) error {
+	// No lock: the change is one SQLite transaction, safe beside the running server,
+	// and resetting a password is often needed precisely while it is serving.
+	if err := requireDB(dbPath); err != nil {
+		return err
+	}
 	sqlDB, err := db.Open(dbPath)
 	if err != nil {
 		return err
@@ -879,7 +1082,7 @@ func runPasswd(dbPath, email, password string, list bool) error {
 	// password reset would be surprising and hard to undo.
 
 	if list {
-		return listAccounts(sqlDB)
+		return a.listAccounts(sqlDB)
 	}
 
 	email = strings.ToLower(strings.TrimSpace(email))
@@ -900,19 +1103,17 @@ func runPasswd(dbPath, email, password string, list bool) error {
 		return fmt.Errorf("look up account: %w", err)
 	}
 
-	if password == "" {
-		fmt.Printf("Setting a new password for %s (id %d).\n", current, id)
-		password, err = prompt("New password: ")
-		if err != nil {
-			return err
-		}
-		again, err := prompt("Confirm password: ")
-		if err != nil {
-			return err
-		}
-		if password != again {
-			return errors.New("the two passwords do not match")
-		}
+	fmt.Fprintf(a.out, "Setting a new password for %s (id %d).\n", current, id)
+	password, err := a.promptSecret("New password: ")
+	if err != nil {
+		return err
+	}
+	again, err := a.promptSecret("Confirm password: ")
+	if err != nil {
+		return err
+	}
+	if password != again {
+		return errors.New("the two passwords do not match")
 	}
 
 	if err := checkPassword(password); err != nil {
@@ -946,24 +1147,27 @@ func runPasswd(dbPath, email, password string, list bool) error {
 		return fmt.Errorf("revoke sessions: %w", err)
 	}
 	n, _ := revoked.RowsAffected()
+	if _, err := tx.Exec(`DELETE FROM password_resets WHERE user_id = ?`, id); err != nil {
+		return fmt.Errorf("revoke password reset links: %w", err)
+	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 
-	fmt.Printf("Password updated for %s.\n", current)
+	fmt.Fprintf(a.out, "Password updated for %s.\n", current)
 	switch n {
 	case 0:
-		fmt.Println("No active logins to sign out.")
+		fmt.Fprintln(a.out, "No active logins to sign out.")
 	case 1:
-		fmt.Println("Signed out 1 active login. It will be asked to log in again.")
+		fmt.Fprintln(a.out, "Signed out 1 active login. It will be asked to log in again.")
 	default:
-		fmt.Printf("Signed out %d active logins. They will be asked to log in again.\n", n)
+		fmt.Fprintf(a.out, "Signed out %d active logins. They will be asked to log in again.\n", n)
 	}
 	return nil
 }
 
-func listAccounts(sqlDB *sql.DB) error {
+func (a *app) listAccounts(sqlDB *sql.DB) error {
 	rows, err := sqlDB.Query(`
 		SELECT id, IFNULL(email, username), IFNULL(display_name, ''), created_at
 		FROM users ORDER BY id ASC`)
@@ -972,14 +1176,14 @@ func listAccounts(sqlDB *sql.DB) error {
 	}
 	defer rows.Close()
 
-	fmt.Printf("%-5s %-34s %-16s %s\n", "ID", "EMAIL", "NAME", "CREATED")
+	fmt.Fprintf(a.out, "%-5s %-34s %-16s %s\n", "ID", "EMAIL", "NAME", "CREATED")
 	for rows.Next() {
 		var id int64
 		var email, name, created string
 		if err := rows.Scan(&id, &email, &name, &created); err != nil {
 			return err
 		}
-		fmt.Printf("%-5d %-34s %-16s %s\n", id, email, name, created)
+		fmt.Fprintf(a.out, "%-5d %-34s %-16s %s\n", id, email, name, created)
 	}
 	return rows.Err()
 }
@@ -1001,11 +1205,16 @@ func checkPassword(p string) error {
 	return nil
 }
 
-// prompt reads a line from stdin, visibly: hiding it would mean importing
-// golang.org/x/term for one helper. Pass -password where nobody can see the screen.
-func prompt(label string) (string, error) {
-	fmt.Print(label)
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+// promptSecret reads a password from stdin. At a terminal, echo is switched off
+// while it is typed, so it is not left on the screen; piped input is read as is.
+func (a *app) promptSecret(label string) (string, error) {
+	fmt.Fprint(a.out, label)
+	restore := echoOff(a.term)
+	line, err := a.in.ReadString('\n')
+	if restore != nil {
+		restore()
+		fmt.Fprintln(a.out) // the Enter that was typed was not echoed either
+	}
 	if err != nil {
 		return "", fmt.Errorf("read password: %w", err)
 	}

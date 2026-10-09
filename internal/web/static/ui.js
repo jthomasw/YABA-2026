@@ -136,10 +136,10 @@
   }
 
   /* ── theme toggle ────────────────────────────────────────────────────────
-   * The header button that overrides the system's light/dark preference. The
-   * inline script in layout.html's <head> already applied whatever was saved
-   * last time, before this file even loaded (that is why this is inline and
-   * synchronous, and this one is deferred) -- so on load this only has to
+   * The header button that overrides the system's light/dark preference.
+   * theme.js, loaded synchronously in layout.html's <head>, already applied
+   * whatever was saved last time, before this file even loaded (that is why it
+   * is synchronous, and this one is deferred) -- so on load this only has to
    * read the CURRENT effective theme and make the button's icon and label
    * agree with it, then flip both on click.
    */
@@ -181,9 +181,24 @@
     });
   }
 
+  /* ── auto-submitting selects ─────────────────────────────────────────────
+   * A <select data-autosubmit> submits its form as soon as the choice changes:
+   * the month picker, the budget switcher and an owner's role selector. This
+   * replaces onchange="..." attributes, which the Content-Security-Policy no
+   * longer allows. Without scripting each form still has its own submit path.
+   */
+  function initAutoSubmit() {
+    document.querySelectorAll("select[data-autosubmit]").forEach(function (sel) {
+      sel.addEventListener("change", function () {
+        if (sel.form) sel.form.submit();
+      });
+    });
+  }
+
   function init() {
     initConfirmDialogs();
     initConfirms();
+    initAutoSubmit();
     initHelp();
     initThemeToggle();
   }

@@ -137,8 +137,13 @@ func TestASuccessfulReadingBecomesADraftAndNotATransaction(t *testing.T) {
 	if job.Draft.Total != 4578 || job.Draft.Merchant != "LIDL" || job.Draft.Date != "2026-03-14" {
 		t.Errorf("draft = %+v, want the amount, merchant and date that were read", job.Draft)
 	}
-	if len(job.Draft.Items) != 1 {
-		t.Errorf("line items were dropped: %+v", job.Draft.Items)
+	// The one item read is kept, and the rest of the total is made up by an
+	// added line so the confirmation form can be saved as it stands.
+	if len(job.Draft.Items) != 2 || job.Draft.Items[0].Description != "Milk" ||
+		job.Draft.Items[1].Description != store.DraftLineOther ||
+		job.Draft.ItemsTotal() != job.Draft.Total || !job.Draft.ItemsBalanced {
+		t.Errorf("items = %+v (balanced %v), want Milk plus an Other line totalling %d",
+			job.Draft.Items, job.Draft.ItemsBalanced, job.Draft.Total)
 	}
 
 	ns := q.notifications()
@@ -219,8 +224,12 @@ func TestAFailureIsRetriedThenReported(t *testing.T) {
 
 	broken := stubProcessor{err: errStub("disk on fire")}
 	w := New(q.store, broken, time.Minute)
+	clock := newFakeClock(w)
 
 	for attempt := 1; attempt <= store.MaxJobAttempts; attempt++ {
+		// Each retry waits out a backoff; jump past the longest one so this test
+		// is about how many attempts there are, not when they happen.
+		clock.advance(maxRetryAfter)
 		if !w.processNext(context.Background()) {
 			t.Fatalf("attempt %d: nothing left in the queue, but the job has not been given up on", attempt)
 		}

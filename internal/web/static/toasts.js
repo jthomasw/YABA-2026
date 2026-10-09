@@ -85,14 +85,26 @@
       return;
     }
 
+    // redirect: "manual", because a signed-out request is answered with a
+    // 303 to the sign-in page and fetch would otherwise follow it: the script
+    // then saw a 200 HTML page, never the 303, and a signed-out tab went on
+    // polling every 40 seconds for as long as it stayed open. With manual
+    // redirects the response is an opaque one (type "opaqueredirect", status
+    // 0) instead. The content-type check is the backstop for anything that
+    // still lands on a page rather than the JSON this endpoint returns.
     fetch("/notifications", {
       credentials: "same-origin",
+      redirect: "manual",
       headers: { "Accept": "application/json" }
     })
       .then(function (res) {
-        if (res.status === 303 || res.status === 401 || res.status === 403) {
+        var type = res.headers.get("Content-Type") || "";
+        if (res.type === "opaqueredirect" || res.redirected ||
+            res.status === 401 || res.status === 403 ||
+            (res.ok && type.indexOf("application/json") === -1)) {
           // Signed out. Stop rather than hammering the endpoint.
           stopped = true;
+          clearTimeout(timer);
           return null;
         }
         if (!res.ok) throw new Error("status " + res.status);

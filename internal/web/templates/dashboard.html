@@ -15,9 +15,9 @@
       spent, minus what you've moved into savings</strong>. It's worked out fresh
       every time you open the page, so it's always up to date.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>The chart plots your balance day by day. The dashed line is a simple
-      trend line — it shows whether you're generally trending up or down,
-      instead of reacting to one unusual day.</span></li>
+      <span>The chart plots your balance day by day. The sentence under it
+      says whether you're generally trending up or down, instead of reacting
+      to one unusual day.</span></li>
     <li>{{template "icon" "check-circle"}}
       <span>Moving money into a savings fund isn't "spending" — it's just
       moved to a different pot. So sending $100 to your Emergency Fund lowers
@@ -123,7 +123,7 @@
   <form method="GET" action="/dashboard" class="period-form">
     <input type="hidden" name="tab" value="{{.Tab}}">
     <label for="month">Period</label>
-    <select id="month" name="month" onchange="this.form.submit()">
+    <select id="month" name="month" data-autosubmit>
       <option value="" {{if eq .Month ""}}selected{{end}}>All time</option>
       {{range .Months}}
       <option value="{{.}}" {{if eq . $.Month}}selected{{end}}>{{monthName .}}</option>
@@ -227,9 +227,8 @@
         <canvas id="chart-balance"
                 data-labels="{{jsonAttr .Charts.BalanceLabels}}"
                 data-values="{{jsonAttr .Charts.BalanceValues}}"
-                data-trend="{{jsonAttr .Charts.TrendValues}}"
                 role="img"
-                aria-label="Current funds over time, with a trend line"></canvas>
+                aria-label="Current funds over time"></canvas>
       </div>
       {{/* The trend the mockup asks for, also in words: a canvas is opaque to
            assistive technology. */}}

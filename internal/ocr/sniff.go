@@ -1,10 +1,6 @@
 package ocr
 
-import (
-	"bytes"
-	"fmt"
-	"os"
-)
+import "bytes"
 
 // Kind is a receipt file format, named by its MIME type.
 //
@@ -44,16 +40,6 @@ func (k Kind) Ext() string {
 		return ".pdf"
 	}
 	return ""
-}
-
-// NativelyDecodable reports whether Go's own image package can read this format,
-// which decides whether an external converter is needed before OCR.
-func (k Kind) NativelyDecodable() bool {
-	switch k {
-	case KindJPEG, KindPNG, KindGIF:
-		return true
-	}
-	return false
 }
 
 // Describe names the format for a message shown to the user.
@@ -118,20 +104,4 @@ func Sniff(head []byte) Kind {
 		return KindUnknown
 	}
 	return KindUnknown
-}
-
-// sniffFile reads a file's header and identifies it.
-func sniffFile(path string) (Kind, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return KindUnknown, fmt.Errorf("open receipt: %w", err)
-	}
-	defer f.Close()
-
-	head := make([]byte, 32)
-	n, err := f.Read(head)
-	if err != nil && n == 0 {
-		return KindUnknown, fmt.Errorf("read receipt: %w", err)
-	}
-	return Sniff(head[:n]), nil
 }

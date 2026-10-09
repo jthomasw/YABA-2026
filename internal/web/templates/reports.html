@@ -31,7 +31,7 @@
 
   <form method="GET" action="/reports" class="period-form">
     <label for="month">Period</label>
-    <select id="month" name="month" onchange="this.form.submit()">
+    <select id="month" name="month" data-autosubmit>
       <option value="" {{if eq .Month ""}}selected{{end}}>All time</option>
       {{range .Months}}
       <option value="{{.}}" {{if eq . $.Month}}selected{{end}}>{{monthName .}}</option>

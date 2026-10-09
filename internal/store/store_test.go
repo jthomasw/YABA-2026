@@ -257,15 +257,15 @@ func TestOneUserCannotTouchAnothersRows(t *testing.T) {
 	txID := addExpense(t, st, alice, 5000, "Food", "2026-01-01", true)
 	fundID, _ := st.CreateFund(ctx, alice, "Alice fund", 0, 0)
 
-	if err := st.Delete(ctx, bob, txID); !errors.Is(err, store.ErrNotFound) {
+	if _, err := st.Delete(ctx, bob, txID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("bob deleting alice's transaction: got %v, want ErrNotFound", err)
 	}
 	if _, err := st.ByID(ctx, bob, txID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("bob reading alice's transaction: got %v, want ErrNotFound", err)
 	}
-	if err := st.Update(ctx, bob, txID, store.NewTransaction{
+	if err := st.UpdateWithItems(ctx, bob, txID, store.NewTransaction{
 		Kind: store.KindExpense, Label: "hacked", Amount: 1, OccurredOn: "2026-01-01",
-	}); !errors.Is(err, store.ErrNotFound) {
+	}, nil); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("bob updating alice's transaction: got %v, want ErrNotFound", err)
 	}
 	if _, err := st.FundByID(ctx, bob, fundID); !errors.Is(err, store.ErrNotFound) {
@@ -332,9 +332,9 @@ func TestUpdateCannotConvertATransferIntoAnExpense(t *testing.T) {
 		t.Fatalf("list transfers: %v %+v", err, txs)
 	}
 
-	err = st.Update(ctx, sc, txs[0].ID, store.NewTransaction{
+	err = st.UpdateWithItems(ctx, sc, txs[0].ID, store.NewTransaction{
 		Kind: store.KindExpense, Label: "converted", Amount: 10000, OccurredOn: "2026-01-02",
-	})
+	}, nil)
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("converting a transfer should not be possible, got %v", err)
 	}
@@ -660,10 +660,10 @@ func TestUpdatePreservesCreatedAtOrdering(t *testing.T) {
 	}
 
 	essential := false
-	if err := st.Update(ctx, sc, first, store.NewTransaction{
+	if err := st.UpdateWithItems(ctx, sc, first, store.NewTransaction{
 		Kind: store.KindExpense, Label: "First edited", Amount: 1500,
 		OccurredOn: "2026-01-01", Essential: &essential,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 
@@ -688,12 +688,12 @@ func TestDeleteIsScopedAndReportsMissingRows(t *testing.T) {
 	st, sc := newTestStore(t)
 
 	id := addExpense(t, st, sc, 1000, "Food", "2026-01-01", true)
-	if err := st.Delete(ctx, sc, id); err != nil {
+	if _, err := st.Delete(ctx, sc, id); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	// Deleting twice reports not-found rather than silently succeeding, so the
 	// handler can tell the user what happened.
-	if err := st.Delete(ctx, sc, id); !errors.Is(err, store.ErrNotFound) {
+	if _, err := st.Delete(ctx, sc, id); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("second delete: got %v, want ErrNotFound", err)
 	}
 }
@@ -1210,17 +1210,17 @@ func TestSecondWriterIsRefused(t *testing.T) {
 	}
 	second := first // both members opened the same row, so both hold version 1
 
-	if err := st.Update(ctx, sc, id, store.NewTransaction{
+	if err := st.UpdateWithItems(ctx, sc, id, store.NewTransaction{
 		Kind: store.KindExpense, Label: "Rent (Alice)", Amount: 1100,
 		OccurredOn: "2026-08-01", Version: first.Version,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("the first writer should succeed: %v", err)
 	}
 
-	err = st.Update(ctx, sc, id, store.NewTransaction{
+	err = st.UpdateWithItems(ctx, sc, id, store.NewTransaction{
 		Kind: store.KindExpense, Label: "Rent (Bob)", Amount: 1200,
 		OccurredOn: "2026-08-01", Version: second.Version,
-	})
+	}, nil)
 	if !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("the second writer got %v, want ErrConflict", err)
 	}
@@ -1235,10 +1235,10 @@ func TestSecondWriterIsRefused(t *testing.T) {
 	}
 
 	// Bob can retry against the current version.
-	if err := st.Update(ctx, sc, id, store.NewTransaction{
+	if err := st.UpdateWithItems(ctx, sc, id, store.NewTransaction{
 		Kind: store.KindExpense, Label: "Rent (Bob)", Amount: 1200,
 		OccurredOn: "2026-08-01", Version: now.Version,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Errorf("retrying with the current version failed: %v", err)
 	}
 }
@@ -1250,10 +1250,10 @@ func TestVersionZeroSkipsTheCheck(t *testing.T) {
 	ctx := context.Background()
 
 	id := addExpense(t, st, sc, 1000, "Rent", "2026-08-01", true)
-	if err := st.Update(ctx, sc, id, store.NewTransaction{
+	if err := st.UpdateWithItems(ctx, sc, id, store.NewTransaction{
 		Kind: store.KindExpense, Label: "Changed", Amount: 1000,
 		OccurredOn: "2026-08-01", // Version left at zero
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("an update with no version should still work: %v", err)
 	}
 }
@@ -1264,10 +1264,10 @@ func TestAMissingRowIsStillNotFound(t *testing.T) {
 	st, sc := newTestStore(t)
 	ctx := context.Background()
 
-	err := st.Update(ctx, sc, 987654, store.NewTransaction{
+	err := st.UpdateWithItems(ctx, sc, 987654, store.NewTransaction{
 		Kind: store.KindExpense, Label: "Ghost", Amount: 100,
 		OccurredOn: "2026-08-01", Version: 1,
-	})
+	}, nil)
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("got %v, want ErrNotFound", err)
 	}
@@ -1514,13 +1514,13 @@ func TestAuditRecordsTheThingsThatMatter(t *testing.T) {
 	ctx := context.Background()
 
 	id := addIncome(t, st, sc, 100000, "Salary", "2026-01-01")
-	if err := st.Update(ctx, sc, id, store.NewTransaction{
+	if err := st.UpdateWithItems(ctx, sc, id, store.NewTransaction{
 		Kind: store.KindIncome, Label: "Salary (corrected)", Amount: 110000,
 		OccurredOn: "2026-01-01",
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if err := st.Delete(ctx, sc, id); err != nil {
+	if _, err := st.Delete(ctx, sc, id); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 

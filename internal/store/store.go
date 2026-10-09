@@ -3,15 +3,9 @@ package store
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
-	"math"
-	"strings"
 	"time"
 
 	"github.com/jthomasw/YABA-2026/internal/money"
@@ -98,9 +92,21 @@ func SetLocation(loc *time.Location) {
 	}
 }
 
+// Now returns the current instant in clockLocation. Anything that turns "now"
+// into a calendar day or month must start from this rather than time.Now():
+// the server's own zone can already be in tomorrow, or next month, while the
+// household's is not.
+func Now() time.Time {
+	return timeNow().In(clockLocation)
+}
+
+// timeNow is the wall clock behind Now. A variable only so tests can stand on a
+// chosen instant (see export_test.go); nothing else assigns it.
+var timeNow = time.Now
+
 // Today returns the current date as YYYY-MM-DD, in clockLocation.
 func Today() string {
-	return time.Now().In(clockLocation).Format(DateLayout)
+	return Now().Format(DateLayout)
 }
 
 // DateLayout is the storage format for occurred_on.
@@ -153,11 +159,18 @@ func monthClause(month, prefix string) (clause string, args []any, err error) {
 	return " AND " + prefix + "occurred_on >= ? AND " + prefix + "occurred_on < ?", []any{start, end}, nil
 }
 
+// Uncategorised is the group spending falls into when nothing names it: a blank
+// label, or a blank line-item category on a transaction with a blank label.
+// It is bound into the SQL as a parameter rather than written into it, so this
+// is the only place the spelling lives.
+const Uncategorised = "Uncategorised"
+
 // LabelTotal is one slice of a breakdown chart.
 type LabelTotal struct {
 	Label string
 	Total Cents
 }
+<<<<<<< HEAD
 
 type RecurringIncome struct {
 	ID            int64
@@ -5780,3 +5793,5 @@ func (s *Store) TakeNotifications(ctx context.Context, userID int64) ([]Notifica
 	}
 	return out, nil
 }
+=======
+>>>>>>> origin/main

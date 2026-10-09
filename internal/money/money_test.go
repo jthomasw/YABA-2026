@@ -199,3 +199,18 @@ func TestParseCeiling(t *testing.T) {
 		}
 	}
 }
+
+// TestCommasOnlyBetweenThousands: "12,50" must not become $1,250.00.
+func TestCommasOnlyBetweenThousands(t *testing.T) {
+	good := map[string]Cents{"1,234": 123400, "1,234.56": 123456, "12,345,678.9": 1234567890, "-1,000": -100000, "$2,500.00": 250000}
+	for in, want := range good {
+		if got, err := Parse(in); err != nil || got != want {
+			t.Errorf("Parse(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"12,50", "1,2,3", "1,23", ",123", "1234,567", "1,234,56", "12.5,0", "1,,234"} {
+		if got, err := Parse(in); err == nil {
+			t.Errorf("Parse(%q) = %v, want an error", in, got)
+		}
+	}
+}

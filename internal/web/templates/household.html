@@ -104,7 +104,7 @@
               <form method="POST" action="/household/members/{{.UserID}}/role" class="inline-form">
                 {{template "csrf" $}}
                 <label class="visually-hidden" for="role-{{.UserID}}">Access for {{.Name}}</label>
-                <select id="role-{{.UserID}}" name="role" onchange="this.form.submit()">
+                <select id="role-{{.UserID}}" name="role" data-autosubmit>
                   {{$current := .Role}}
                   {{range $.Roles}}
                   <option value="{{.}}" {{if eq . $current}}selected{{end}}>{{.Label}}</option>

@@ -207,7 +207,7 @@ func (r *testRig) expireSession(id string) {
 		UPDATE sessions
 		SET expires_at   = datetime('now', '-1 day'),
 		    last_seen_at = datetime('now', '-40 days')
-		WHERE id = ?`, id); err != nil {
+		WHERE id = ?`, store.TokenHash(id)); err != nil {
 		r.t.Fatalf("expire session: %v", err)
 	}
 }
@@ -248,7 +248,9 @@ func TestSessionRevocationIsImmediate(t *testing.T) {
 	}
 
 	// Revoke it out of band, as a device list or a password change would.
-	if err := rig.store.DeleteSession(context.Background(), rig.userID, sessions[0].ID); err != nil {
+	// The list carries the stored ID (a hash), which is what the device page
+	// posts back to revoke.
+	if err := rig.store.DeleteSessionByID(context.Background(), rig.userID, sessions[0].ID); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 
@@ -296,32 +298,33 @@ func TestRevokeOthersKeepsThisDevice(t *testing.T) {
 	rig := newRig(t)
 	rig.login()
 
-	mine, err := rig.store.Sessions(context.Background(), rig.userID, "")
-	if err != nil || len(mine) != 1 {
-		t.Fatalf("expected 1 session, got %d (%v)", len(mine), err)
-	}
-	keep := mine[0].ID
-
+	// The browser's own token lives only in its cookie, so "this device" is
+	// exercised through the real route rather than by calling the store.
+	var others []string
 	for i := 0; i < 3; i++ {
-		if _, err := rig.store.CreateSession(context.Background(), rig.userID, "Device"); err != nil {
+		tok, err := rig.store.CreateSession(context.Background(), rig.userID, "Device")
+		if err != nil {
 			t.Fatalf("create session: %v", err)
 		}
+		others = append(others, tok)
 	}
 
-	n, err := rig.store.DeleteOtherSessions(context.Background(), rig.userID, keep)
-	if err != nil {
-		t.Fatalf("revoke others: %v", err)
-	}
-	if n != 3 {
-		t.Errorf("revoked %d, want 3", n)
+	if rec := rig.post("/sessions/revoke-others", nil); rec.Code != http.StatusSeeOther {
+		t.Fatalf("revoke others: %d", rec.Code)
 	}
 
-	// Still logged in here.
+	// Still logged in here...
 	if rec := rig.do("GET", "/dashboard", nil); rec.Code != http.StatusOK {
 		t.Errorf("this device was signed out too: %d", rec.Code)
 	}
-	if _, err := rig.store.SessionUser(context.Background(), keep); err != nil {
-		t.Errorf("kept session no longer resolves: %v", err)
+	// ...and nowhere else.
+	for _, tok := range others {
+		if _, err := rig.store.SessionUser(context.Background(), tok); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("another device still resolves: %v", err)
+		}
+	}
+	if left, _ := rig.store.Sessions(context.Background(), rig.userID, ""); len(left) != 1 {
+		t.Errorf("%d sessions left, want 1", len(left))
 	}
 }
 
@@ -1894,7 +1897,7 @@ func TestAnExpiredResetLinkExplainsItself(t *testing.T) {
 	token, _ := rig.store.CreateReset(context.Background(), rig.userID)
 	if _, err := rig.db.Exec(
 		`UPDATE password_resets SET expires_at = datetime('now','-1 minute') WHERE token = ?`,
-		token); err != nil {
+		store.TokenHash(token)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1985,7 +1988,7 @@ func TestChangePasswordKeepsThisDeviceAndDropsOthers(t *testing.T) {
 	}
 	// ...and the other one does not.
 	var alive int
-	rig.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = ?`, other).Scan(&alive)
+	rig.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = ?`, store.TokenHash(other)).Scan(&alive)
 	if alive != 0 {
 		t.Error("the other device is still signed in")
 	}
@@ -2099,10 +2102,10 @@ func TestAConflictIsExplainedAndRecoverable(t *testing.T) {
 	id := rig.addExpenseVia(t, "Rent", "1000.00")
 
 	// Somebody else saves first, bumping the version to 2.
-	if err := rig.store.Update(context.Background(), rig.scope, id, store.NewTransaction{
+	if err := rig.store.UpdateWithItems(context.Background(), rig.scope, id, store.NewTransaction{
 		Kind: store.KindExpense, Label: "Rent (them)", Amount: 110000,
 		OccurredOn: "2026-08-01", Version: 1,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 

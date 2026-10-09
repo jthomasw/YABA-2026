@@ -180,7 +180,7 @@
             {{else if not $.Role.CanEditEntries}}
             <span class="stat-note">View only</span>
             {{else}}
-            <a class="btn btn-small btn-quiet" href="/transactions/{{.ID}}/edit?back={{$.BackQS}}">Edit</a>
+            <a class="btn btn-small btn-quiet" href="/transactions/{{.ID}}/edit?back={{$.BackPath}}">Edit</a>
             <!-- POST, not a link. The old route was
                  GET /delete-transaction?id=N, which any prefetch or embedded
                  image could fire. -->
@@ -201,8 +201,8 @@
 
   {{if gt .TotalPages 1}}
   <nav class="pagination" aria-label="Pages">
-    {{if .PrevQuery}}
-    <a class="btn btn-small btn-quiet" href="/transactions?{{.PrevQuery}}" rel="prev">Previous</a>
+    {{if .PrevURL}}
+    <a class="btn btn-small btn-quiet" href="{{.PrevURL}}" rel="prev">Previous</a>
     {{else}}
     {{/* aria-disabled needs a role that supports it; on a bare span it is
          ignored, so this announced as plain text with no disabled state.
@@ -213,8 +213,8 @@
 
     <span class="page-count">Page {{.Page}} of {{.TotalPages}}</span>
 
-    {{if .NextQuery}}
-    <a class="btn btn-small btn-quiet" href="/transactions?{{.NextQuery}}" rel="next">Next</a>
+    {{if .NextURL}}
+    <a class="btn btn-small btn-quiet" href="{{.NextURL}}" rel="next">Next</a>
     {{else}}
     {{/* aria-disabled needs a role that supports it; on a bare span it is
          ignored, so this announced as plain text with no disabled state.

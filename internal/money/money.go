@@ -21,14 +21,6 @@ var ErrInvalidAmount = errors.New("not a valid amount")
 // maxAmount caps one transaction at $1 billion.
 const maxAmount = 100_000_000_000 // $1,000,000,000.00 in cents
 
-// FromFloat converts float dollars to Cents, rounding half away from zero.
-func FromFloat(f float64) Cents {
-	if f >= 0 {
-		return Cents(int64(f*100 + 0.5))
-	}
-	return Cents(int64(f*100 - 0.5))
-}
-
 // Float returns the amount as dollars. Use only at the very edge of the
 // program (JSON for charts), never for arithmetic.
 func (c Cents) Float() float64 {
@@ -39,7 +31,6 @@ func (c Cents) Float() float64 {
 // "$1,234.56" or "-3.00" into Cents without ever touching a float.
 func Parse(s string) (Cents, error) {
 	s = strings.TrimSpace(s)
-	s = strings.ReplaceAll(s, ",", "")
 	s = strings.TrimPrefix(s, "$")
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -61,6 +52,20 @@ func Parse(s string) (Cents, error) {
 	whole, frac := s, ""
 	if i := strings.IndexByte(s, '.'); i >= 0 {
 		whole, frac = s[:i], s[i+1:]
+	}
+
+	// A comma is accepted only as a thousands separator in the whole part,
+	// in groups of three: "1,234.56". Commas used to be stripped wherever they
+	// were, so "12,50" -- a European way of writing twelve and a half -- was
+	// read as 1250 dollars.
+	if strings.Contains(whole, ",") {
+		if !thousandsGrouped(whole) {
+			return 0, fmt.Errorf("%w: use a dot for cents and commas only between thousands, e.g. 1,234.56", ErrInvalidAmount)
+		}
+		whole = strings.ReplaceAll(whole, ",", "")
+	}
+	if strings.Contains(frac, ",") {
+		return 0, fmt.Errorf("%w: %q", ErrInvalidAmount, s)
 	}
 
 	// "5." and ".5" are both amounts somebody might type. "." on its own is not
@@ -126,6 +131,21 @@ func Parse(s string) (Cents, error) {
 //
 // Deliberately ASCII-only: strconv would reject a Devanagari digit anyway, and
 // an amount field that quietly accepted one would be a surprise, not a feature.
+// thousandsGrouped reports whether s is digits grouped by commas in threes,
+// like "1,234" or "12,345,678": one to three digits, then ",ddd" groups.
+func thousandsGrouped(s string) bool {
+	groups := strings.Split(s, ",")
+	if len(groups[0]) < 1 || len(groups[0]) > 3 || !allDigits(groups[0]) {
+		return false
+	}
+	for _, g := range groups[1:] {
+		if len(g) != 3 || !allDigits(g) {
+			return false
+		}
+	}
+	return true
+}
+
 func allDigits(s string) bool {
 	if s == "" {
 		return false

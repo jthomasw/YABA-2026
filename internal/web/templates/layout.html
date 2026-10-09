@@ -2,20 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<!-- Applies a remembered light/dark override before the stylesheet paints
-     anything, so a user who has picked one doesn't see the system default
-     flash first. Synchronous and inline on purpose: a deferred file would run
-     too late. See initThemeToggle in ui.js for the other half. -->
-<script>
-(function () {
-  try {
-    var t = localStorage.getItem("yaba-theme");
-    if (t === "light" || t === "dark") {
-      document.documentElement.setAttribute("data-theme", t);
-    }
-  } catch (e) {}
-})();
-</script>
+<!-- Applies a remembered light/dark override before the stylesheet paints.
+     Synchronous (no defer) on purpose: see theme.js. -->
+<script src="{{asset "theme.js"}}"></script>
 <!-- The old templates had no viewport tag and no media queries, so the whole
      app rendered at desktop width on a phone -- which is where most people
      actually log an expense. -->
@@ -68,9 +57,9 @@
     <form method="POST" action="/household/switch" class="hh-switch">
       {{template "csrf" .}}
       <label class="visually-hidden" for="hh-switch">Budget</label>
-      <select id="hh-switch" name="household_id" onchange="this.form.submit()">
+      <select id="hh-switch" name="household_id" data-autosubmit>
         {{range .Households}}
-        <option value="{{.ID}}" {{if eq .Name $.Household}}selected{{end}}>
+        <option value="{{.ID}}" {{if eq .ID $.HouseholdID}}selected{{end}}>
           {{.Name}}{{if not .Personal}} ({{.Members}}){{end}}
         </option>
         {{end}}
