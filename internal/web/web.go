@@ -166,6 +166,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET  /register", s.handleRegister)
 	mux.HandleFunc("POST /register", s.handleRegisterSubmit)
 	mux.HandleFunc("POST /logout", s.handleLogout)
+	mux.Handle("GET  /setup", s.authed(s.handleSetup))
+	mux.Handle("POST /setup", s.authed(s.handleSetupSubmit))
 	// Liveness and readiness. Public and uninformative on purpose: see
 	// handleHealth.
 	mux.HandleFunc("GET  /healthz", s.handleHealth)
@@ -984,6 +986,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 var pages = []string{
 	"landing.html",  // sign-in page
 	"register.html", // account creation page
+	"setup.html",    // first-account budget setup
 	"about.html",    // the `Learn more!` link
 	"forgot.html",   // the `Forgot password` link
 	"dashboard.html",

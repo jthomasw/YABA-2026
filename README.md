@@ -50,7 +50,9 @@ cp .env.example .env
 YABA_SECURE_COOKIE=0 ./yaba-server -db yaba.db -uploads uploads -addr :8000 -backup-dir off
 ```
 
-Then open <http://localhost:8000> and create an account.
+Then open <http://localhost:8000> and create an account. First-time signup continues to
+a setup page where you can enter your starting balance, add initial one-time or
+recurring expenses, and add initial one-time or recurring income.
 
 The session cookie is marked `Secure` **by default**, and a browser will not send a
 Secure cookie back over plain `http://` -- so without the `YABA_SECURE_COOKIE=0` above

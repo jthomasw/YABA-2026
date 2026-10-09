@@ -46,6 +46,7 @@ uploads/
 *.prof
 coverage.out
 coverage.html
+.gocache/
 
 # Local configuration. YABA_SESSION_KEY and YABA_GEMINI_KEY belong here, never
 # in a commit. .env.example is the one exception, and holds no real values.

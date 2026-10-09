@@ -1,0 +1,245 @@
+{{define "content"}}
+<div class="auth-wrapper">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <span class="auth-mark" aria-hidden="true">Y</span>
+      <span class="auth-wordmark">YABA</span>
+    </div>
+
+    <h1 class="auth-title">Set up your budget</h1>
+    <p class="auth-sub">Enter your starting balance, then add any initial income or expenses.</p>
+
+    {{with .Error}}
+    <p class="auth-error" role="alert">
+      <span class="auth-error-mark" aria-hidden="true">!</span><span>{{.}}</span>
+    </p>
+    {{end}}
+
+    <form method="POST" action="/setup" novalidate>
+      {{template "csrf" .}}
+      {{if .FormToken}}<input type="hidden" name="form_token" value="{{.FormToken}}">{{end}}
+      <input type="hidden" name="expense_count" value="{{.ExpenseCount}}" data-expense-count>
+      <input type="hidden" name="income_count" value="{{.IncomeCount}}" data-income-count>
+
+      <div class="field">
+        <label for="starting-balance">How much are you starting with?</label>
+        <input id="starting-balance" name="starting_balance" type="number"
+               min="0" step="0.01" inputmode="decimal" value="{{.StartingBalance}}">
+        <p class="hint">Leave blank or enter 0 if you are not sure yet.</p>
+      </div>
+
+      <details class="field setup-menu">
+        <summary class="btn btn-quiet">Add initial expense</summary>
+        <p class="hint">Add an expense that has already happened, or set up a recurring expense schedule.</p>
+        <div data-expense-rows>
+          {{range .Expenses}}
+          <fieldset class="field setup-expense">
+            <legend>Initial expense {{add .Index 1}}</legend>
+            <div class="field">
+              <label for="setup-expense-type-{{.Index}}">Expense type</label>
+              <select id="setup-expense-type-{{.Index}}" name="expense_type_{{.Index}}">
+                <option value="one_time" {{if eq .Type "one_time"}}selected{{end}}>One-time expense</option>
+                <option value="recurring" {{if eq .Type "recurring"}}selected{{end}}>Recurring expense</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setup-expense-name-{{.Index}}">Name</label>
+              <input id="setup-expense-name-{{.Index}}" name="expense_name_{{.Index}}"
+                     type="text" maxlength="60" value="{{.Name}}" placeholder="Rent, phone bill…">
+            </div>
+            <div class="field">
+              <label for="setup-expense-amount-{{.Index}}">Amount</label>
+              <input id="setup-expense-amount-{{.Index}}" name="expense_amount_{{.Index}}"
+                     type="number" min="0.01" step="0.01" inputmode="decimal"
+                     value="{{.Amount}}" placeholder="0.00">
+            </div>
+            <div class="field">
+              <label for="setup-expense-date-{{.Index}}">Date / next due date</label>
+              <input id="setup-expense-date-{{.Index}}" name="expense_date_{{.Index}}"
+                     type="date" value="{{.Date}}" max="2200-12-31">
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="setup-expense-frequency-{{.Index}}">Repeat every</label>
+                <input id="setup-expense-frequency-{{.Index}}" name="expense_frequency_n_{{.Index}}"
+                       type="number" min="1" max="120" value="{{.FrequencyN}}" inputmode="numeric">
+              </div>
+              <div class="field">
+                <label for="setup-expense-unit-{{.Index}}">Unit</label>
+                <select id="setup-expense-unit-{{.Index}}" name="expense_frequency_unit_{{.Index}}">
+                  <option value="day" {{if eq .FrequencyUnit "day"}}selected{{end}}>Days</option>
+                  <option value="week" {{if eq .FrequencyUnit "week"}}selected{{end}}>Weeks</option>
+                  <option value="month" {{if eq .FrequencyUnit "month"}}selected{{end}}>Months</option>
+                </select>
+              </div>
+            </div>
+            <div class="field">
+              <label for="setup-expense-essential-{{.Index}}">Is it essential?</label>
+              <select id="setup-expense-essential-{{.Index}}" name="expense_essential_{{.Index}}">
+                <option value="yes" {{if .Essential}}selected{{end}}>Yes — a need</option>
+                <option value="no" {{if not .Essential}}selected{{end}}>No — a want</option>
+              </select>
+            </div>
+          </fieldset>
+          {{end}}
+        </div>
+        <button type="button" class="btn btn-quiet" data-add-setup-expense>Add another initial expense</button>
+        <p class="hint" data-expense-limit hidden>You can add up to 20 initial expenses.</p>
+      </details>
+
+      <details class="field setup-menu">
+        <summary class="btn btn-quiet">Add initial income</summary>
+        <p class="hint">Add income already received, or set up a recurring paycheck or other income schedule.</p>
+        <div data-income-rows>
+          {{range .Incomes}}
+          <fieldset class="field setup-income">
+            <legend>Initial income {{add .Index 1}}</legend>
+            <div class="field">
+              <label for="setup-income-type-{{.Index}}">Income type</label>
+              <select id="setup-income-type-{{.Index}}" name="income_type_{{.Index}}">
+                <option value="one_time" {{if eq .Type "one_time"}}selected{{end}}>One-time income</option>
+                <option value="recurring" {{if eq .Type "recurring"}}selected{{end}}>Recurring income</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setup-income-source-{{.Index}}">Source</label>
+              <input id="setup-income-source-{{.Index}}" name="income_source_{{.Index}}"
+                     type="text" maxlength="60" value="{{.Source}}" placeholder="Salary, freelance…">
+            </div>
+            <div class="field">
+              <label for="setup-income-amount-{{.Index}}">Amount</label>
+              <input id="setup-income-amount-{{.Index}}" name="income_amount_{{.Index}}"
+                     type="number" min="0.01" step="0.01" inputmode="decimal"
+                     value="{{.Amount}}" placeholder="0.00">
+            </div>
+            <div class="field">
+              <label for="setup-income-date-{{.Index}}">Date / next payday</label>
+              <input id="setup-income-date-{{.Index}}" name="income_date_{{.Index}}"
+                     type="date" value="{{.Date}}" max="2200-12-31">
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="setup-income-frequency-{{.Index}}">Repeat every</label>
+                <input id="setup-income-frequency-{{.Index}}" name="income_frequency_n_{{.Index}}"
+                       type="number" min="1" max="120" value="{{.FrequencyN}}" inputmode="numeric">
+              </div>
+              <div class="field">
+                <label for="setup-income-unit-{{.Index}}">Unit</label>
+                <select id="setup-income-unit-{{.Index}}" name="income_frequency_unit_{{.Index}}">
+                  <option value="day" {{if eq .FrequencyUnit "day"}}selected{{end}}>Days</option>
+                  <option value="week" {{if eq .FrequencyUnit "week"}}selected{{end}}>Weeks</option>
+                  <option value="month" {{if eq .FrequencyUnit "month"}}selected{{end}}>Months</option>
+                </select>
+              </div>
+            </div>
+          </fieldset>
+          {{end}}
+        </div>
+        <button type="button" class="btn btn-quiet" data-add-setup-income>Add another initial income</button>
+        <p class="hint" data-income-limit hidden>You can add up to 20 initial incomes.</p>
+      </details>
+
+      <div class="form-actions">
+        <button type="submit" class="btn-auth">Finish setup</button>
+      </div>
+    </form>
+
+    <p class="auth-alt"><a href="/dashboard">Skip for now</a></p>
+  </div>
+
+  <template id="setup-expense-template">
+    <fieldset class="field setup-expense">
+      <legend>Initial expense __INDEX_LABEL__</legend>
+      <div class="field">
+        <label for="setup-expense-type-__INDEX__">Expense type</label>
+        <select id="setup-expense-type-__INDEX__" name="expense_type___INDEX__">
+          <option value="one_time" selected>One-time expense</option>
+          <option value="recurring">Recurring expense</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="setup-expense-name-__INDEX__">Name</label>
+        <input id="setup-expense-name-__INDEX__" name="expense_name___INDEX__"
+               type="text" maxlength="60" placeholder="Rent, phone bill…">
+      </div>
+      <div class="field">
+        <label for="setup-expense-amount-__INDEX__">Amount</label>
+        <input id="setup-expense-amount-__INDEX__" name="expense_amount___INDEX__"
+               type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label for="setup-expense-date-__INDEX__">Date / next due date</label>
+        <input id="setup-expense-date-__INDEX__" name="expense_date___INDEX__"
+               type="date" value="{{.Now}}" max="2200-12-31">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="setup-expense-frequency-__INDEX__">Repeat every</label>
+          <input id="setup-expense-frequency-__INDEX__" name="expense_frequency_n___INDEX__"
+                 type="number" min="1" max="120" value="1" inputmode="numeric">
+        </div>
+        <div class="field">
+          <label for="setup-expense-unit-__INDEX__">Unit</label>
+          <select id="setup-expense-unit-__INDEX__" name="expense_frequency_unit___INDEX__">
+            <option value="day">Days</option>
+            <option value="week">Weeks</option>
+            <option value="month" selected>Months</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="setup-expense-essential-__INDEX__">Is it essential?</label>
+        <select id="setup-expense-essential-__INDEX__" name="expense_essential___INDEX__">
+          <option value="yes" selected>Yes — a need</option>
+          <option value="no">No — a want</option>
+        </select>
+      </div>
+    </fieldset>
+  </template>
+
+  <template id="setup-income-template">
+    <fieldset class="field setup-income">
+      <legend>Initial income __INDEX_LABEL__</legend>
+      <div class="field">
+        <label for="setup-income-type-__INDEX__">Income type</label>
+        <select id="setup-income-type-__INDEX__" name="income_type___INDEX__">
+          <option value="one_time" selected>One-time income</option>
+          <option value="recurring">Recurring income</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="setup-income-source-__INDEX__">Source</label>
+        <input id="setup-income-source-__INDEX__" name="income_source___INDEX__"
+               type="text" maxlength="60" placeholder="Salary, freelance…">
+      </div>
+      <div class="field">
+        <label for="setup-income-amount-__INDEX__">Amount</label>
+        <input id="setup-income-amount-__INDEX__" name="income_amount___INDEX__"
+               type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label for="setup-income-date-__INDEX__">Date / next payday</label>
+        <input id="setup-income-date-__INDEX__" name="income_date___INDEX__"
+               type="date" value="{{.Now}}" max="2200-12-31">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="setup-income-frequency-__INDEX__">Repeat every</label>
+          <input id="setup-income-frequency-__INDEX__" name="income_frequency_n___INDEX__"
+                 type="number" min="1" max="120" value="1" inputmode="numeric">
+        </div>
+        <div class="field">
+          <label for="setup-income-unit-__INDEX__">Unit</label>
+          <select id="setup-income-unit-__INDEX__" name="income_frequency_unit___INDEX__">
+            <option value="day">Days</option>
+            <option value="week">Weeks</option>
+            <option value="month" selected>Months</option>
+          </select>
+        </div>
+      </div>
+    </fieldset>
+  </template>
+
+</div>
+<script src="{{asset "setup.js"}}" defer></script>
+{{end}}
