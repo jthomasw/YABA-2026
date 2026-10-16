@@ -140,7 +140,7 @@
     changes the single panel below, and `Current Funds` is the default.
 
     Real <button role="tab"> elements, so they are reachable by keyboard and
-    announced properly — the old dashboard used <div onclick=...>, which is
+    announced properly — the old dashboard used JavaScript click handlers, which were
     invisible to a screen reader.
   */}}
   <div class="cards tablist" role="tablist" aria-label="Dashboard sections">
@@ -210,6 +210,29 @@
       {{end}}
     </button>
   </div>
+
+  <!-- Upcoming recurring transactions ticker -->
+{{if .TickerItems}}
+<div class="financial-ticker" aria-label="Upcoming recurring transactions">
+    <div class="ticker-window">
+        <div class="ticker-content">
+            {{range .TickerItems}}
+                {{if .Income}}
+                    <span class="ticker-income">
+                        {{.Label}} +{{money .Amount}} · {{.DisplayDate}}
+                    </span>
+                {{else}}
+                    <span class="ticker-expense">
+                        {{.Label}} -{{money .Amount}} · {{.DisplayDate}}
+                    </span>
+                {{end}}
+            {{end}}
+        </div>
+    </div>
+</div>
+{{end}}
+
+
 
   <!-- ══ CURRENT FUNDS ══════════════════════════════════════════════════════ -->
   {{/* No hidden attribute on any panel.

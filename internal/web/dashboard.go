@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/jthomasw/YABA-2026/internal/insight"
@@ -10,9 +11,30 @@ import (
 	"github.com/jthomasw/YABA-2026/internal/store"
 )
 
+type tickerItem struct {
+	Label       string
+	Amount      store.Cents
+	DueDate     string
+	Income      bool
+	DisplayDate string
+}
+
+func formatTickerDate(date string) string {
+	parsed, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return date
+	}
+	return parsed.Format("Jan 2")
+}
+
 // dashboardView is the four-card dashboard the mockup draws.
 type dashboardView struct {
 	view
+
+	// Upcoming recurring transactions displayed in the dashboard ticker.
+	RecurringIncome   []store.RecurringIncome
+	RecurringExpenses []store.RecurringExpense
+	TickerItems       []tickerItem
 
 	// Period.
 	Month      string // "" means all time
@@ -156,6 +178,54 @@ func (s *Server) loadDashboard(ctx context.Context, sc store.Scope, month, budge
 	if err := s.loadSavingsGrid(ctx, sc, v); err != nil {
 		return err
 	}
+
+	// Load recurring income for the dashboard ticker.
+	v.RecurringIncome, err = s.store.ListRecurringIncome(ctx, sc)
+	if err != nil {
+		return err
+	}
+
+	// Load recurring expenses for the dashboard ticker.
+	v.RecurringExpenses, err = s.store.ListRecurringExpense(ctx, sc)
+	if err != nil {
+		return err
+	}
+
+	// Add recurring income to the ticker.
+	for _, income := range v.RecurringIncome {
+		if !income.Active || income.NextDueDate == "" {
+			continue
+		}
+
+		v.TickerItems = append(v.TickerItems, tickerItem{
+			Label:       income.Source,
+			Amount:      income.Amount,
+			DueDate:     income.NextDueDate,
+			DisplayDate: formatTickerDate(income.NextDueDate),
+			Income:      true,
+		})
+	}
+
+	// Add recurring expenses to the ticker.
+	for _, expense := range v.RecurringExpenses {
+		if !expense.Active || expense.NextDueDate == "" {
+			continue
+		}
+
+		v.TickerItems = append(v.TickerItems, tickerItem{
+			Label:       expense.Label,
+			Amount:      expense.Amount,
+			DueDate:     expense.NextDueDate,
+			DisplayDate: formatTickerDate(expense.NextDueDate),
+			Income:      false,
+		})
+	}
+
+	// Sort transactions by their upcoming due dates.
+	sort.Slice(v.TickerItems, func(i, j int) bool {
+		return v.TickerItems[i].DueDate < v.TickerItems[j].DueDate
+	})
+
 	v.PendingReceipts, err = s.store.PendingReceiptCount(ctx, sc)
 	return err
 }
