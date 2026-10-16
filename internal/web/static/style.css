@@ -3033,3 +3033,67 @@ h3 { font-size: .9rem;   font-weight: 620; }
    backstop for everything else. */
 body { overflow-x: hidden; }
 .container > * { min-width: 0; }
+
+
+/* =====================================
+   UPCOMING TRANSACTIONS TICKER
+   ===================================== */
+
+.financial-ticker {
+    display: flex;
+    align-items: center;
+    background: #181d27;
+    border: 1px solid #2a3040;
+    border-radius: 8px;
+    margin: 10px 0;
+    height: 32px;
+    overflow: hidden;
+}
+
+
+.ticker-window {
+    flex: 1;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.ticker-content {
+    display: inline-flex;
+    align-items: center;
+    gap: 40px;
+    white-space: nowrap;
+    padding-left: 100%;
+    animation: ticker-scroll 25s linear infinite;
+    font-size: 12px;
+}
+
+.ticker-expense {
+    color: #ff777b;
+    font-weight: 600;
+}
+
+.ticker-income {
+    color: #4cdda7;
+    font-weight: 600;
+}
+
+@keyframes ticker-scroll {
+    from {
+        transform: translateX(0);
+    }
+
+    to {
+        transform: translateX(-100%);
+    }
+}
+
+.financial-ticker:hover .ticker-content {
+    animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ticker-content {
+        animation: none;
+        padding-left: 0;
+    }
+}

@@ -211,6 +211,29 @@
     </button>
   </div>
 
+  <!-- Upcoming recurring transactions ticker -->
+{{if .TickerItems}}
+<div class="financial-ticker" aria-label="Upcoming recurring transactions">
+    <div class="ticker-window">
+        <div class="ticker-content">
+            {{range .TickerItems}}
+                {{if .Income}}
+                    <span class="ticker-income">
+                        {{.Label}} +{{money .Amount}} · {{.DisplayDate}}
+                    </span>
+                {{else}}
+                    <span class="ticker-expense">
+                        {{.Label}} -{{money .Amount}} · {{.DisplayDate}}
+                    </span>
+                {{end}}
+            {{end}}
+        </div>
+    </div>
+</div>
+{{end}}
+
+
+
   <!-- ══ CURRENT FUNDS ══════════════════════════════════════════════════════ -->
   {{/* No hidden attribute on any panel.
      dashboard.js hides the unselected ones on load, which is what makes the
