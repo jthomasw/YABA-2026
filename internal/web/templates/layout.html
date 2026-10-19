@@ -144,7 +144,7 @@
   {{/* A standing reminder when the budget on screen is not your own. Without it
        it is far too easy to record a personal expense against a shared budget,
        which is the mistake this feature makes newly possible. */}}
-  {{if not .Personal}}
+  {{if and .Username (not .Personal)}}
   <p class="hh-context">
     Viewing the shared budget <strong>{{.Household}}</strong> · you are
     {{if eq .Role.Label "Editor"}}an{{else}}a{{end}} {{.Role.Label}}
