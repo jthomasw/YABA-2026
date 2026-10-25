@@ -319,7 +319,7 @@ func (s *Server) handleReceiptDiscard(w http.ResponseWriter, r *http.Request) {
 
 	path, err := s.store.DiscardReceipt(r.Context(), sc, id)
 	if errors.Is(err, store.ErrNotFound) {
-		s.redirectError(w, r, "/expense", "That receipt has already been used or is no longer there.")
+		s.redirectError(w, r, "/receipts", "That receipt has already been used or is no longer there.")
 		return
 	}
 	if err != nil {
@@ -330,7 +330,8 @@ func (s *Server) handleReceiptDiscard(w http.ResponseWriter, r *http.Request) {
 	// The row is gone, so the file is unreachable either way.
 	s.removeReceiptFiles([]string{path})
 
-	s.redirectSuccess(w, r, "/expense", "Receipt discarded.")
+	s.redirectSuccess(w, r, "/receipts", "Receipt discarded.")
+	//the line above keeps them on the receipt page : )
 }
 
 // handleReceiptPreview serves the image of a receipt that has not yet become an
