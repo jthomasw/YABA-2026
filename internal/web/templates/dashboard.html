@@ -620,7 +620,11 @@
           Once there are a few months of income, an expected range appears here too.
         </p>
         {{if .Role.CanEditEntries}}
-        <a class="btn btn-primary" href="/transactions/new?type=income">Add Income</a>
+        <a class="btn btn-primary"
+          href="/transactions/new?type=income"
+          id="tutorial-add-income">
+            Add Income
+        </a>
         {{end}}
       </div>
       {{end}}

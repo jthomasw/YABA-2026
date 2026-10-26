@@ -177,6 +177,7 @@
     {{end}}
 
     <form method="POST" action="/expense" enctype="multipart/form-data" novalidate>
+      <input type="hidden" name="tutorial_step" id="tutorial-step" value="">
       {{/* One-time token: a double click, a slow tap repeated, or the back
            button followed by Save would otherwise record this money twice.
            Spent on the first successful submit. */}}

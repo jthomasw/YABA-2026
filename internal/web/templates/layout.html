@@ -39,6 +39,14 @@
          script, so this starts as a neutral, unlabelled button and is
          corrected before the user can see it (ui.js runs on DOMContentLoaded,
          same as every other progressive-enhancement control on this page). */}}
+    <button type="button"
+        class="theme-toggle"
+        id="tutorial-launch"
+        aria-label="Start YABA Tutorial"
+        title="Start YABA Tutorial">
+      <span aria-hidden="true">?</span>
+    </button>
+    
     <button type="button" class="theme-toggle" data-theme-toggle aria-pressed="false">
       <span class="theme-icon theme-icon-sun" aria-hidden="true">{{template "icon" "sun"}}</span>
       <span class="theme-icon theme-icon-moon" aria-hidden="true">{{template "icon" "moon"}}</span>
@@ -192,6 +200,7 @@
 </dialog>
 
 <script src="{{asset "ui.js"}}" defer></script>
+<script src="{{asset "tutorial.js"}}" defer></script>
 {{end}}
 
 <footer class="footer">

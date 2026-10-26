@@ -264,10 +264,16 @@ func (s *Server) handleIncomeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	redirectTo := "/income"
+
+	if r.PostFormValue("tutorial_step") == "income-form" {
+		redirectTo = "/dashboard?tutorial=expense"
+	}
+
 	s.redirectSuccess(
 		w,
 		r,
-		"/income",
+		redirectTo,
 		fmt.Sprintf("Recurring income of %s saved.", in.amount.Display()),
 	)
 }
@@ -414,12 +420,20 @@ func (s *Server) handleExpenseCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	redirectTo := "/expense"
+
+	// Advance the tutorial after successfully saving a recurring expense.
+	if r.PostFormValue("tutorial_step") == "expense-form" {
+		redirectTo = "/dashboard?tutorial=overview"
+	}
+
 	s.redirectSuccess(
 		w,
 		r,
-		"/expense",
+		redirectTo,
 		fmt.Sprintf("Recurring expense of %s saved.", in.amount.Display()),
 	)
+
 }
 
 // recurringExpensesAnchor is where the recurring-expense actions return the
@@ -562,9 +576,21 @@ func (s *Server) createEntry(w http.ResponseWriter, r *http.Request, kind store.
 
 	// Back to the same page, so another entry can be added without navigating.
 	back := "/expense?step=manual"
+
 	if kind == store.KindIncome {
 		back = "/income"
+
+		if r.PostFormValue("tutorial_step") == "income-form" {
+			back = "/dashboard?tutorial=expense"
+		}
 	}
+
+	// Advance the tutorial after successfully saving an expense.
+	if kind == store.KindExpense &&
+		r.PostFormValue("tutorial_step") == "expense-form" {
+		back = "/dashboard?tutorial=overview"
+	}
+
 	s.redirectSaved(w, r, back, ws, kind.Label()+" of "+in.amount.Display()+" saved.")
 }
 

@@ -3097,3 +3097,70 @@ body { overflow-x: hidden; }
         padding-left: 0;
     }
 }
+
+/* Interactive tutorial welcome screen */
+
+#tutorial-welcome {
+    width: min(90%, 480px);
+    max-width: 480px;
+    max-height: 90vh;
+    margin: auto;
+    padding: 28px;
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 14px;
+    background: var(--surface, #ffffff);
+    color: var(--text, #111827);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+}
+
+#tutorial-welcome::backdrop {
+    background: rgba(0, 0, 0, 0.65);
+}
+
+.tutorial-welcome-content h2 {
+    margin: 0 0 16px;
+    font-size: 24px;
+}
+
+.tutorial-welcome-content p {
+    margin-bottom: 16px;
+    line-height: 1.6;
+}
+
+.tutorial-welcome-actions {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 24px;
+}
+/* Interactive tutorial spotlight */
+
+.tutorial-highlight {
+    position: relative;
+    z-index: 1001;
+    outline: 4px solid #635bff;
+    outline-offset: 5px;
+    border-radius: 8px;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65);
+}
+
+.tutorial-instruction {
+    position: fixed;
+    z-index: 1002;
+    bottom: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(90%, 400px);
+    padding: 20px;
+    border-radius: 12px;
+    background: var(--surface, #ffffff);
+    color: var(--text, #111827);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+    text-align: center;
+}
+
+.tutorial-instruction p {
+    margin: 0 0 15px;
+    line-height: 1.5;
+}
