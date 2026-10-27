@@ -31,15 +31,11 @@ type entryView struct {
 	Categories []string
 	Buckets    []store.Bucket
 
-	// RecurringIncomes lists this household's recurring income schedules, for
-	// the income page's own management list. Empty (never nil) on the expense
-	// page and on income pages with none set up yet.
-	RecurringIncomes []store.RecurringIncome
-
-	// RecurringExpenses is the expense page's counterpart: every recurring
-	// expense schedule in this budget, with Edit and Cancel. Empty on the
-	// income page.
-	RecurringExpenses []store.RecurringExpense
+	// The shared recurring sections (see recurring.go), drawn under the form:
+	// income on Add Income, expenses on Add Expense -> Manual only. Nil where
+	// the page does not show one, which includes the expense chooser.
+	RecurringIncome   *recurringIncomeSection
+	RecurringExpenses *recurringExpensesSection
 
 	// FormToken is a one-time token, so a double click or a back-then-save does
 	// not record the same money twice.
@@ -76,8 +72,7 @@ func (s *Server) handleIncomePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var err error
-	if v.RecurringIncomes, err = s.store.ListRecurringIncome(r.Context(), scopeOf(r)); err != nil {
+	if err := s.attachRecurring(r, &v); err != nil {
 		s.serverError(w, r, err)
 		return
 	}
@@ -140,6 +135,11 @@ func (s *Server) handleExpensePage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := s.attachRecurring(r, &v); err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+
 	s.render(w, r, "expense.html", v)
 }
 
@@ -167,13 +167,33 @@ func (s *Server) buildEntryView(w http.ResponseWriter, r *http.Request, kind sto
 			s.serverError(w, r, err)
 			return v, false
 		}
-		if v.RecurringExpenses, err = s.store.ListRecurringExpense(ctx, sc); err != nil {
-			s.serverError(w, r, err)
-			return v, false
-		}
 	}
 
 	return v, true
+}
+
+// attachRecurring adds the page's recurring section: always on Add Income, and
+// on Add Expense only once Manual is chosen -- the chooser offers two ways to
+// add an expense and nothing else.
+func (s *Server) attachRecurring(r *http.Request, v *entryView) error {
+	ctx, sc := r.Context(), scopeOf(r)
+	switch {
+	case v.Kind == store.KindIncome:
+		sec, err := s.loadRecurringIncome(ctx, sc, v.view, returnEntry, nil)
+		if err != nil {
+			return err
+		}
+		sec.Open = r.URL.Query().Get("recurring") == "open"
+		v.RecurringIncome = &sec
+	case v.Step == "manual":
+		sec, err := s.loadRecurringExpenses(ctx, sc, v.view, returnEntry, store.Today()[:7], nil, nil, nil)
+		if err != nil {
+			return err
+		}
+		sec.Open = r.URL.Query().Get("planner") == "open"
+		v.RecurringExpenses = &sec
+	}
+	return nil
 }
 
 // recurringPresets maps a friendly "repeat every" choice -- the value the
@@ -245,7 +265,7 @@ func (s *Server) handleIncomeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.duplicateSubmit(w, r, user.ID, "/income", "That recurring income was already saved.") {
+	if s.duplicateSubmit(w, r, user.ID, incomeEntryAnchor, "That recurring income was already saved.") {
 		return
 	}
 
@@ -264,7 +284,9 @@ func (s *Server) handleIncomeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	redirectTo := "/income"
+	// Straight to the new schedule in the list below the form, unless the
+	// tutorial is running and moves on to its next step.
+	redirectTo := incomeEntryAnchor
 
 	if r.PostFormValue("tutorial_step") == "income-form" {
 		redirectTo = "/dashboard?tutorial=expense"
@@ -310,7 +332,7 @@ func (s *Server) handleRecurringIncomeUpdate(w http.ResponseWriter, r *http.Requ
 	existing, err := s.store.RecurringIncomeByID(r.Context(), sc, id)
 	if errors.Is(err, store.ErrNotFound) {
 		s.flashError(w, r, "That recurring income no longer exists.")
-		http.Redirect(w, r, "/income", http.StatusSeeOther)
+		http.Redirect(w, r, recurringIncomeReturn(r), http.StatusSeeOther)
 		return
 	}
 	if err != nil {
@@ -320,14 +342,14 @@ func (s *Server) handleRecurringIncomeUpdate(w http.ResponseWriter, r *http.Requ
 	// A cancelled schedule is history, as it is for recurring expenses: the
 	// store no longer updates one, and this says why instead of "not found".
 	if !existing.Active {
-		s.redirectError(w, r, "/income", "That recurring income has been cancelled, so it can no longer be changed.")
+		s.redirectError(w, r, recurringIncomeReturn(r), "That recurring income has been cancelled, so it can no longer be changed.")
 		return
 	}
 
 	source, amount, freqN, freqUnit, msg := parseRecurringIncomeEditForm(r)
 	if msg != "" {
 		s.flashError(w, r, msg)
-		http.Redirect(w, r, "/income", http.StatusSeeOther)
+		http.Redirect(w, r, recurringIncomeReturn(r), http.StatusSeeOther)
 		return
 	}
 
@@ -336,7 +358,7 @@ func (s *Server) handleRecurringIncomeUpdate(w http.ResponseWriter, r *http.Requ
 		source, amount, freqN, freqUnit,
 		existing.StartDate, existing.NextDueDate,
 	)
-	s.redirectAfterStoreOp(w, r, err, "/income",
+	s.redirectAfterStoreOp(w, r, err, recurringIncomeReturn(r),
 		"That recurring income no longer exists.",
 		"That change could not be saved. Try again.",
 		"Recurring income updated.",
@@ -358,7 +380,7 @@ func (s *Server) handleRecurringIncomeCancel(w http.ResponseWriter, r *http.Requ
 	}
 
 	err := s.store.SetRecurringIncomeActive(r.Context(), sc, id, false)
-	s.redirectAfterStoreOp(w, r, err, "/income",
+	s.redirectAfterStoreOp(w, r, err, recurringIncomeReturn(r),
 		"That recurring income no longer exists.",
 		"That could not be cancelled. Try again.",
 		"Recurring income cancelled. Its history has been kept.",
@@ -399,7 +421,7 @@ func (s *Server) handleExpenseCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.duplicateSubmit(w, r, user.ID, "/expense", "That recurring expense was already saved.") {
+	if s.duplicateSubmit(w, r, user.ID, expensesEntryAnchor, "That recurring expense was already saved.") {
 		return
 	}
 
@@ -420,7 +442,9 @@ func (s *Server) handleExpenseCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	redirectTo := "/expense"
+	// Straight to the new schedule in the list below the form, unless the
+	// tutorial is running and moves on to its next step.
+	redirectTo := expensesEntryAnchor
 
 	// Advance the tutorial after successfully saving a recurring expense.
 	if r.PostFormValue("tutorial_step") == "expense-form" {
@@ -435,10 +459,6 @@ func (s *Server) handleExpenseCreate(w http.ResponseWriter, r *http.Request) {
 	)
 
 }
-
-// recurringExpensesAnchor is where the recurring-expense actions return the
-// user: the list they were editing, on the Add Expense page.
-const recurringExpensesAnchor = "/expense#recurring-expenses"
 
 // handleRecurringExpenseUpdate is POST /expense/recurring/{id}/edit. Like its
 // income counterpart it changes what the schedule charges and how often, but
@@ -458,7 +478,7 @@ func (s *Server) handleRecurringExpenseUpdate(w http.ResponseWriter, r *http.Req
 	// ErrNotFound from the update -- can be told apart in the message.
 	if _, err := s.store.RecurringExpenseByID(r.Context(), sc, id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			s.redirectError(w, r, recurringExpensesAnchor, "That recurring expense no longer exists.")
+			s.redirectError(w, r, recurringExpensesReturn(r), "That recurring expense no longer exists.")
 			return
 		}
 		s.serverError(w, r, err)
@@ -467,24 +487,24 @@ func (s *Server) handleRecurringExpenseUpdate(w http.ResponseWriter, r *http.Req
 
 	label := strings.TrimSpace(r.PostFormValue("label"))
 	if label == "" {
-		s.redirectError(w, r, recurringExpensesAnchor, "Give the recurring expense a name.")
+		s.redirectError(w, r, recurringExpensesReturn(r), "Give the recurring expense a name.")
 		return
 	}
 	amount, err := money.ParsePositive(r.PostFormValue("amount"))
 	if err != nil {
-		s.redirectError(w, r, recurringExpensesAnchor, "Enter an amount greater than zero.")
+		s.redirectError(w, r, recurringExpensesReturn(r), "Enter an amount greater than zero.")
 		return
 	}
 	freqN, freqUnit, msg := parseRecurringFrequency(r)
 	if msg != "" {
-		s.redirectError(w, r, recurringExpensesAnchor, msg)
+		s.redirectError(w, r, recurringExpensesReturn(r), msg)
 		return
 	}
 	var bucketID *int64
 	if raw := strings.TrimSpace(r.PostFormValue("bucket_id")); raw != "" && raw != "0" {
 		b, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || b <= 0 {
-			s.redirectError(w, r, recurringExpensesAnchor, "That recurring bill could not be recognised.")
+			s.redirectError(w, r, recurringExpensesReturn(r), "That recurring bill could not be recognised.")
 			return
 		}
 		bucketID = &b
@@ -493,7 +513,7 @@ func (s *Server) handleRecurringExpenseUpdate(w http.ResponseWriter, r *http.Req
 
 	err = s.store.UpdateRecurringExpense(r.Context(), sc, id,
 		label, amount, bucketID, essential, freqN, freqUnit)
-	s.redirectAfterStoreOp(w, r, err, recurringExpensesAnchor,
+	s.redirectAfterStoreOp(w, r, err, recurringExpensesReturn(r),
 		"That recurring expense, or the bill it pays towards, no longer exists.",
 		"That change could not be saved. Try again.",
 		"Recurring expense updated.",
@@ -512,7 +532,7 @@ func (s *Server) handleRecurringExpenseCancel(w http.ResponseWriter, r *http.Req
 	}
 
 	err := s.store.SetRecurringExpenseActive(r.Context(), sc, id, false)
-	s.redirectAfterStoreOp(w, r, err, recurringExpensesAnchor,
+	s.redirectAfterStoreOp(w, r, err, recurringExpensesReturn(r),
 		"That recurring expense no longer exists.",
 		"That could not be cancelled. Try again.",
 		"Recurring expense cancelled. The expenses it already recorded have been kept.",
@@ -610,6 +630,10 @@ func (s *Server) rerenderEntry(w http.ResponseWriter, r *http.Request, kind stor
 	v.formFields = echoForm(r, in)
 	if kind == store.KindExpense {
 		v.Step = "manual"
+	}
+	if err := s.attachRecurring(r, &v); err != nil {
+		s.serverError(w, r, err)
+		return
 	}
 
 	s.renderStatus(w, r, http.StatusBadRequest, page, v)

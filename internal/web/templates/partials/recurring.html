@@ -1,0 +1,337 @@
+{{/*
+  The recurring sections. Each is drawn in exactly two places, from here:
+
+    recurringexpenses  the dashboard's Expenses tab, and Add Expense -> Manual
+    recurringincome    the dashboard's Income tab,   and Add Income
+
+  The data is a recurringExpensesSection / recurringIncomeSection (recurring.go),
+  so inside these templates `$` is the section, not the page. Every form posts
+  return_to, so an action lands the user back on the page they were using.
+*/}}
+
+{{define "recurringexpenses"}}
+<details class="bucket-planner recurring-section" id="recurring-expenses"{{if .Open}} open{{end}}>
+  <summary>
+    {{if .Count}}Recurring expenses ({{.Count}}){{else}}Set up recurring expenses{{end}}
+  </summary>
+
+  {{/* ── Monthly bills: the funding planner ──────────────────────────────── */}}
+  <h3 class="recurring-subhead">Monthly bills ({{len .Buckets}})</h3>
+  <p class="hint">Ranked by which must be paid first. Income fills the list from
+    the top down until everything is covered or the money runs out.</p>
+
+  {{if .Buckets}}
+  <div class="alloc-summary">
+    <span>Required <strong>{{money .Allocation.Required}}</strong></span>
+    <span>Funded <strong class="is-positive">{{money .Allocation.Allocated}}</strong></span>
+    <span>Short <strong {{if .Allocation.Shortfall}}class="is-negative"{{end}}>{{money .Allocation.Shortfall}}</strong></span>
+    <span>Uncommitted <strong>{{money .Allocation.Unassigned}}</strong></span>
+  </div>
+
+  <ol class="bucket-list">
+    {{range $i, $b := .Buckets}}
+    <li class="bucket bucket-{{$b.Status}}">
+      {{/* A viewer sees the ranking but cannot change it, so the arrows go and
+           the number stays -- the order is information, not just a control. */}}
+      <div class="bucket-rank">
+        {{if $.Role.CanEditEntries}}
+        <form method="POST" action="/buckets/{{$b.ID}}/up" class="inline-form">
+          {{template "csrf" $}}
+          <input type="hidden" name="return_to" value="{{$.ReturnTo}}">
+          <button type="submit" class="btn btn-tiny" {{if eq $i 0}}disabled{{end}}
+                  aria-label="Move {{$b.Name}} up">↑</button>
+        </form>
+        {{end}}
+        <span class="rank-number" aria-hidden="true">{{add $i 1}}</span>
+        {{if $.Role.CanEditEntries}}
+        <form method="POST" action="/buckets/{{$b.ID}}/down" class="inline-form">
+          {{template "csrf" $}}
+          <input type="hidden" name="return_to" value="{{$.ReturnTo}}">
+          <button type="submit" class="btn btn-tiny"
+                  {{if eq (add $i 1) (len $.Buckets)}}disabled{{end}}
+                  aria-label="Move {{$b.Name}} down">↓</button>
+        </form>
+        {{end}}
+      </div>
+
+      <div class="bucket-body">
+        <div class="bucket-head">
+          <h3>
+            {{$b.Name}}
+            <span class="tag">{{$b.CostKind.Label}}</span>
+            {{if $b.Essential}}<span class="tag tag-essential">essential</span>{{end}}
+          </h3>
+          <p>
+            {{money $b.Allocated}} of {{money $b.Due}}
+            {{if $b.Funded}}
+            <span class="is-positive">funded</span>
+            {{else}}
+            <strong class="is-negative">{{money $b.Shortfall}} short</strong>
+            {{end}}
+          </p>
+        </div>
+
+        <div class="progress" role="progressbar"
+             aria-valuenow="{{pctInt $b.Progress}}" aria-valuemin="0" aria-valuemax="100"
+             aria-label="{{$b.Name}} funding">
+          <div class="progress-bar" style="width: {{pct $b.Progress}}%"></div>
+        </div>
+
+        <p class="stat-note">
+          {{if eq $b.CostKind "variable"}}
+            {{if $b.Spent}}{{money $b.Spent}} paid so far this month.
+            {{else}}Estimated at {{money $b.Estimate}} from previous months.{{end}}
+            {{if ne $b.Low $b.High}} Usually {{money $b.Low}}–{{money $b.High}}.{{end}}
+          {{else}}
+            Fixed at {{money $b.Fixed}} a month.
+            {{if $b.Spent}} {{money $b.Spent}} paid so far.{{end}}
+          {{end}}
+        </p>
+
+        {{if $.Role.CanEditEntries}}
+        <details class="bucket-settings">
+          <summary>Edit</summary>
+          <form method="POST" action="/buckets/{{$b.ID}}/edit" class="row-form">
+            {{template "csrf" $}}
+            <input type="hidden" name="return_to" value="{{$.ReturnTo}}">
+            <div class="field">
+              <label for="bname-{{$b.ID}}">Name</label>
+              <input id="bname-{{$b.ID}}" name="name" type="text" value="{{$b.Name}}" required maxlength="40">
+            </div>
+            <div class="field">
+              <label for="bkind-{{$b.ID}}">Cost</label>
+              <select id="bkind-{{$b.ID}}" name="cost_kind">
+                <option value="fixed" {{if eq $b.CostKind "fixed"}}selected{{end}}>Fixed each month</option>
+                <option value="variable" {{if eq $b.CostKind "variable"}}selected{{end}}>Varies each month</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="bamt-{{$b.ID}}">Amount</label>
+              <input id="bamt-{{$b.ID}}" name="amount" type="number" step="0.01" min="0"
+                     inputmode="decimal" value="{{amount $b.Fixed}}">
+              <p class="hint">Ignored for a varying cost.</p>
+            </div>
+            <div class="field">
+              <label class="radio">
+                <input type="checkbox" name="essential" value="yes" {{if $b.Essential}}checked{{end}}>
+                Essential
+              </label>
+            </div>
+            <button type="submit" class="btn btn-small btn-primary">Save</button>
+          </form>
+
+          <form method="POST" action="/buckets/{{$b.ID}}/archive" class="inline-form danger-form"
+                data-confirm="Remove &quot;{{$b.Name}}&quot;? Its history is kept.">
+            {{template "csrf" $}}
+            <input type="hidden" name="return_to" value="{{$.ReturnTo}}">
+            <button type="submit" class="btn btn-small btn-danger">Remove</button>
+          </form>
+        </details>
+        {{end}}
+      </div>
+    </li>
+    {{end}}
+  </ol>
+
+  <p class="projection">{{.ExpenseNote}}</p>
+
+  {{if .Role.CanEditEntries}}
+  <form method="POST" action="/buckets/reallocate" class="inline-form">
+    {{template "csrf" .}}
+    <input type="hidden" name="return_to" value="{{.ReturnTo}}">
+    <input type="hidden" name="month" value="{{.Month}}">
+    <button type="submit" class="btn btn-small btn-quiet">Recalculate funding</button>
+  </form>
+  {{end}}
+  {{else}}
+  <p class="stat-note">
+    Rent, a car payment, a utility bill — list the ones that recur and rank them
+    by which must be paid first.
+  </p>
+  {{end}}
+
+  {{if .Role.CanEditEntries}}
+  <div class="bucket-add-inner">
+    <h3>Add a monthly bill</h3>
+    {{template "bucketform" .}}
+  </div>
+  {{end}}
+
+  {{/* ── Recorded automatically: the scheduled expenses ─────────────────── */}}
+  <h3 class="recurring-subhead">Recorded automatically ({{len .Schedules}})</h3>
+  {{if .Schedules}}
+  {{/* Cancelling stops future charges and keeps everything already recorded;
+       there is deliberately no resume, the same as recurring income. */}}
+  <ul class="recurring-list">
+    {{range .Schedules}}
+    <li class="recurring-item recurring-item-expense{{if not .Active}} recurring-item-inactive{{end}}">
+      <div class="recurring-head">
+        <h3>
+          {{.Label}}
+          {{if .Essential}}<span class="tag tag-essential">essential</span>{{end}}
+          {{with .BucketName}}<span class="tag tag-bucket">{{.}}</span>{{end}}
+        </h3>
+        <p>
+          {{money .Amount}} &middot; {{frequencyLabel .FrequencyN .FrequencyUnit}}
+          {{if not .Active}} &middot; <span class="tag">cancelled</span>{{end}}
+        </p>
+        {{if .Active}}<p class="stat-note">Next due {{dateName .NextDueDate}}</p>{{end}}
+      </div>
+
+      {{if and .Active $.Role.CanEditEntries}}
+      <details class="bucket-settings">
+        <summary>Edit</summary>
+        <form method="POST" action="/expense/recurring/{{.ID}}/edit" class="row-form">
+          {{template "csrf" $}}
+          <input type="hidden" name="return_to" value="{{$.ReturnTo}}">
+          <div class="field">
+            <label for="relabel-{{.ID}}">What?</label>
+            <input id="relabel-{{.ID}}" name="label" type="text" value="{{.Label}}" required maxlength="60">
+          </div>
+          <div class="field">
+            <label for="reamt-{{.ID}}">Amount</label>
+            <div class="input-money">
+              <span class="input-prefix" aria-hidden="true">$</span>
+              <input id="reamt-{{.ID}}" name="amount" type="number" step="0.01" min="0.01"
+                     inputmode="decimal" value="{{amount .Amount}}" required>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="field">
+              <label for="refreqn-{{.ID}}">Repeat every</label>
+              <input id="refreqn-{{.ID}}" name="frequency_n" type="number" min="1" max="365"
+                     inputmode="numeric" value="{{.FrequencyN}}">
+            </div>
+            <div class="field">
+              <label for="refrequ-{{.ID}}" class="visually-hidden">Days, weeks or months</label>
+              <select id="refrequ-{{.ID}}" name="frequency_unit">
+                <option value="day" {{if eq .FrequencyUnit "day"}}selected{{end}}>Day(s)</option>
+                <option value="week" {{if eq .FrequencyUnit "week"}}selected{{end}}>Week(s)</option>
+                <option value="month" {{if eq .FrequencyUnit "month"}}selected{{end}}>Month(s)</option>
+              </select>
+            </div>
+          </div>
+          {{if $.Buckets}}
+          <div class="field">
+            <label for="rebucket-{{.ID}}">Pays towards</label>
+            <select id="rebucket-{{.ID}}" name="bucket_id">
+              <option value="">Nothing recurring</option>
+              {{$ref := .BucketRef}}
+              {{range $.Buckets}}
+              <option value="{{.ID}}" {{if eq .ID $ref}}selected{{end}}>{{.Name}}</option>
+              {{end}}
+            </select>
+          </div>
+          {{end}}
+          <fieldset class="field">
+            <legend>Essential?</legend>
+            <div class="radio-row">
+              <label class="radio">
+                <input type="radio" name="essential" value="yes" {{if .Essential}}checked{{end}}> Yes
+              </label>
+              <label class="radio">
+                <input type="radio" name="essential" value="no" {{if not .Essential}}checked{{end}}> No
+              </label>
+            </div>
+          </fieldset>
+          <button type="submit" class="btn btn-small btn-primary">Save</button>
+        </form>
+
+        <form method="POST" action="/expense/recurring/{{.ID}}/cancel" class="inline-form danger-form"
+              data-confirm="Cancel &quot;{{.Label}}&quot;? Expenses it already recorded are kept.">
+          {{template "csrf" $}}
+          <input type="hidden" name="return_to" value="{{$.ReturnTo}}">
+          <button type="submit" class="btn btn-small btn-danger">Cancel</button>
+        </form>
+      </details>
+      {{end}}
+    </li>
+    {{end}}
+  </ul>
+  {{else}}
+  <p class="stat-note">
+    Nothing yet.{{if .Role.CanEditEntries}} On <a href="/expense?step=manual">Add Expense → Manual</a>,
+    choose <strong>Recurring</strong> for a charge that repeats on its own, such
+    as a subscription, and YABA records it for you each time it is due.{{end}}
+  </p>
+  {{end}}
+</details>
+{{end}}
+
+{{define "recurringincome"}}
+<details class="bucket-planner recurring-section" id="recurring-income"{{if .Open}} open{{end}}>
+  <summary>
+    {{if .Schedules}}Recurring income ({{len .Schedules}}){{else}}Set up recurring income{{end}}
+  </summary>
+
+  {{if .Schedules}}
+  {{/* Cancelling stops future occurrences and keeps everything already
+       recorded; there is deliberately no resume. */}}
+  <ul class="recurring-list">
+    {{range .Schedules}}
+    <li class="recurring-item recurring-item-income{{if not .Active}} recurring-item-inactive{{end}}">
+      <div class="recurring-head">
+        <h3>{{.Source}}</h3>
+        <p>
+          {{money .Amount}} &middot; {{frequencyLabel .FrequencyN .FrequencyUnit}}
+          {{if not .Active}} &middot; <span class="tag">cancelled</span>{{end}}
+        </p>
+        {{if .Active}}<p class="stat-note">Next due {{dateName .NextDueDate}}</p>{{end}}
+      </div>
+
+      {{if and .Active $.Role.CanEditEntries}}
+      <details class="bucket-settings">
+        <summary>Edit</summary>
+        <form method="POST" action="/income/{{.ID}}/edit" class="row-form">
+          {{template "csrf" $}}
+          <input type="hidden" name="return_to" value="{{$.ReturnTo}}">
+          <div class="field">
+            <label for="rilabel-{{.ID}}">Source</label>
+            <input id="rilabel-{{.ID}}" name="label" type="text" value="{{.Source}}" required maxlength="60">
+          </div>
+          <div class="field">
+            <label for="riamt-{{.ID}}">Amount</label>
+            <div class="input-money">
+              <span class="input-prefix" aria-hidden="true">$</span>
+              <input id="riamt-{{.ID}}" name="amount" type="number" step="0.01" min="0.01"
+                     inputmode="decimal" value="{{amount .Amount}}">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="field">
+              <label for="rifreqn-{{.ID}}">Repeat every</label>
+              <input id="rifreqn-{{.ID}}" name="frequency_n" type="number" min="1" max="365"
+                     inputmode="numeric" value="{{.FrequencyN}}">
+            </div>
+            <div class="field">
+              <label for="rifrequ-{{.ID}}" class="visually-hidden">Days, weeks or months</label>
+              <select id="rifrequ-{{.ID}}" name="frequency_unit">
+                <option value="day" {{if eq .FrequencyUnit "day"}}selected{{end}}>Day(s)</option>
+                <option value="week" {{if eq .FrequencyUnit "week"}}selected{{end}}>Week(s)</option>
+                <option value="month" {{if eq .FrequencyUnit "month"}}selected{{end}}>Month(s)</option>
+              </select>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-small btn-primary">Save</button>
+        </form>
+
+        <form method="POST" action="/income/{{.ID}}/cancel" class="inline-form danger-form"
+              data-confirm="Cancel &quot;{{.Source}}&quot;? Its history is kept.">
+          {{template "csrf" $}}
+          <input type="hidden" name="return_to" value="{{$.ReturnTo}}">
+          <button type="submit" class="btn btn-small btn-danger">Cancel</button>
+        </form>
+      </details>
+      {{end}}
+    </li>
+    {{end}}
+  </ul>
+  {{else}}
+  <p class="stat-note">
+    Nothing yet.{{if .Role.CanEditEntries}} On <a href="/income">Add Income</a>, choose
+    <strong>Recurring</strong> for income that repeats, such as a paycheck, and
+    YABA records it for you each time it is due.{{end}}
+  </p>
+  {{end}}
+</details>
+{{end}}

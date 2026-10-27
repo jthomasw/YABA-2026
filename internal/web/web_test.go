@@ -3067,9 +3067,14 @@ func TestRecurringExpensesAreListedEditableAndCancellable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := rig.do("GET", "/expense", nil).Body.String()
+	// The chooser offers Manual or Upload and nothing else; the list is under
+	// the Manual form.
+	if body := rig.do("GET", "/expense", nil).Body.String(); strings.Contains(body, "Netflix") {
+		t.Fatal("the Add Expense chooser still lists recurring expenses")
+	}
+	body := rig.do("GET", "/expense?step=manual", nil).Body.String()
 	if !strings.Contains(body, `id="recurring-expenses"`) || !strings.Contains(body, "Netflix") {
-		t.Fatal("the Add Expense page does not list the recurring expense")
+		t.Fatal("Add Expense -> Manual does not list the recurring expense")
 	}
 	if !strings.Contains(body, fmt.Sprintf(`action="/expense/recurring/%d/edit"`, id)) ||
 		!strings.Contains(body, fmt.Sprintf(`action="/expense/recurring/%d/cancel"`, id)) {
@@ -3079,8 +3084,9 @@ func TestRecurringExpensesAreListedEditableAndCancellable(t *testing.T) {
 	rec := rig.post(fmt.Sprintf("/expense/recurring/%d/edit", id), url.Values{
 		"label": {"Netflix Premium"}, "amount": {"22.99"},
 		"frequency_n": {"1"}, "frequency_unit": {"month"}, "essential": {"no"},
+		"return_to": {"entry"},
 	})
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/expense#recurring-expenses" {
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != expensesEntryAnchor {
 		t.Fatalf("edit: %d -> %q", rec.Code, rec.Header().Get("Location"))
 	}
 	got, err := rig.store.RecurringExpenseByID(ctx, rig.scope, id)

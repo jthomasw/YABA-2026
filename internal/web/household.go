@@ -28,6 +28,35 @@ type householdView struct {
 
 	// MailEnabled drives what the page says about delivery.
 	MailEnabled bool
+
+	// DefaultSharedName prefills the "Create a shared budget" name field, so
+	// pressing Create straight away gives "kushith-budget" rather than an error.
+	// The user can type over it.
+	DefaultSharedName string
+}
+
+// sharedBudgetSuffix is appended to the user's name for a new shared budget's
+// default name.
+const sharedBudgetSuffix = "-budget"
+
+// maxHouseholdName matches the 60-byte limit store.CreateSharedHousehold
+// enforces, so a default can never be refused for being too long.
+const maxHouseholdName = 60
+
+// defaultSharedBudgetName is the name a new shared budget gets when the user
+// does not choose one: their name, lower-cased, with spaces turned into
+// hyphens, then "-budget" -- "Kushith" becomes "kushith-budget".
+func defaultSharedBudgetName(u store.User) string {
+	base := strings.ToLower(strings.Join(strings.Fields(u.Name()), "-"))
+	if base == "" {
+		base = "my"
+	}
+	// Trim by rune, not byte, so a multi-byte name is never cut mid-character.
+	r := []rune(base)
+	for len(r) > 0 && len(string(r))+len(sharedBudgetSuffix) > maxHouseholdName {
+		r = r[:len(r)-1]
+	}
+	return string(r) + sharedBudgetSuffix
 }
 
 // recentActivityLimit is how many history entries the sharing page shows.
@@ -49,6 +78,8 @@ func (s *Server) handleHousehold(w http.ResponseWriter, r *http.Request) {
 		view:        s.baseView(w, r, "Sharing", "household"),
 		Roles:       assignableRoles(),
 		MailEnabled: s.mail.Enabled(),
+
+		DefaultSharedName: defaultSharedBudgetName(user),
 	}
 
 	var err error
@@ -95,6 +126,11 @@ func (s *Server) handleHouseholdCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := strings.TrimSpace(r.PostFormValue("name"))
+	if name == "" {
+		// The field is prefilled with this default; a user who clears it and
+		// presses Create still gets a sensibly named budget rather than an error.
+		name = defaultSharedBudgetName(user)
+	}
 	if _, err := s.store.CreateSharedHousehold(r.Context(), user.ID, name); err != nil {
 		s.redirectError(w, r, "/household",
 			s.safeMessage(r, err, "That budget could not be created. Try again."))

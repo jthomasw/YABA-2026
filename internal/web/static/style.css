@@ -2009,6 +2009,22 @@ body.is-auth .container { padding-top: 0; }
 }
 .bucket-planner[open] > summary { margin-bottom: .75rem; }
 
+/* The shared recurring section (partials/recurring.html) has two halves:
+   monthly bills and the expenses recorded automatically. Each half opens
+   with one of these, the second set off by a rule. A section inside an entry
+   page's card needs no rule of its own above it. */
+.recurring-subhead {
+  font-size: .95rem;
+  font-weight: 650;
+  margin: 0 0 .25rem;
+}
+.recurring-subhead ~ .recurring-subhead {
+  border-top: 1px solid var(--border);
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+}
+.card > .recurring-section { border-top: 0; margin-top: 0; padding-top: 0; }
+
 /* ── the headline figure at the top of a dashboard panel ─────────────────── */
 
 /* Both the income and expense tabs open with the actual total for the period, so

@@ -83,6 +83,10 @@
       bills, starting with whichever one you ranked highest. Check the result on
       the Monthly Expenses tab.</span></li>
     <li>{{template "icon" "check-circle"}}
+      <span><strong>Recurring income</strong>, below the chart, lists every
+      paycheck or other income YABA records for you automatically. Edit or
+      cancel one here or on Add Income.</span></li>
+    <li>{{template "icon" "check-circle"}}
       <span>Record a new payment with <strong>Add Income</strong> below.</span></li>
   </ul>
 </div>
@@ -103,10 +107,12 @@
       wants. It matters because your essential spending is what sets your
       Emergency Fund target.</span></li>
     <li>{{template "icon" "check-circle"}}
-      <span>Open <strong>Recurring monthly expenses</strong> to list regular
-      bills (like rent) and rank them by importance. As income comes in, it pays
+      <span>Open <strong>Recurring expenses</strong> to list monthly bills
+      (like rent) and rank them by importance. As income comes in, it pays
       off the list from the top down — so you find out ahead of time if
-      you're short, and exactly which bill is at risk.</span></li>
+      you're short, and exactly which bill is at risk. The same section also
+      lists the expenses YABA records for you automatically, and appears
+      under Add Expense → Manual too.</span></li>
     <li>{{template "icon" "check-circle"}}
       <span>A bill that changes every month, like electricity, can learn its
       typical cost from the payments you record against it — just link it
@@ -628,6 +634,10 @@
         {{end}}
       </div>
       {{end}}
+
+      {{/* Recurring income, editable here -- the same section Add Income
+           draws under its form; see partials/recurring.html. */}}
+      {{template "recurringincome" .RecurringIncomeSection}}
     </div>
 
     {{template "actionbar" .}}
@@ -686,154 +696,12 @@
         {{end}}
       </div>
 
-      {{/*
-        The recurring-expense planner, and the form for adding to it, are both
-        inside this collapsed section. They are a planning tool; the question this
-        tab opens on is "what did I spend", so the form no longer sits out on the
-        tab competing with the chart.
-      */}}
-      <details class="bucket-planner"{{if .PlannerOpen}} open{{end}}>
-        <summary>
-          {{if .Buckets}}Recurring monthly expenses ({{len .Buckets}})
-          {{else}}Set up recurring monthly expenses{{end}}
-        </summary>
-
-        {{if .Buckets}}
-        <div class="alloc-summary">
-          <span>Required <strong>{{money .Allocation.Required}}</strong></span>
-          <span>Funded <strong class="is-positive">{{money .Allocation.Allocated}}</strong></span>
-          <span>Short <strong {{if .Allocation.Shortfall}}class="is-negative"{{end}}>{{money .Allocation.Shortfall}}</strong></span>
-          <span>Uncommitted <strong>{{money .Allocation.Unassigned}}</strong></span>
-        </div>
-
-        {{/* Ranked by which must be paid first: income fills the list from the
-             top down until everything is covered or the money runs out. */}}
-        <ol class="bucket-list">
-          {{range $i, $b := .Buckets}}
-          <li class="bucket bucket-{{$b.Status}}">
-            {{/* A viewer sees the ranking but cannot change it, so the arrows go
-                 and the number stays -- the priority order is information, not
-                 just a control. */}}
-            <div class="bucket-rank">
-              {{if $.Role.CanEditEntries}}
-              <form method="POST" action="/buckets/{{$b.ID}}/up" class="inline-form">
-                {{template "csrf" $}}
-                <button type="submit" class="btn btn-tiny" {{if eq $i 0}}disabled{{end}}
-                        aria-label="Move {{$b.Name}} up">↑</button>
-              </form>
-              {{end}}
-              <span class="rank-number" aria-hidden="true">{{add $i 1}}</span>
-              {{if $.Role.CanEditEntries}}
-              <form method="POST" action="/buckets/{{$b.ID}}/down" class="inline-form">
-                {{template "csrf" $}}
-                <button type="submit" class="btn btn-tiny"
-                        {{if eq (add $i 1) (len $.Buckets)}}disabled{{end}}
-                        aria-label="Move {{$b.Name}} down">↓</button>
-              </form>
-              {{end}}
-            </div>
-
-            <div class="bucket-body">
-              <div class="bucket-head">
-                <h3>
-                  {{$b.Name}}
-                  <span class="tag">{{$b.CostKind.Label}}</span>
-                  {{if $b.Essential}}<span class="tag tag-essential">essential</span>{{end}}
-                </h3>
-                <p>
-                  {{money $b.Allocated}} of {{money $b.Due}}
-                  {{if $b.Funded}}
-                  <span class="is-positive">funded</span>
-                  {{else}}
-                  <strong class="is-negative">{{money $b.Shortfall}} short</strong>
-                  {{end}}
-                </p>
-              </div>
-
-              <div class="progress" role="progressbar"
-                   aria-valuenow="{{pctInt $b.Progress}}" aria-valuemin="0" aria-valuemax="100"
-                   aria-label="{{$b.Name}} funding">
-                <div class="progress-bar" style="width: {{pct $b.Progress}}%"></div>
-              </div>
-
-              <p class="stat-note">
-                {{if eq $b.CostKind "variable"}}
-                  {{if $b.Spent}}{{money $b.Spent}} paid so far this month.
-                  {{else}}Estimated at {{money $b.Estimate}} from previous months.{{end}}
-                  {{if ne $b.Low $b.High}} Usually {{money $b.Low}}–{{money $b.High}}.{{end}}
-                {{else}}
-                  Fixed at {{money $b.Fixed}} a month.
-                  {{if $b.Spent}} {{money $b.Spent}} paid so far.{{end}}
-                {{end}}
-              </p>
-
-              {{if $.Role.CanEditEntries}}
-              <details class="bucket-settings">
-                <summary>Edit</summary>
-                <form method="POST" action="/buckets/{{$b.ID}}/edit" class="row-form">
-                  {{template "csrf" $}}
-                  <div class="field">
-                    <label for="bname-{{$b.ID}}">Name</label>
-                    <input id="bname-{{$b.ID}}" name="name" type="text" value="{{$b.Name}}" required maxlength="40">
-                  </div>
-                  <div class="field">
-                    <label for="bkind-{{$b.ID}}">Cost</label>
-                    <select id="bkind-{{$b.ID}}" name="cost_kind">
-                      <option value="fixed" {{if eq $b.CostKind "fixed"}}selected{{end}}>Fixed each month</option>
-                      <option value="variable" {{if eq $b.CostKind "variable"}}selected{{end}}>Varies each month</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="bamt-{{$b.ID}}">Amount</label>
-                    <input id="bamt-{{$b.ID}}" name="amount" type="number" step="0.01" min="0"
-                           inputmode="decimal" value="{{amount $b.Fixed}}">
-                    <p class="hint">Ignored for a varying cost.</p>
-                  </div>
-                  <div class="field">
-                    <label class="radio">
-                      <input type="checkbox" name="essential" value="yes" {{if $b.Essential}}checked{{end}}>
-                      Essential
-                    </label>
-                  </div>
-                  <button type="submit" class="btn btn-small btn-primary">Save</button>
-                </form>
-
-                <form method="POST" action="/buckets/{{$b.ID}}/archive" class="inline-form danger-form"
-                      data-confirm="Remove &quot;{{$b.Name}}&quot;? Its history is kept.">
-                  {{template "csrf" $}}
-                  <button type="submit" class="btn btn-small btn-danger">Remove</button>
-                </form>
-              </details>
-              {{end}}
-            </div>
-          </li>
-          {{end}}
-        </ol>
-
-        <p class="projection">{{.ExpenseRange.Note}}</p>
-
-        {{if .Role.CanEditEntries}}
-        <form method="POST" action="/buckets/reallocate" class="inline-form">
-          {{template "csrf" .}}
-          <input type="hidden" name="month" value="{{if .Month}}{{.Month}}{{else}}{{.ThisMonth}}{{end}}">
-          <button type="submit" class="btn btn-small btn-quiet">Recalculate funding</button>
-        </form>
-        {{end}}
-        {{else}}
-        <p class="stat-note">
-          Rent, a car payment, a utility bill — list the ones that recur and rank
-          them by which must be paid first. Income then fills the list from the top
-          down until everything is covered or the money runs out.
-        </p>
-        {{end}}
-
-        {{if .Role.CanEditEntries}}
-        <div class="bucket-add-inner">
-          <h2>Add a recurring expense</h2>
-          {{template "bucketform" .}}
-        </div>
-        {{end}}
-      </details>
+      {{/* The recurring-expense section: the monthly bill planner and the
+           expenses recorded automatically. The same section is drawn under
+           Add Expense -> Manual; see partials/recurring.html. Collapsed by
+           default, because the question this tab opens on is "what did I
+           spend". */}}
+      {{template "recurringexpenses" .RecurringExpensesSection}}
     </div>
 
     {{template "actionbar" .}}

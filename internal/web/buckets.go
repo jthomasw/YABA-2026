@@ -11,10 +11,6 @@ import (
 	"github.com/jthomasw/YABA-2026/internal/store"
 )
 
-// expensesTab is where every bucket action returns the user, so they land back
-// on the list they were editing rather than at the top of the dashboard.
-const expensesTab = "/dashboard?tab=expenses&planner=open#panel-expenses"
-
 // parseBucketForm reads the recurring-expense form.
 func parseBucketForm(r *http.Request) (store.NewBucket, string) {
 	var n store.NewBucket
@@ -52,12 +48,12 @@ func (s *Server) handleBucketCreate(w http.ResponseWriter, r *http.Request) {
 
 	n, msg := parseBucketForm(r)
 	if msg != "" {
-		s.redirectError(w, r, expensesTab, msg)
+		s.redirectError(w, r, recurringExpensesReturn(r), msg)
 		return
 	}
 
 	if _, err := s.store.CreateBucket(r.Context(), sc, n); err != nil {
-		s.redirectError(w, r, expensesTab,
+		s.redirectError(w, r, recurringExpensesReturn(r),
 			s.safeMessage(r, err, "That recurring expense could not be created. Try again."))
 		return
 	}
@@ -65,7 +61,7 @@ func (s *Server) handleBucketCreate(w http.ResponseWriter, r *http.Request) {
 	// A new expense changes what the month requires, so the waterfall is re-poured.
 	// Its failure is folded into the one message rather than flashed first,
 	// where the success message used to overwrite it.
-	s.redirectSaved(w, r, expensesTab, s.reallocateNow(r),
+	s.redirectSaved(w, r, recurringExpensesReturn(r), s.reallocateNow(r),
 		fmt.Sprintf("%q added to your recurring expenses.", n.Name))
 }
 
@@ -115,12 +111,12 @@ func (s *Server) handleBucketUpdate(w http.ResponseWriter, r *http.Request) {
 
 	n, msg := parseBucketForm(r)
 	if msg != "" {
-		s.redirectError(w, r, expensesTab, msg)
+		s.redirectError(w, r, recurringExpensesReturn(r), msg)
 		return
 	}
 
 	err := s.store.UpdateBucket(r.Context(), sc, id, n)
-	s.redirectAfterStoreOp(w, r, err, expensesTab,
+	s.redirectAfterStoreOp(w, r, err, recurringExpensesReturn(r),
 		"That expense no longer exists.",
 		"That change could not be saved. Try again.",
 		"Recurring expense updated.",
@@ -160,7 +156,7 @@ func (s *Server) moveBucket(w http.ResponseWriter, r *http.Request, up bool) {
 			s.setFlash(w, r, kind, text)
 		}
 	}
-	http.Redirect(w, r, expensesTab, http.StatusSeeOther)
+	http.Redirect(w, r, recurringExpensesReturn(r), http.StatusSeeOther)
 }
 
 func (s *Server) handleBucketArchive(w http.ResponseWriter, r *http.Request) {
@@ -171,7 +167,7 @@ func (s *Server) handleBucketArchive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err := s.store.ArchiveBucket(r.Context(), sc, id)
-	s.redirectAfterStoreOp(w, r, err, expensesTab,
+	s.redirectAfterStoreOp(w, r, err, recurringExpensesReturn(r),
 		"That expense no longer exists.",
 		"That could not be removed. Try again.",
 		"Recurring expense removed. Its history has been kept.",
@@ -188,7 +184,7 @@ func (s *Server) handleReallocate(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	s.redirectSuccess(w, r, expensesTab, "Income re-allocated down the priority list.")
+	s.redirectSuccess(w, r, recurringExpensesReturn(r), "Income re-allocated down the priority list.")
 }
 
 // reallocateNow re-pours the waterfall for the current month and returns a

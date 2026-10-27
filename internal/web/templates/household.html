@@ -241,8 +241,12 @@
       {{template "csrf" .}}
       <div class="field">
         <label for="new-hh">Name</label>
-        <input id="new-hh" name="name" type="text" required maxlength="60"
-               placeholder="Flat 4B, Family, Holiday fund…">
+        {{/* Prefilled with "<your name>-budget". Type over it to choose another
+             name; left blank, the server uses the same default. Not "required"
+             for that reason. */}}
+        <input id="new-hh" name="name" type="text" maxlength="60"
+               value="{{.DefaultSharedName}}"
+               placeholder="{{.DefaultSharedName}}">
       </div>
       <button type="submit" class="btn btn-primary">{{template "icon" "plus"}} Create</button>
     </form>

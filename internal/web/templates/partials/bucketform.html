@@ -1,14 +1,14 @@
 {{/*
   The "add a recurring expense" form.
 
-  Defined once because the Expected Monthly Expenses panel shows it in two
-  places: collapsed in a <details> when there are already expenses, and open in
-  the empty state so a new user has something to fill in immediately. Copying it
-  would mean two forms drifting apart.
+  Drawn by the shared recurring-expenses section (partials/recurring.html),
+  whose data -- a recurringExpensesSection -- supplies the CSRF token and the
+  page to return to.
 */}}
 {{define "bucketform"}}
 <form method="POST" action="/buckets" class="row-form">
   {{template "csrf" .}}
+  <input type="hidden" name="return_to" value="{{.ReturnTo}}">
 
   <div class="field">
     <label for="bucket-name">Name</label>
@@ -39,6 +39,6 @@
     </label>
   </div>
 
-  <button type="submit" class="btn btn-primary">Add expense</button>
+  <button type="submit" class="btn btn-primary">Add bill</button>
 </form>
 {{end}}

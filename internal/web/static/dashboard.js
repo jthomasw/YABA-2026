@@ -256,32 +256,12 @@
     if (monthly) monthlyChart(monthly);
   }
 
-  /* A recurring expense whose cost varies has its amount derived from the
-   * transactions recorded against it, so the amount field does not apply. It is
-   * disabled rather than hidden, which stops the form jumping as you switch. */
-  function initBucketKind() {
-    var select = document.querySelector("[data-bucket-kind]");
-    var amountField = document.querySelector("[data-bucket-amount]");
-    if (!select || !amountField) return;
+  /* initBucketKind moved to ui.js: the recurring-expense section that holds
+   * its form is now drawn on Add Expense as well as here. */
 
-    var input = amountField.querySelector("input");
-
-    function apply() {
-      var variable = select.value === "variable";
-      amountField.classList.toggle("is-muted", variable);
-      if (input) {
-        input.disabled = variable;
-        input.required = !variable;
-      }
-    }
-
-    select.addEventListener("change", apply);
-    apply();
-  }
 
   function init() {
     document.querySelectorAll("[data-tabs]").forEach(initTabs);
-    initBucketKind();
     initCharts();
   }
 

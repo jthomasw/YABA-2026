@@ -36,6 +36,11 @@ type dashboardView struct {
 	RecurringExpenses []store.RecurringExpense
 	TickerItems       []tickerItem
 
+	// The shared recurring sections (see recurring.go): the same ones Add
+	// Expense -> Manual and Add Income draw.
+	RecurringExpensesSection recurringExpensesSection
+	RecurringIncomeSection   recurringIncomeSection
+
 	// Period.
 	Month      string // "" means all time
 	MonthLabel string
@@ -149,6 +154,21 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+
+	// Built from what loadDashboard already read, so no query runs twice.
+	var err error
+	if v.RecurringExpensesSection, err = s.loadRecurringExpenses(ctx, sc, v.view, returnDashboard,
+		budgetMonth, v.Buckets, &v.Allocation, v.RecurringExpenses); err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	v.RecurringExpensesSection.Open = v.PlannerOpen
+	if v.RecurringIncomeSection, err = s.loadRecurringIncome(ctx, sc, v.view, returnDashboard,
+		v.RecurringIncome); err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	v.RecurringIncomeSection.Open = r.URL.Query().Get("recurring") == "open"
 
 	v.Charts = buildDashboardCharts(v)
 	s.render(w, r, "dashboard.html", v)
