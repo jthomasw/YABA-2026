@@ -56,6 +56,10 @@ type recurringExpensesSection struct {
 	// Schedules is every automatic recurring expense, cancelled ones included,
 	// so a user can see what used to repeat.
 	Schedules []store.RecurringExpense
+
+	// NextDue maps a bill's id to the next date it falls due (YYYY-MM-DD). A
+	// bill with no date of its own is missing from it.
+	NextDue map[int64]string
 }
 
 // Count is the number shown in the section heading.
@@ -101,6 +105,7 @@ func (s *Server) loadRecurringExpenses(ctx context.Context, sc store.Scope, v vi
 		}
 	}
 	sec.ExpenseNote = insight.EstimateMonthlyExpenses(sec.Buckets).Note
+	sec.NextDue = billDueDates(sec.Buckets, sec.Schedules)
 	return sec, nil
 }
 
@@ -148,4 +153,29 @@ func recurringIncomeReturn(r *http.Request) string {
 		return incomeEntryAnchor
 	}
 	return incomeTab
+}
+
+// billDueDates is when each monthly bill is next due: the bill's own due day
+// when it has one, otherwise the soonest active automatic expense that pays
+// towards it -- a car payment recorded on the 15th by a schedule is due on the
+// 15th even if nobody typed that day into the bill. A bill with neither has no
+// entry.
+func billDueDates(buckets []store.Bucket, schedules []store.RecurringExpense) map[int64]string {
+	due := make(map[int64]string, len(buckets))
+	own := make(map[int64]bool, len(buckets))
+	for _, b := range buckets {
+		if d := b.NextDueDate(); d != "" {
+			due[b.ID], own[b.ID] = d, true
+		}
+	}
+	for _, sch := range schedules {
+		ref := sch.BucketRef()
+		if !sch.Active || sch.NextDueDate == "" || ref == 0 || own[ref] {
+			continue
+		}
+		if cur, ok := due[ref]; !ok || sch.NextDueDate < cur {
+			due[ref] = sch.NextDueDate
+		}
+	}
+	return due
 }

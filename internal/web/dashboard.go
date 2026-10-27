@@ -241,6 +241,28 @@ func (s *Server) loadDashboard(ctx context.Context, sc store.Scope, month, budge
 		})
 	}
 
+	// Add monthly bills that have a due day. A bill an active automatic
+	// expense already pays towards is skipped: that expense is in the ticker
+	// above, and listing both would show the same payment twice.
+	paidBySchedule := map[int64]bool{}
+	for _, expense := range v.RecurringExpenses {
+		if expense.Active {
+			paidBySchedule[expense.BucketRef()] = true
+		}
+	}
+	for _, bill := range v.Buckets {
+		due := bill.NextDueDate()
+		if due == "" || paidBySchedule[bill.ID] || bill.Due <= 0 {
+			continue
+		}
+		v.TickerItems = append(v.TickerItems, tickerItem{
+			Label:       bill.Name,
+			Amount:      bill.Due,
+			DueDate:     due,
+			DisplayDate: formatTickerDate(due),
+		})
+	}
+
 	// Sort transactions by their upcoming due dates.
 	sort.Slice(v.TickerItems, func(i, j int) bool {
 		return v.TickerItems[i].DueDate < v.TickerItems[j].DueDate

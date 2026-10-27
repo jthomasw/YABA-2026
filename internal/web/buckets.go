@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/jthomasw/YABA-2026/internal/money"
@@ -36,6 +37,15 @@ func parseBucketForm(r *http.Request) (store.NewBucket, string) {
 	// A variable bucket's amount is derived from the transactions entered
 	// against it, so any figure typed here is ignored rather than rejected --
 	// the field stays on screen when the user switches kind.
+
+	// The due day is optional: blank means the bill has no set day.
+	if raw := strings.TrimSpace(r.PostFormValue("due_day")); raw != "" {
+		day, err := strconv.Atoi(raw)
+		if err != nil || day < 1 || day > 31 {
+			return n, "The due day must be a day of the month, from 1 to 31."
+		}
+		n.DueDay = day
+	}
 
 	return n, ""
 }

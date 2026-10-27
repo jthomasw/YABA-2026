@@ -516,7 +516,28 @@ func migrations() []Migration {
 		// from this recorded version.
 		{Version: 22, Name: "snapshot verification supports pre-household schemas", Run: func(*sql.Tx) error { return nil }},
 		{Version: 23, Name: "form tokens can be restored after a refused write", Run: migrate023},
+
+		// Migration 24 gives a monthly bill the day of the month it is due, so
+		// the planner can say when rent is next due the way recurring income
+		// says when the next paycheck lands. NULL means no day was set, which is
+		// every existing bill.
+		{Version: 24, Name: "monthly bills have a due day", Run: migrate024},
 	}
+}
+
+// migrate024 adds expense_buckets.due_day. Like migrate023 it checks first, so
+// running it against a database that already has the column -- one whose
+// recorded version was wound back -- is a no-op rather than a failure.
+func migrate024(tx *sql.Tx) error {
+	has, err := hasColumn(tx, "expense_buckets", "due_day")
+	if err != nil || has {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE expense_buckets ADD COLUMN due_day INTEGER
+		CHECK (due_day IS NULL OR due_day BETWEEN 1 AND 31)`); err != nil {
+		return fmt.Errorf("add bill due day: %w", err)
+	}
+	return nil
 }
 
 func migrate023(tx *sql.Tx) error {

@@ -87,6 +87,13 @@
             {{if $b.Spent}} {{money $b.Spent}} paid so far.{{end}}
           {{end}}
         </p>
+        {{/* When the bill is next due -- its own due day, or the date of an
+             automatic expense paying towards it. Same line as recurring income. */}}
+        {{with index $.NextDue $b.ID}}
+        <p class="stat-note bill-due">Next due {{dateName .}}</p>
+        {{else}}{{if $.Role.CanEditEntries}}
+        <p class="stat-note bill-due bill-due-missing">No due date yet. Add one under Edit.</p>
+        {{end}}{{end}}
 
         {{if $.Role.CanEditEntries}}
         <details class="bucket-settings">
@@ -110,6 +117,13 @@
               <input id="bamt-{{$b.ID}}" name="amount" type="number" step="0.01" min="0"
                      inputmode="decimal" value="{{amount $b.Fixed}}">
               <p class="hint">Ignored for a varying cost.</p>
+            </div>
+            <div class="field">
+              <label for="bdue-{{$b.ID}}">Due on day</label>
+              <input id="bdue-{{$b.ID}}" name="due_day" type="number" min="1" max="31" step="1"
+                     inputmode="numeric" placeholder="1–31"
+                     value="{{if $b.DueDay}}{{$b.DueDay}}{{end}}">
+              <p class="hint">Day of the month it's paid. Leave blank if it varies.</p>
             </div>
             <div class="field">
               <label class="radio">

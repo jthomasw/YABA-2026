@@ -33,6 +33,16 @@
   </div>
 
   <div class="field">
+    <label for="bucket-due">Due on day</label>
+    <input id="bucket-due" name="due_day" type="number" min="1" max="31" step="1"
+           inputmode="numeric" placeholder="1">
+    {{/* Optional. It is what lets the list say "Next due 1 Nov", the way
+         recurring income shows its next payday. 29-31 fall back to the last
+         day of a shorter month. */}}
+    <p class="hint">Day of the month it's paid, 1–31. Optional.</p>
+  </div>
+
+  <div class="field">
     <label class="radio">
       <input type="checkbox" name="essential" value="yes">
       Essential — counts towards the emergency fund target

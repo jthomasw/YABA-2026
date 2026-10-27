@@ -42,6 +42,10 @@ type Bucket struct {
 	Fixed     Cents
 	Essential bool
 
+	// DueDay is the day of the month the bill is due, 1-31, or 0 when none was
+	// set. A day past the end of a shorter month means that month's last day.
+	DueDay int
+
 	// Due is what this bucket is expected to need for the month being viewed.
 	Due Cents
 	// Spent is what has actually been paid against it in that month.
@@ -94,6 +98,7 @@ type NewBucket struct {
 	CostKind  CostKind
 	Fixed     Cents
 	Essential bool
+	DueDay    int // 0 for none
 }
 
 func (n *NewBucket) normalise() error {
@@ -115,7 +120,41 @@ func (n *NewBucket) normalise() error {
 	if n.Fixed < 0 {
 		return fmt.Errorf("the amount cannot be negative")
 	}
+	if n.DueDay < 0 || n.DueDay > 31 {
+		return fmt.Errorf("the due day must be between 1 and 31")
+	}
 	return nil
+}
+
+// dueDayValue is what due_day stores: the day, or NULL for none.
+func (n NewBucket) dueDayValue() any {
+	if n.DueDay == 0 {
+		return nil
+	}
+	return n.DueDay
+}
+
+// NextDueDate is the next date, from today on, that the bill falls due, as
+// YYYY-MM-DD; "" when it has no due day. Due today counts as next.
+func (b Bucket) NextDueDate() string {
+	return nextMonthlyDue(b.DueDay, Today())
+}
+
+// nextMonthlyDue returns the first date on or after today that is day `day`
+// of its month, clamped to the month's last day ("the 31st" is 30 November).
+func nextMonthlyDue(day int, today string) string {
+	if day < 1 || day > 31 {
+		return ""
+	}
+	t, err := time.Parse(DateLayout, today)
+	if err != nil {
+		return ""
+	}
+	this := addMonthsClamped(t, 0, day)
+	if !this.Before(t) {
+		return this.Format(DateLayout)
+	}
+	return addMonthsClamped(t, 1, day).Format(DateLayout)
 }
 
 // CreateBucket adds a recurring expense at the bottom of the priority list.
@@ -136,9 +175,10 @@ func (s *Store) CreateBucket(ctx context.Context, sc Scope, n NewBucket) (int64,
 		}
 
 		res, err := tx.ExecContext(ctx, `
-			INSERT INTO expense_buckets(household_id, user_id, name, priority, cost_kind, fixed_cents, essential)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			sc.HouseholdID, sc.UserID, n.Name, next, string(n.CostKind), int64(n.Fixed), boolToInt(n.Essential))
+			INSERT INTO expense_buckets(household_id, user_id, name, priority, cost_kind, fixed_cents, essential, due_day)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			sc.HouseholdID, sc.UserID, n.Name, next, string(n.CostKind), int64(n.Fixed), boolToInt(n.Essential),
+			n.dueDayValue())
 		if err != nil {
 			return fmt.Errorf("insert bucket: %w", err)
 		}
@@ -155,9 +195,10 @@ func (s *Store) UpdateBucket(ctx context.Context, sc Scope, bucketID int64, n Ne
 	}
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE expense_buckets
-		SET name = ?, cost_kind = ?, fixed_cents = ?, essential = ?
+		SET name = ?, cost_kind = ?, fixed_cents = ?, essential = ?, due_day = ?
 		WHERE id = ? AND household_id = ? AND archived_at IS NULL`,
-		n.Name, string(n.CostKind), int64(n.Fixed), boolToInt(n.Essential), bucketID, sc.HouseholdID)
+		n.Name, string(n.CostKind), int64(n.Fixed), boolToInt(n.Essential), n.dueDayValue(),
+		bucketID, sc.HouseholdID)
 	if err != nil {
 		return fmt.Errorf("update bucket: %w", err)
 	}
@@ -278,6 +319,7 @@ func (s *Store) Buckets(ctx context.Context, sc Scope, month string) ([]Bucket, 
 
 	rows, err := s.db.QueryContext(ctx, bucketHistoryCTE+`
 		SELECT b.id, b.name, b.priority, b.cost_kind, b.fixed_cents, b.essential,
+		       IFNULL(b.due_day, 0),
 		       IFNULL((
 		           SELECT SUM(t.amount_cents) FROM transactions t
 		           WHERE t.bucket_id = b.id AND t.kind = 'expense'
@@ -306,7 +348,7 @@ func (s *Store) Buckets(ctx context.Context, sc Scope, month string) ([]Bucket, 
 		var essential int
 		var estimate float64
 		if err := rows.Scan(&b.ID, &b.Name, &b.Priority, &kind, &fixed, &essential,
-			&spent, &allocated, &estimate, &low, &high); err != nil {
+			&b.DueDay, &spent, &allocated, &estimate, &low, &high); err != nil {
 			return nil, fmt.Errorf("scan bucket: %w", err)
 		}
 		b.CostKind = CostKind(kind)
@@ -388,7 +430,7 @@ func bucketRange(b Bucket, low, high Cents) (Cents, Cents) {
 // BucketOptions lists active buckets for a form's select element.
 func (s *Store) BucketOptions(ctx context.Context, sc Scope) ([]Bucket, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, priority, cost_kind, fixed_cents, essential
+		`SELECT id, name, priority, cost_kind, fixed_cents, essential, IFNULL(due_day, 0)
 		 FROM expense_buckets WHERE household_id = ? AND archived_at IS NULL
 		 ORDER BY priority ASC, id ASC`, sc.HouseholdID)
 	if err != nil {
@@ -402,7 +444,7 @@ func (s *Store) BucketOptions(ctx context.Context, sc Scope) ([]Bucket, error) {
 		var kind string
 		var fixed int64
 		var essential int
-		if err := rows.Scan(&b.ID, &b.Name, &b.Priority, &kind, &fixed, &essential); err != nil {
+		if err := rows.Scan(&b.ID, &b.Name, &b.Priority, &kind, &fixed, &essential, &b.DueDay); err != nil {
 			return nil, err
 		}
 		b.CostKind, b.Fixed, b.Essential = CostKind(kind), Cents(fixed), essential == 1
