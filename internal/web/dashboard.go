@@ -97,11 +97,12 @@ type dashboardView struct {
 }
 
 type chartData struct {
-	BalanceLabels []string
-	BalanceValues []float64
-	MonthLabels   []string
-	MonthIncome   []float64
-	MonthExpense  []float64
+	BalanceLabels  []string
+	BalanceValues  []*float64
+	ForecastValues []*float64
+	MonthLabels    []string
+	MonthIncome    []float64
+	MonthExpense   []float64
 
 	// The two doughnuts. They sit on the Expected Monthly Income and Expected
 	// Monthly Expenses tabs, which is where a breakdown belongs -- the Add
@@ -369,18 +370,31 @@ func (s *Server) loadSavingsGrid(ctx context.Context, sc store.Scope, v *dashboa
 }
 
 func buildDashboardCharts(v dashboardView) chartData {
-	// No trend series: the dashed trend line was removed from the chart on
-	// purpose, and the fitted trend now survives only as the sentence under it
-	// (v.Trend.Note), so shipping its points to the page would be dead weight.
-	c := chartData{BalanceLabels: []string{}, BalanceValues: []float64{}}
+	// Build dashboard chart data, including the 30-day balance forecast.
+	// The forecast uses recurring transactions and estimated spending
+	// to project future balances on the Current Funds graph.
+	c := chartData{
+		BalanceLabels: []string{},
+		BalanceValues: []*float64{},
+	}
+
 	for _, p := range v.Balance {
 		c.BalanceLabels = append(c.BalanceLabels, p.Date)
-		c.BalanceValues = append(c.BalanceValues, p.Balance.Float())
+
+		value := p.Balance.Float()
+		c.BalanceValues = append(c.BalanceValues, &value)
 	}
+
+	// Generate 30-day balance predictions.
+	c.BalanceLabels, c.BalanceValues, c.ForecastValues =
+		forecastBalance(v, c.BalanceLabels, c.BalanceValues)
+
 	c.MonthLabels, c.MonthIncome, c.MonthExpense = monthAxis(v.Monthly)
+
 	// Blank labels are grouped rather than drawn as an unnamed slice.
 	c.IncomeLabels, c.IncomeValues = labelAxis(v.IncomeBySource, "Unlabelled")
 	c.SpendLabels, c.SpendValues = labelAxis(v.SpendByCategory, "Unlabelled")
+
 	return c
 }
 
