@@ -1,5 +1,8 @@
 # YABA — Yet Another Budgeting App
 
+<img width="960" height="630" alt="image" src="https://github.com/user-attachments/assets/2580be60-5988-49fe-84fa-9287403a5fbc" />
+
+
 A household budgeting app: income and expenses, recurring schedules, priority-ordered
 monthly expense buckets funded from income as it arrives, savings funds with an
 emergency-fund target sized from your own essential spending, shared budgets with
