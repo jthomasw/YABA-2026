@@ -1,6 +1,7 @@
 # YABA — Yet Another Budgeting App
 
-<img width="960" height="630" alt="image" src="https://github.com/user-attachments/assets/2580be60-5988-49fe-84fa-9287403a5fbc" />
+<img width="965" height="670" alt="image" src="https://github.com/user-attachments/assets/b39b6250-5ba3-40bf-b08c-8da589537643" />
+
 
 
 A household budgeting app: income and expenses, recurring schedules, priority-ordered
