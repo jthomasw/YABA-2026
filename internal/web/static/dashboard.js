@@ -162,24 +162,76 @@
     };
   }
 
-  function lineChart(el) {
-    var labels = readJSON(el, "data-labels");
-    var values = readJSON(el, "data-values");
-    if (!labels || !values) return;
+  
+function lineChart(el) {
+  var labels = readJSON(el, "data-labels");
+  var values = readJSON(el, "data-values");
+  var forecast = readJSON(el, "data-forecast");
 
-    var datasets = [{
-      label: "Cash balance",
-      data: values,
-      borderColor: cssVar("--brand", "#2563eb"),
-      backgroundColor: "rgba(37, 99, 235, .12)",
-      fill: true,
-      tension: .25,
-      pointRadius: labels.length > 40 ? 0 : 3
-    }];
+  if (!labels || !values) return;
+  
+  // Shorten dates on the X-axis while preserving full dates in the data.
+var displayLabels = labels.map(function(date) {
+  var parts = date.split("-");
 
-    new Chart(el, { type: "line", data: { labels: labels, datasets: datasets },
-                    options: baseOptions() });
+  if (parts.length !== 3) return date;
+
+  var year = Number(parts[0]);
+  var month = Number(parts[1]);
+  var day = Number(parts[2]);
+
+  var monthNames = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+  ];
+
+  var label = monthNames[month - 1] + " " + day;
+
+  // Include the year only for dates outside the current year.
+  if (year !== new Date().getFullYear()) {
+    label += ", " + year;
   }
+
+  return label;
+  });
+
+
+  var datasets = [{
+    label: "Cash balance",
+    data: values,
+    borderColor: cssVar("--brand", "#2563eb"),
+    backgroundColor: "rgba(37, 99, 235, .12)",
+    fill: true,
+    tension: .25,
+    pointRadius: labels.length > 40 ? 0 : 3
+  }];
+
+  // Add the 30-day predicted balance as a dotted line.
+  if (Array.isArray(forecast) && forecast.length === labels.length) {
+    datasets.push({
+      label: "Predicted balance (4 weeks)",
+      data: forecast,
+      borderColor: "#e2a43c",
+      backgroundColor: "transparent",
+      borderDash: [6, 5],
+      borderWidth: 2,
+      fill: false,
+      tension: 0,
+      pointRadius: 0,
+      spanGaps: false
+    });
+  }
+
+  new Chart(el, {
+    type: "line",
+    data: {
+      labels: displayLabels,
+      datasets: datasets
+    },
+    options: baseOptions()
+  });
+}
+
 
   function pieChart(el) {
     var labels = readJSON(el, "data-labels");

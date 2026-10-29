@@ -254,10 +254,11 @@
       {{if .Charts.BalanceLabels}}
       <div class="chart-box chart-box-tall">
         <canvas id="chart-balance"
-                data-labels="{{jsonAttr .Charts.BalanceLabels}}"
-                data-values="{{jsonAttr .Charts.BalanceValues}}"
-                role="img"
-                aria-label="Current funds over time"></canvas>
+          data-labels="{{jsonAttr .Charts.BalanceLabels}}"
+          data-values="{{jsonAttr .Charts.BalanceValues}}"
+          data-forecast="{{jsonAttr .Charts.ForecastValues}}"
+          role="img"
+          aria-label="Current funds over time with 30-day balance predictions"></canvas>
       </div>
       {{/* The trend the mockup asks for, also in words: a canvas is opaque to
            assistive technology. */}}
