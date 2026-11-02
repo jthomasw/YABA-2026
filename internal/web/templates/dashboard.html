@@ -257,8 +257,9 @@
           data-labels="{{jsonAttr .Charts.BalanceLabels}}"
           data-values="{{jsonAttr .Charts.BalanceValues}}"
           data-forecast="{{jsonAttr .Charts.ForecastValues}}"
+          data-forecast-label="{{.Charts.ForecastLabel}}"
           role="img"
-          aria-label="Current funds over time with 30-day balance predictions"></canvas>
+          aria-label="Current funds over {{.MonthLabel}}, with the predicted balance to the end of the period"></canvas>
       </div>
       {{/* The trend the mockup asks for, also in words: a canvas is opaque to
            assistive technology. */}}

@@ -206,10 +206,11 @@ var displayLabels = labels.map(function(date) {
     pointRadius: labels.length > 40 ? 0 : 3
   }];
 
-  // Add the 30-day predicted balance as a dotted line.
+  // Add the predicted balance, to the end of the period, as a dotted line.
   if (Array.isArray(forecast) && forecast.length === labels.length) {
     datasets.push({
-      label: "Predicted balance (4 weeks)",
+      // The server names the period it predicts to: "(to Oct 31)".
+      label: el.getAttribute("data-forecast-label") || "Predicted balance",
       data: forecast,
       borderColor: "#e2a43c",
       backgroundColor: "transparent",

@@ -59,10 +59,12 @@ type dashboardView struct {
 	// Current Funds tab.
 	FundAddOpen bool
 
-	// Card 1 — Current Funds.
+	// Card 1 — Current Funds. Balance and Trend cover Period, the dates the
+	// Period menu selects; Cash is always today's balance.
 	Cash    money.Cents
 	Balance []store.Point
 	Trend   insight.Trend
+	Period  chartPeriod
 
 	// Card 2 — Emergency Fund: the emergency fund's runway and target.
 	EmergencyFund store.Fund
@@ -100,6 +102,7 @@ type chartData struct {
 	BalanceLabels  []string
 	BalanceValues  []*float64
 	ForecastValues []*float64
+	ForecastLabel  string
 	MonthLabels    []string
 	MonthIncome    []float64
 	MonthExpense   []float64
@@ -155,6 +158,15 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+
+	// The Current Funds chart follows the Period menu: a month shows that
+	// month and predicts to its last day; All time shows everything and
+	// predicts to the end of this month. The trend sentence describes the
+	// same stretch the chart draws.
+	today := store.Today()
+	v.Period = chartPeriodFor(month, today)
+	v.Balance = periodBalance(v.Balance, v.Period, today)
+	v.Trend = insight.FitTrend(v.Balance)
 
 	// Built from what loadDashboard already read, so no query runs twice.
 	var err error
@@ -385,9 +397,12 @@ func buildDashboardCharts(v dashboardView) chartData {
 		c.BalanceValues = append(c.BalanceValues, &value)
 	}
 
-	// Generate 30-day balance predictions.
+	// Predict the balance to the end of the period in the Period menu.
 	c.BalanceLabels, c.BalanceValues, c.ForecastValues =
-		forecastBalance(v, c.BalanceLabels, c.BalanceValues)
+		forecastBalance(v, c.BalanceLabels, c.BalanceValues, v.Period.To)
+	if len(c.ForecastValues) > 0 {
+		c.ForecastLabel = forecastLabel(v.Period.To)
+	}
 
 	c.MonthLabels, c.MonthIncome, c.MonthExpense = monthAxis(v.Monthly)
 
