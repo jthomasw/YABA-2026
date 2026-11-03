@@ -26,9 +26,62 @@ type SetupIncome struct {
 	FrequencyUnit string
 }
 
+// ErrAlreadySetUp refuses a second first-time setup: the personal budget
+// already has entries, so a starting balance would be counted twice.
+var ErrAlreadySetUp = errors.New("your budget is already set up")
+
+// personalHousehold returns the id of the user's own budget.
+func personalHousehold(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, userID int64) (int64, error) {
+	var id int64
+	err := q.QueryRowContext(ctx,
+		`SELECT id FROM households WHERE personal_for = ?`, userID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find personal budget: %w", err)
+	}
+	return id, nil
+}
+
+// budgetIsEmpty reports whether a household has no transactions and no
+// recurring schedules yet -- the only state first-time setup applies to.
+func budgetIsEmpty(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, householdID int64) (bool, error) {
+	var n int
+	err := q.QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(*) FROM transactions      WHERE household_id = ?)
+		     + (SELECT COUNT(*) FROM recurring_income  WHERE household_id = ?)
+		     + (SELECT COUNT(*) FROM recurring_expense WHERE household_id = ?)`,
+		householdID, householdID, householdID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("check budget is empty: %w", err)
+	}
+	return n == 0, nil
+}
+
+// SetupNeeded reports whether the user's own budget is still empty, so the
+// first-time setup page has something to do.
+func (s *Store) SetupNeeded(ctx context.Context, userID int64) (bool, error) {
+	id, err := personalHousehold(ctx, s.db, userID)
+	if err != nil {
+		return false, err
+	}
+	return budgetIsEmpty(ctx, s.db, id)
+}
+
 // InitializeBudget records the starting balance and initial entries together,
 // so a failed setup cannot leave only part of it saved.
-func (s *Store) InitializeBudget(ctx context.Context, sc Scope, startingBalance Cents, expenses []SetupExpense, incomes []SetupIncome) error {
+//
+// It always writes to the user's own personal budget -- never the budget they
+// happen to be viewing, which may be a shared one where they are only a
+// viewer -- and only while that budget is still empty. A second submission
+// (Back and resubmit, or /setup opened again) returns ErrAlreadySetUp rather
+// than recording a second starting balance.
+func (s *Store) InitializeBudget(ctx context.Context, userID int64, startingBalance Cents, expenses []SetupExpense, incomes []SetupIncome) error {
 	if startingBalance < 0 {
 		return errors.New("setup amounts cannot be negative")
 	}
@@ -76,6 +129,21 @@ func (s *Store) InitializeBudget(ctx context.Context, sc Scope, startingBalance 
 	}
 
 	return s.inTx(ctx, func(tx *sql.Tx) error {
+		householdID, err := personalHousehold(ctx, tx, userID)
+		if err != nil {
+			return err
+		}
+		// Checked inside the transaction, so two submissions racing each other
+		// cannot both see an empty budget.
+		empty, err := budgetIsEmpty(ctx, tx, householdID)
+		if err != nil {
+			return err
+		}
+		if !empty {
+			return ErrAlreadySetUp
+		}
+		sc := Scope{HouseholdID: householdID, UserID: userID}
+
 		if startingBalance > 0 {
 			res, err := tx.ExecContext(ctx, `
 				INSERT INTO transactions

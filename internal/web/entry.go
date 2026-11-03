@@ -25,6 +25,11 @@ type entryView struct {
 	// Step is "choose" or "manual" on the expense page.
 	Step string
 
+	// Items is the line-item rows as submitted, shown again when a save is
+	// refused so a breakdown that did not add up can be corrected rather than
+	// typed out again.
+	Items []formItem
+
 	// Suggestions for the label field, and buckets an expense can pay towards, and
 	// deliberately nothing else: the charts and recent lists live on the dashboard, so the
 	// queries that fed them here are gone rather than run and discarded.
@@ -258,6 +263,12 @@ func (s *Server) handleIncomeCreate(w http.ResponseWriter, r *http.Request) {
 		s.rerenderEntry(w, r, store.KindIncome, in, msg)
 		return
 	}
+	// Same check as a one-time entry: a schedule saved from a page opened in
+	// another budget would keep posting into the wrong one.
+	if !formBelongsToHousehold(r, sc.HouseholdID) {
+		s.rerenderEntry(w, r, store.KindIncome, in, "This form belongs to a different budget. Reload it before saving.")
+		return
+	}
 
 	frequencyN, frequencyUnit, freqMsg := parseRecurringFrequency(r)
 	if freqMsg != "" {
@@ -414,6 +425,12 @@ func (s *Server) handleExpenseCreate(w http.ResponseWriter, r *http.Request) {
 		s.rerenderEntry(w, r, store.KindExpense, in, msg)
 		return
 	}
+	// Same check as a one-time entry: a schedule saved from a page opened in
+	// another budget would keep posting into the wrong one.
+	if !formBelongsToHousehold(r, sc.HouseholdID) {
+		s.rerenderEntry(w, r, store.KindExpense, in, "This form belongs to a different budget. Reload it before saving.")
+		return
+	}
 
 	frequencyN, frequencyUnit, freqMsg := parseRecurringFrequency(r)
 	if freqMsg != "" {
@@ -436,6 +453,14 @@ func (s *Server) handleExpenseCreate(w http.ResponseWriter, r *http.Request) {
 		frequencyUnit,
 		in.occurredOn,
 	)
+	if errors.Is(err, store.ErrNotFound) {
+		// The bill chosen under Pays towards was removed since the page was
+		// opened. A correctable choice, not a server fault.
+		s.restoreSubmissionToken(r, user.ID)
+		s.rerenderEntry(w, r, store.KindExpense, in,
+			"That monthly bill has been removed. Choose another under Pays towards, or none.")
+		return
+	}
 	if err != nil {
 		s.restoreSubmissionToken(r, user.ID)
 		s.serverError(w, r, err)
@@ -630,6 +655,7 @@ func (s *Server) rerenderEntry(w http.ResponseWriter, r *http.Request, kind stor
 	v.formFields = echoForm(r, in)
 	if kind == store.KindExpense {
 		v.Step = "manual"
+		v.Items = in.itemRows
 	}
 	if err := s.attachRecurring(r, &v); err != nil {
 		s.serverError(w, r, err)

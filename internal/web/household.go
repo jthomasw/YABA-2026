@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -265,7 +266,8 @@ func (s *Server) handleInviteCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch err := s.store.InviteMember(r.Context(), hh.ID, user.ID, email, role); {
+	token, err := s.store.InviteMember(r.Context(), hh.ID, user.ID, email, role)
+	switch {
 	case errors.Is(err, store.ErrAlreadyMember):
 		s.flashError(w, r, "That person is already in this budget.")
 	case errors.Is(err, store.ErrInviteOpen):
@@ -273,8 +275,8 @@ func (s *Server) handleInviteCreate(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		s.flashError(w, r, s.safeMessage(r, err, "That change could not be saved. Try again."))
 	default:
-		s.countInvite(r, user.ID, email)
-		s.sendInvitation(w, r, store.NormalizeEmail(email), hh.Name, user.DisplayName, role)
+		s.sendInvitation(w, r, store.NormalizeEmail(email), hh.Name, user.DisplayName, role,
+			s.inviteLink(r, token))
 	}
 	http.Redirect(w, r, "/household", http.StatusSeeOther)
 }
@@ -286,41 +288,37 @@ func inviteKeys(userID int64, email string) (sender, recipient string) {
 		"invite|to|" + store.NormalizeEmail(email)
 }
 
-// inviteAllowed checks the invitation limits before anything is created or
-// emailed. Every invitation is an email sent through this server's relay to an
-// address the sender chose, so without a limit an open sign-up page was an
-// open spam relay. On refusal it flashes the reason, redirects, and returns
-// false.
+// inviteAllowed takes one invitation from both limits -- the account sending
+// it and the address receiving it -- before anything is created or emailed.
+// Every invitation is an email sent through this server's relay to an address
+// the sender chose, so without a limit an open sign-up page was an open spam
+// relay.
+//
+// Taking the slot is one atomic statement (RateTake). It used to be a check
+// now and a count after the invitation was made, so a burst of simultaneous
+// requests all passed the check: 100 at once sent 79 against a limit of 20.
+// A refused or failed invitation still uses its slot, which errs on the side
+// of the limit. On refusal it flashes the reason, redirects, and returns false.
 func (s *Server) inviteAllowed(w http.ResponseWriter, r *http.Request, userID int64, email string) bool {
-	sender, recipient := inviteKeys(userID, email)
-	wait, err := s.store.RateRetryInFor(r.Context(), sender, store.InviteLimit)
-	if err == nil && wait == 0 {
-		wait, err = s.store.RateRetryInFor(r.Context(), recipient, store.InviteRecipientLimit)
-	}
-	if err != nil {
-		s.serverError(w, r, err)
-		return false
-	}
-	if wait > 0 {
-		log.Printf("invite refused: user=%d over the invitation limit", userID)
-		s.redirectError(w, r, "/household",
-			"Too many invitations have been sent. Try again "+retryPhrase(wait)+".")
-		return false
-	}
-	return true
-}
-
-// countInvite charges one invitation (new or resent) to both counters.
-func (s *Server) countInvite(r *http.Request, userID int64, email string) {
 	sender, recipient := inviteKeys(userID, email)
 	for _, c := range []struct {
 		key   string
 		limit store.RateLimit
 	}{{sender, store.InviteLimit}, {recipient, store.InviteRecipientLimit}} {
-		if err := s.store.RateHit(r.Context(), c.key, c.limit); err != nil {
-			log.Printf("WARN  %s could not count an invitation: %v", requestID(r.Context()), err)
+		ok, err := s.store.RateTake(r.Context(), c.key, c.limit)
+		if err != nil {
+			s.serverError(w, r, err)
+			return false
+		}
+		if !ok {
+			wait, _ := s.store.RateRetryInFor(r.Context(), c.key, c.limit)
+			log.Printf("invite refused: user=%d over the invitation limit", userID)
+			s.redirectError(w, r, "/household",
+				"Too many invitations have been sent. Try again "+retryPhrase(wait)+".")
+			return false
 		}
 	}
+	return true
 }
 
 // handleInviteRevoke withdraws an invitation this household sent.
@@ -355,7 +353,11 @@ func (s *Server) handleInviteAccept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch err := s.store.AcceptInvite(r.Context(), id, user.ID, user.Email); {
+	switch err := s.store.AcceptInvite(r.Context(), id, user.ID, user.Email, s.inviteProof(r)); {
+	case errors.Is(err, store.ErrInviteNeedsLink):
+		s.redirectError(w, r, "/dashboard",
+			"To accept, open the link in the invitation email sent to "+user.Email+".")
+		return
 	case errors.Is(err, store.ErrInviteExpired):
 		// Distinguished from "no longer available" on purpose.
 		s.flashError(w, r,
@@ -372,6 +374,7 @@ func (s *Server) handleInviteAccept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.setInviteProof(w, r, "")
 	s.redirectSuccess(w, r, "/dashboard", "You have joined. This is the shared budget.")
 }
 
@@ -471,19 +474,21 @@ func (s *Server) handleMemberRemove(w http.ResponseWriter, r *http.Request) {
 
 // sendInvitation emails the invitation and reports honestly what happened.
 func (s *Server) sendInvitation(w http.ResponseWriter, r *http.Request,
-	email, household, invitedBy string, role store.Role) {
+	email, household, invitedBy string, role store.Role, link string) {
 	roleWord := strings.ToLower(role.Label())
 
 	if !s.mail.Enabled() {
+		// Without email the owner has to pass the link on themselves: it is
+		// the only way to accept.
 		s.flashSuccess(w, r, fmt.Sprintf(
-			"%s is invited as a %s, and the invitation expires in 24 hours. "+
-				"Email is not configured, so let them know — they will see it when they sign in.",
-			email, roleWord))
+			"%s is invited as %s %s. Email is not set up on this server, so send them this "+
+				"link to accept (it works for 24 hours): %s",
+			email, article(roleWord), roleWord, link))
 		return
 	}
 
 	err := s.mail.Invitation(r.Context(), email, household, invitedBy,
-		string(role), store.InviteTTL)
+		string(role), link, store.InviteTTL)
 	if err != nil {
 		// The invitation row exists and is perfectly usable, so this is not a failure of the
 		// invitation -- only of its delivery.
@@ -494,14 +499,98 @@ func (s *Server) sendInvitation(w http.ResponseWriter, r *http.Request,
 		log.Printf("WARN  %s invitation email failed for budget %q: %v",
 			requestID(r.Context()), household, err)
 		s.flashError(w, r, fmt.Sprintf(
-			"%s is invited as a %s, but the email could not be sent. "+
-				"Tell them to sign in within 24 hours, or resend it below.",
-			email, roleWord))
+			"%s is invited as %s %s, but the email could not be sent. "+
+				"Send them this link to accept (it works for 24 hours), or resend it below: %s",
+			email, article(roleWord), roleWord, link))
 		return
 	}
 
 	s.flashSuccess(w, r, fmt.Sprintf(
-		"Invitation emailed to %s as a %s. It expires in 24 hours.", email, roleWord))
+		"Invitation emailed to %s as %s %s. It expires in 24 hours.", email, article(roleWord), roleWord))
+}
+
+// article is "an" before a vowel sound and "a" otherwise: "an editor", "a viewer".
+func article(word string) string {
+	if word != "" && strings.ContainsRune("aeiouAEIOU", rune(word[0])) {
+		return "an"
+	}
+	return "a"
+}
+
+// inviteLink is the accept link for an invitation's secret, on this server's
+// public address (YABA_BASE_URL), or the address this request came in on.
+func (s *Server) inviteLink(r *http.Request, token string) string {
+	base := strings.TrimRight(s.mail.BaseURL(), "/")
+	if base == "" {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		base = scheme + "://" + r.Host
+	}
+	return base + "/invites/open?token=" + url.QueryEscape(token)
+}
+
+// inviteProof is the invitation secret this browser has opened, or "".
+func (s *Server) inviteProof(r *http.Request) string {
+	session, err := s.sessions.Get(r, sessionName)
+	if err != nil {
+		return ""
+	}
+	proof, _ := session.Values[sessionInviteProof].(string)
+	return proof
+}
+
+// setInviteProof remembers (or, with "", forgets) an opened invitation secret.
+func (s *Server) setInviteProof(w http.ResponseWriter, r *http.Request, proof string) {
+	session, err := s.sessions.Get(r, sessionName)
+	if err != nil {
+		return
+	}
+	if proof == "" {
+		delete(session.Values, sessionInviteProof)
+	} else {
+		session.Values[sessionInviteProof] = proof
+	}
+	if err := session.Save(r, w); err != nil {
+		log.Printf("WARN  %s could not save the invitation link: %v", requestID(r.Context()), err)
+	}
+}
+
+// handleInviteOpen is GET /invites/open?token=…, the link in an invitation
+// email. Opening it proves the invited mailbox is the reader's: the secret is
+// kept in this browser, and the invitation banner then offers Accept. Someone
+// not signed in yet is sent to sign in (or create an account) first; the
+// secret survives that.
+func (s *Server) handleInviteOpen(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	inv, err := s.store.InviteByToken(r.Context(), token)
+	if errors.Is(err, store.ErrNotFound) {
+		s.redirectError(w, r, "/dashboard",
+			"That invitation link is no longer valid. It may have expired, been answered, "+
+				"or been replaced by a newer email. Ask them to send it again.")
+		return
+	}
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	s.setInviteProof(w, r, token)
+
+	if u, ok := s.currentUser(r); ok {
+		if store.NormalizeEmail(u.Email) != store.NormalizeEmail(inv.Email) {
+			s.redirectError(w, r, "/dashboard",
+				"That invitation was sent to a different email address. Sign in with "+
+					inv.Email+" to accept it.")
+			return
+		}
+		s.redirectSuccess(w, r, "/dashboard",
+			fmt.Sprintf("Press Accept above to join %q.", inv.HouseholdName))
+		return
+	}
+	s.redirectSuccess(w, r, "/",
+		fmt.Sprintf("Sign in or create an account with %s, then press Accept to join %q.",
+			inv.Email, inv.HouseholdName))
 }
 
 // handleInviteResend gives an unanswered invitation another 24 hours and emails
@@ -529,8 +618,9 @@ func (s *Server) handleInviteResend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The household id is passed in, so an owner of one budget cannot refresh an
-	// invitation belonging to another.
-	inv, err := s.store.ResendInvite(r.Context(), hh.ID, id)
+	// invitation belonging to another. A fresh secret comes back for the new
+	// email; the old link stops working.
+	inv, token, err := s.store.ResendInvite(r.Context(), hh.ID, id)
 	if errors.Is(err, store.ErrNotFound) {
 		s.redirectError(w, r, "/household", "That invitation is no longer waiting for an answer.")
 		return
@@ -540,8 +630,8 @@ func (s *Server) handleInviteResend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.countInvite(r, user.ID, inv.Email)
-	s.sendInvitation(w, r, inv.Email, inv.HouseholdName, user.DisplayName, inv.Role)
+	s.sendInvitation(w, r, inv.Email, inv.HouseholdName, user.DisplayName, inv.Role,
+		s.inviteLink(r, token))
 	http.Redirect(w, r, "/household", http.StatusSeeOther)
 }
 
@@ -568,4 +658,28 @@ func (s *Server) handleTransferOwnership(w http.ResponseWriter, r *http.Request)
 				"so you can still add and change entries but not move savings.")
 	}
 	http.Redirect(w, r, "/household", http.StatusSeeOther)
+}
+
+// onShownHousehold refuses a Sharing action whose form was opened for a
+// different budget than the one now active.
+//
+// The active budget is one setting per account, shared by every tab and
+// device, and these forms act on it. Without this, a Sharing page left open
+// on budget A, after switching to B elsewhere, would rename, invite into,
+// remove members from -- or delete -- B while the screen still said A. Each
+// form carries the id of the budget it was drawn for; a mismatch changes
+// nothing and says why.
+func (s *Server) onShownHousehold(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.parseForm(w, r) {
+			return
+		}
+		if !formBelongsToHousehold(r, mustMembership(r).ID) {
+			s.redirectError(w, r, "/household",
+				"You switched to a different budget after opening that page, so nothing was changed. "+
+					"Check which budget is shown and try again.")
+			return
+		}
+		next(w, r)
+	}
 }

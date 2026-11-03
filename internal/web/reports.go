@@ -126,7 +126,13 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	runway := insight.AssessEmergencyFund(ef, wd, store.EssentialCost(buckets))
+	schedules, err := s.store.ListRecurringExpense(ctx, sc)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	// The same essentials the dashboard's Emergency Fund tab uses.
+	runway := insight.AssessEmergencyFund(ef, wd, store.EssentialMonthly(buckets, schedules))
 
 	v.Observations = insight.ObservationsWithHoldingsAsOf(v.Totals, v.AllTime,
 		v.Essential, v.NonEssent, v.Budgets, v.Monthly, store.Today()[:7])

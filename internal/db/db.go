@@ -522,6 +522,13 @@ func migrations() []Migration {
 		// says when the next paycheck lands. NULL means no day was set, which is
 		// every existing bill.
 		{Version: 24, Name: "monthly bills have a due day", Run: migrate024},
+
+		// Migration 25 gives an invitation a secret, emailed as a link: opening
+		// it proves the invited mailbox is yours. Without it, whoever first
+		// registered the invited address could accept. Stored hashed, like
+		// session and reset tokens. NULL is an invitation sent before this,
+		// accepted the old way; they expire within a day.
+		{Version: 25, Name: "invitations carry an emailed secret", Run: migrate025},
 	}
 }
 
@@ -536,6 +543,18 @@ func migrate024(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE expense_buckets ADD COLUMN due_day INTEGER
 		CHECK (due_day IS NULL OR due_day BETWEEN 1 AND 31)`); err != nil {
 		return fmt.Errorf("add bill due day: %w", err)
+	}
+	return nil
+}
+
+// migrate025 adds household_invites.token_hash; a no-op if it is already there.
+func migrate025(tx *sql.Tx) error {
+	has, err := hasColumn(tx, "household_invites", "token_hash")
+	if err != nil || has {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE household_invites ADD COLUMN token_hash TEXT`); err != nil {
+		return fmt.Errorf("add invitation secret: %w", err)
 	}
 	return nil
 }

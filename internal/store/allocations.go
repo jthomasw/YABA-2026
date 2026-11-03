@@ -169,11 +169,24 @@ func (s *Store) Reallocate(ctx context.Context, sc Scope, month string) error {
 }
 
 // ReallocateMonthOf recomputes the month containing the given date.
+//
+// A change in an earlier month is also a change to the current one: a varying
+// bill's expected cost is learned from the months before, so a power bill
+// added to October moves what November expects to need. The current month is
+// therefore recomputed too whenever the date is in the past; otherwise it
+// showed money "Short" and "Uncommitted" at once until Recalculate was pressed.
 func (s *Store) ReallocateMonthOf(ctx context.Context, sc Scope, date string) error {
+	current := Today()[:7]
 	if len(date) < 7 {
-		return s.Reallocate(ctx, sc, Today()[:7])
+		return s.Reallocate(ctx, sc, current)
 	}
-	return s.Reallocate(ctx, sc, date[:7])
+	if err := s.Reallocate(ctx, sc, date[:7]); err != nil {
+		return err
+	}
+	if date[:7] < current {
+		return s.Reallocate(ctx, sc, current)
+	}
+	return nil
 }
 
 // AllocationsFor returns the month's summary. The month's buckets are passed

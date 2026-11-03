@@ -332,14 +332,32 @@
            a schedule: a repeating rule has no single receipt to attach and no
            one basket to break up. The script removes them from the page rather
            than leaving inputs the server would ignore. */}}
-      <details class="field line-items" data-one-time-only>
-        <summary>Break this into items</summary>
+      <details class="field line-items" data-one-time-only {{if .Items}}open{{end}}>
+        <summary>Break this into items{{with .Items}} ({{len .}}){{end}}</summary>
         <p class="hint">
           For a shop trip covering several categories. The items must add up to
           the amount above, so the breakdown and your spending total agree.
+          Enter a discount or coupon as a negative amount, for example -2.00.
         </p>
 
-        <div data-item-rows></div>
+        {{/* The rows the user typed, shown again after a refused save so they
+             can be corrected instead of retyped. */}}
+        <div data-item-rows>
+          {{range .Items}}
+          <div class="item-row">
+            <label class="visually-hidden" for="item-desc-{{.Position}}">Item description</label>
+            <input id="item-desc-{{.Position}}" name="item_description" type="text"
+                   maxlength="60" value="{{.Description}}" placeholder="Description">
+            <label class="visually-hidden" for="item-cat-{{.Position}}">Item category</label>
+            <input id="item-cat-{{.Position}}" name="item_category" type="text"
+                   maxlength="60" value="{{.Category}}" placeholder="Category"
+                   list="category-options">
+            <label class="visually-hidden" for="item-amt-{{.Position}}">Item amount</label>
+            <input id="item-amt-{{.Position}}" name="item_amount" type="number"
+                   step="0.01" inputmode="decimal" value="{{.Amount}}" placeholder="0.00">
+          </div>
+          {{end}}
+        </div>
 
         <div class="item-row" data-item-template>
           <label class="visually-hidden" for="item-desc-new">Item description</label>
@@ -347,7 +365,7 @@
           <label class="visually-hidden" for="item-cat-new">Item category</label>
           <input id="item-cat-new" name="item_category" type="text" maxlength="60" placeholder="Category" list="category-options">
           <label class="visually-hidden" for="item-amt-new">Item amount</label>
-          <input id="item-amt-new" name="item_amount" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="0.00">
+          <input id="item-amt-new" name="item_amount" type="number" step="0.01" inputmode="decimal" placeholder="0.00">
         </div>
 
         <p class="item-tools">

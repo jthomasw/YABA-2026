@@ -288,7 +288,15 @@ func run(cfg config) error {
 			log.Printf("startup: backed up to %s", path)
 		case pending > 0:
 			log.Printf("startup: %d migration(s) pending — taking a backup first", pending)
-			snap, err := db.Backup(context.Background(), sqlDB, backupCfg)
+			// A table that legitimately went empty (a user deleted their only
+			// few transactions) must not stop the server starting. The
+			// emptied-table guard is there so scheduled backups cannot rotate
+			// the last good copy away; an accepted snapshot already keeps that
+			// copy outside retention (keepPreEmpty), so nothing is lost by
+			// accepting here. Refusing made every restart for an hour fail.
+			preMigration := backupCfg
+			preMigration.AcceptEmpty = true
+			snap, err := db.Backup(context.Background(), sqlDB, preMigration)
 			if err != nil {
 				return fmt.Errorf("pre-migration backup failed, so the migration "+
 					"was not attempted: %w", err)

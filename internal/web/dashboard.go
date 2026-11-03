@@ -66,6 +66,17 @@ type dashboardView struct {
 	Trend   insight.Trend
 	Period  chartPeriod
 
+	// FutureCash is the net of entries dated after today, by date. Cash above
+	// leaves them out -- they have not happened yet -- and the forecast adds
+	// each on its own day.
+	FutureCash map[string]money.Cents
+
+	// NowBuckets is this month's bills, whatever the Period menu says. The
+	// ticker, the emergency fund and the forecast are about today, so they
+	// must not change when an older month is picked; Buckets (below) is the
+	// selected month's, for the Expenses tab's planner.
+	NowBuckets []store.Bucket
+
 	// Card 2 — Emergency Fund: the emergency fund's runway and target.
 	EmergencyFund store.Fund
 	Runway        insight.Runway
@@ -205,22 +216,30 @@ func (s *Server) loadDashboard(ctx context.Context, sc store.Scope, month, budge
 	if err := s.loadExpenses(ctx, sc, month, budgetMonth, v); err != nil {
 		return err
 	}
-	if err := s.loadEmergencyFund(ctx, sc, v); err != nil {
-		return err
-	}
-	if err := s.loadSavingsGrid(ctx, sc, v); err != nil {
-		return err
+	// This month's bills, for everything about today. Read again only when an
+	// older month is selected; otherwise they are the same slice.
+	v.NowBuckets = v.Buckets
+	if budgetMonth != v.ThisMonth {
+		if v.NowBuckets, err = s.store.Buckets(ctx, sc, v.ThisMonth); err != nil {
+			return err
+		}
 	}
 
-	// Load recurring income for the dashboard ticker.
+	// Recurring income and expenses: the ticker, the forecast and -- for
+	// essential expenses -- the emergency fund all use them.
 	v.RecurringIncome, err = s.store.ListRecurringIncome(ctx, sc)
 	if err != nil {
 		return err
 	}
-
-	// Load recurring expenses for the dashboard ticker.
 	v.RecurringExpenses, err = s.store.ListRecurringExpense(ctx, sc)
 	if err != nil {
+		return err
+	}
+
+	if err := s.loadEmergencyFund(ctx, sc, v); err != nil {
+		return err
+	}
+	if err := s.loadSavingsGrid(ctx, sc, v); err != nil {
 		return err
 	}
 
@@ -263,14 +282,17 @@ func (s *Server) loadDashboard(ctx context.Context, sc store.Scope, month, budge
 			paidBySchedule[expense.BucketRef()] = true
 		}
 	}
-	for _, bill := range v.Buckets {
-		due := bill.NextDueDate()
-		if due == "" || paidBySchedule[bill.ID] || bill.Due <= 0 {
+	for _, bill := range v.NowBuckets {
+		if paidBySchedule[bill.ID] {
+			continue
+		}
+		due, amount := nextBillPayment(bill, store.Today())
+		if due == "" || amount <= 0 {
 			continue
 		}
 		v.TickerItems = append(v.TickerItems, tickerItem{
 			Label:       bill.Name,
-			Amount:      bill.Due,
+			Amount:      amount,
 			DueDate:     due,
 			DisplayDate: formatTickerDate(due),
 		})
@@ -293,6 +315,15 @@ func (s *Server) loadCurrentFunds(ctx context.Context, sc store.Scope, v *dashbo
 	if v.Cash, err = s.store.Cash(ctx, sc); err != nil {
 		return err
 	}
+	// An entry dated after today has not happened yet. Cash counts it, but
+	// the balance line does not, so the two disagreed about today; and the
+	// forecast then counted it again. Today's funds leave it out, and the
+	// forecast adds it on its own date.
+	var future money.Cents
+	if v.FutureCash, future, err = s.store.FutureCash(ctx, sc, store.Today()); err != nil {
+		return err
+	}
+	v.Cash -= future
 	if v.Balance, err = s.store.BalanceSeries(ctx, sc); err != nil {
 		return err
 	}
@@ -340,8 +371,9 @@ func (s *Server) loadExpenses(ctx context.Context, sc store.Scope, month, budget
 	return err
 }
 
-// loadEmergencyFund fills card 2. Runs after loadExpenses, whose buckets decide
-// how much a month of essentials costs and therefore how long the fund lasts.
+// loadEmergencyFund fills card 2. Runs after this month's bills and the
+// recurring expenses are loaded: they decide how much a month of essentials
+// costs and therefore how long the fund lasts.
 func (s *Server) loadEmergencyFund(ctx context.Context, sc store.Scope, v *dashboardView) error {
 	var err error
 	if v.EmergencyFund, err = s.store.EmergencyFund(ctx, sc); err != nil {
@@ -351,7 +383,10 @@ func (s *Server) loadEmergencyFund(ctx context.Context, sc store.Scope, v *dashb
 	if err != nil {
 		return err
 	}
-	v.Runway = insight.AssessEmergencyFund(v.EmergencyFund, withdrawals, store.EssentialCost(v.Buckets))
+	// This month's essentials, including essential automatic expenses that
+	// are not tied to a bill -- not the selected month's.
+	v.Runway = insight.AssessEmergencyFund(v.EmergencyFund, withdrawals,
+		store.EssentialMonthly(v.NowBuckets, v.RecurringExpenses))
 	return nil
 }
 

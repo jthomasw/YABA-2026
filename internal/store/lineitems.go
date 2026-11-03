@@ -209,10 +209,10 @@ func (s *Store) CategoryBreakdown(ctx context.Context, sc Scope, month string) (
 	args := append(spendingArgs(sc), span...)
 
 	rows, err := s.db.QueryContext(ctx, spendingCTE+`
-		SELECT category, SUM(amount) AS total
+		SELECT MIN(category), SUM(amount) AS total
 		FROM spending
 		WHERE 1 = 1`+clause+`
-		GROUP BY category
+		GROUP BY LOWER(category)
 		ORDER BY total DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("category breakdown: %w", err)

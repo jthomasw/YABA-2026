@@ -63,6 +63,7 @@
     {{if .Role.CanManageHousehold}}
     <form method="POST" action="/household/rename" class="row-form">
       {{template "csrf" .}}
+<input type="hidden" name="form_household" value="{{$.HouseholdID}}">
       <div class="field">
         <label for="hh-name">Budget name</label>
         <input id="hh-name" name="name" type="text" required maxlength="60"
@@ -103,6 +104,7 @@
               {{if $.Role.CanManageMembers}}
               <form method="POST" action="/household/members/{{.UserID}}/role" class="inline-form">
                 {{template "csrf" $}}
+<input type="hidden" name="form_household" value="{{$.HouseholdID}}">
                 <label class="visually-hidden" for="role-{{.UserID}}">Access for {{.Name}}</label>
                 <select id="role-{{.UserID}}" name="role" data-autosubmit>
                   {{$current := .Role}}
@@ -128,6 +130,7 @@
                     class="inline-form danger-form"
                     data-confirm="Make {{.Name}} the owner of this budget? You become an editor, so you will no longer be able to move savings or manage members.">
                 {{template "csrf" $}}
+<input type="hidden" name="form_household" value="{{$.HouseholdID}}">
                 <button type="submit" class="btn btn-small btn-quiet">Make owner</button>
               </form>
               {{end}}
@@ -135,6 +138,7 @@
                     class="inline-form danger-form"
                     data-confirm="Remove {{.Name}} from this budget? Anything they entered stays.">
                 {{template "csrf" $}}
+<input type="hidden" name="form_household" value="{{$.HouseholdID}}">
                 <button type="submit" class="btn btn-small btn-danger">Remove</button>
               </form>
               {{end}}
@@ -170,6 +174,7 @@
 
     <form method="POST" action="/household/invite" class="row-form" novalidate>
       {{template "csrf" .}}
+<input type="hidden" name="form_household" value="{{$.HouseholdID}}">
       <div class="field">
         <label for="invite-email">Email address</label>
         <input id="invite-email" name="email" type="email" required
@@ -213,12 +218,14 @@
         <span class="invite-actions">
           <form method="POST" action="/household/invites/{{.ID}}/resend" class="inline-form">
             {{template "csrf" $}}
+<input type="hidden" name="form_household" value="{{$.HouseholdID}}">
             <button type="submit" class="btn btn-small {{if .Expired}}btn-primary{{else}}btn-quiet{{end}}">
               {{if .Expired}}Send again{{else}}Resend{{end}}
             </button>
           </form>
           <form method="POST" action="/household/invites/{{.ID}}/revoke" class="inline-form">
             {{template "csrf" $}}
+<input type="hidden" name="form_household" value="{{$.HouseholdID}}">
             <button type="submit" class="btn btn-small btn-quiet">Withdraw</button>
           </form>
         </span>
@@ -265,6 +272,7 @@
       <form method="POST" action="/household/leave" class="inline-form danger-form"
             data-confirm="Leave {{.Household}}? You will lose access to it.">
         {{template "csrf" .}}
+<input type="hidden" name="form_household" value="{{$.HouseholdID}}">
         <button type="submit" class="btn btn-quiet">Leave</button>
       </form>
     </div>
@@ -281,6 +289,7 @@
       <form method="POST" action="/household/delete" class="inline-form danger-form"
             data-confirm="Permanently delete {{.Household}} and everything in it, for every member? This cannot be undone.">
         {{template "csrf" .}}
+<input type="hidden" name="form_household" value="{{$.HouseholdID}}">
         <button type="submit" class="btn btn-danger">Delete budget</button>
       </form>
     </div>

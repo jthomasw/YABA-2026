@@ -140,6 +140,11 @@ func (b Bucket) NextDueDate() string {
 	return nextMonthlyDue(b.DueDay, Today())
 }
 
+// NextMonthlyDue is nextMonthlyDue for callers outside the package: the first
+// date on or after from (YYYY-MM-DD) that is day `day` of its month, clamped
+// to the month's last day; "" for no day.
+func NextMonthlyDue(day int, from string) string { return nextMonthlyDue(day, from) }
+
 // nextMonthlyDue returns the first date on or after today that is day `day`
 // of its month, clamped to the month's last day ("the 31st" is 30 November).
 func nextMonthlyDue(day int, today string) string {
@@ -206,15 +211,58 @@ func (s *Store) UpdateBucket(ctx context.Context, sc Scope, bucketID int64, n Ne
 }
 
 // ArchiveBucket retires a bucket without deleting it.
+//
+// Automatic expenses that were paying towards it are detached in the same
+// transaction: they keep running, but no longer charge every new payment to a
+// bill that has been removed (and that no form can select any more).
 func (s *Store) ArchiveBucket(ctx context.Context, sc Scope, bucketID int64) error {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE expense_buckets SET archived_at = ?
-		 WHERE id = ? AND household_id = ? AND archived_at IS NULL`,
-		time.Now().UTC().Format(time.RFC3339), bucketID, sc.HouseholdID)
-	if err != nil {
-		return fmt.Errorf("archive bucket: %w", err)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE expense_buckets SET archived_at = ?
+			 WHERE id = ? AND household_id = ? AND archived_at IS NULL`,
+			time.Now().UTC().Format(time.RFC3339), bucketID, sc.HouseholdID)
+		if err != nil {
+			return fmt.Errorf("archive bucket: %w", err)
+		}
+		if err := requireOneRow(res); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE recurring_expense SET bucket_id = NULL
+			 WHERE bucket_id = ? AND household_id = ?`, bucketID, sc.HouseholdID); err != nil {
+			return fmt.Errorf("detach schedules from archived bucket: %w", err)
+		}
+		return nil
+	})
+}
+
+// BucketOptionsKeeping is BucketOptions plus, when keepID names a bill of
+// this household that has since been removed, that bill too -- labelled
+// "(removed)" -- so editing an expense linked to it shows and keeps the link
+// instead of quietly falling back to "Nothing recurring".
+func (s *Store) BucketOptionsKeeping(ctx context.Context, sc Scope, keepID int64) ([]Bucket, error) {
+	out, err := s.BucketOptions(ctx, sc)
+	if err != nil || keepID <= 0 {
+		return out, err
 	}
-	return requireOneRow(res)
+	for _, b := range out {
+		if b.ID == keepID {
+			return out, nil
+		}
+	}
+	var b Bucket
+	err = s.db.QueryRowContext(ctx,
+		`SELECT id, name FROM expense_buckets
+		 WHERE id = ? AND household_id = ? AND archived_at IS NOT NULL`,
+		keepID, sc.HouseholdID).Scan(&b.ID, &b.Name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("removed bucket option: %w", err)
+	}
+	b.Name += " (removed)"
+	return append(out, b), nil
 }
 
 // MoveBucket shifts a bucket one place up or down.
@@ -451,6 +499,28 @@ func (s *Store) BucketOptions(ctx context.Context, sc Scope) ([]Bucket, error) {
 		out = append(out, b)
 	}
 	return out, rows.Err()
+}
+
+// EssentialMonthly is what a month of essential spending costs, which is what
+// the emergency fund's target is measured in: every essential monthly bill,
+// plus every active essential automatic expense that is not already paying
+// towards one of those bills (that one is counted through the bill), at its
+// average monthly cost.
+//
+// EssentialCost alone left out an essential schedule with no bill -- an
+// essential $500/month insurance payment gave "no essential expenses marked".
+func EssentialMonthly(buckets []Bucket, schedules []RecurringExpense) Cents {
+	total := EssentialCost(buckets)
+	billed := make(map[int64]bool, len(buckets))
+	for _, b := range buckets {
+		billed[b.ID] = true
+	}
+	for _, r := range schedules {
+		if r.Active && r.Essential && !billed[r.BucketRef()] {
+			total += r.MonthlyEquivalent()
+		}
+	}
+	return total
 }
 
 // EssentialCost sums the monthly requirement of every bucket tagged essential,

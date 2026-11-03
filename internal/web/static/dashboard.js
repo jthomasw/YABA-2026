@@ -36,6 +36,11 @@
       // Record the tab in the URL fragment so a reload, a bookmark, or a
       // redirect from a fund action lands back on the right section.
       var id = tab.getAttribute("aria-controls").replace(/^panel-/, "");
+      // And in the Period form, which submits ?tab= and drops the fragment:
+      // changing the Period used to jump back to the tab the page was first
+      // drawn with.
+      var periodTab = document.querySelector('.period-form input[name="tab"]');
+      if (periodTab) periodTab.value = id;
       if (history.replaceState) {
         history.replaceState(null, "", "#" + id);
       }

@@ -512,7 +512,7 @@ func (s *Server) handleTransactionForm(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	if v.Buckets, err = s.store.BucketOptions(r.Context(), sc); err != nil {
+	if v.Buckets, err = s.store.BucketOptionsKeeping(r.Context(), sc, v.BucketID); err != nil {
 		s.serverError(w, r, err)
 		return
 	}
@@ -871,6 +871,15 @@ func (s *Server) handleTransactionUpdate(w http.ResponseWriter, r *http.Request)
 	// dashboard's headline spend and its own category chart disagreeing with
 	// nothing in the schema to catch it.
 	err := s.store.UpdateWithItems(r.Context(), sc, id, in.toNewTransaction(), in.items)
+	if errors.Is(err, store.ErrNotFound) && wasOn != "" {
+		// The entry exists, so what is missing is the bill it was pointed at:
+		// removed since the page was opened. Say so and keep what was typed,
+		// rather than a bare 404.
+		s.rerenderTransactionFormAt(w, r, in,
+			"That monthly bill has been removed. Choose another under Pays towards, or none. Nothing was saved.",
+			true, id, in.version)
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -1009,7 +1018,11 @@ func (s *Server) rerenderTransactionFormAt(w http.ResponseWriter, r *http.Reques
 	if cats, err := s.store.SpendCategories(r.Context(), sc); err == nil {
 		v.Categories = cats
 	}
-	if buckets, err := s.store.BucketOptions(r.Context(), sc); err == nil {
+	keep := int64(0)
+	if editing {
+		keep = v.BucketID
+	}
+	if buckets, err := s.store.BucketOptionsKeeping(r.Context(), sc, keep); err == nil {
 		v.Buckets = buckets
 	}
 

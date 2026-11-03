@@ -52,6 +52,38 @@ func (s *Store) ConsumeFormToken(ctx context.Context, userID int64, token string
 	return true, nil
 }
 
+// ClaimFormToken spends a token for a submission, reporting whether this
+// submission is the first to use it. Unlike ConsumeFormToken it does not care
+// how old the token is: a form left open overnight is still a first
+// submission, and is claimed (saved), not refused. A token that is no longer
+// on file -- swept away after FormTokenTTL -- is recorded as used on the spot,
+// so the same form submitted again is still recognised as a duplicate.
+// Atomic, so two submissions racing each other cannot both claim it.
+func (s *Store) ClaimFormToken(ctx context.Context, userID int64, token string) (bool, error) {
+	if strings.TrimSpace(token) == "" {
+		return true, nil
+	}
+	var got string
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO form_tokens(token, user_id, purpose, used_at)
+		VALUES (?, ?, 'late', datetime('now'))
+		ON CONFLICT(token) DO UPDATE SET used_at = datetime('now')
+			WHERE form_tokens.user_id = excluded.user_id AND form_tokens.used_at IS NULL
+		RETURNING token`, token, userID).Scan(&got)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("claim form token: %w", err)
+	}
+	return true, nil
+}
+
+// spentTokenKeep is how long a used token is remembered, so a form resubmitted
+// days later (the browser's Back button, a restored tab) is still recognised
+// as already saved. Unused tokens go after FormTokenTTL.
+const spentTokenKeep = 7 * 24 * time.Hour
+
 // RestoreFormToken makes a token usable again when the change it guarded was
 // refused before anything was committed.  It is deliberately only used before
 // the first successful write; once a row exists, the token stays spent.
@@ -68,11 +100,14 @@ func (s *Store) RestoreFormToken(ctx context.Context, userID int64, token string
 	return nil
 }
 
-// PurgeOldFormTokens drops tokens for forms nobody ever submitted.
+// PurgeOldFormTokens drops tokens for forms nobody submitted in time, and
+// spent tokens once they are too old to matter.
 func (s *Store) PurgeOldFormTokens(ctx context.Context) (int64, error) {
-	age := ago(FormTokenTTL)
-	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM form_tokens WHERE created_at <= datetime('now', ?)`, age)
+	res, err := s.db.ExecContext(ctx, `
+		DELETE FROM form_tokens
+		WHERE (used_at IS NULL     AND created_at <= datetime('now', ?))
+		   OR (used_at IS NOT NULL AND used_at    <= datetime('now', ?))`,
+		ago(FormTokenTTL), ago(spentTokenKeep))
 	if err != nil {
 		return 0, fmt.Errorf("purge form tokens: %w", err)
 	}

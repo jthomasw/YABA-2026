@@ -13,11 +13,13 @@ func join(t *testing.T, st *store.Store, owner store.Scope, hh int64, email stri
 	t.Helper()
 	ctx := context.Background()
 	u := newSecondUser(t, st, email)
-	if err := st.InviteMember(ctx, hh, owner.UserID, email, store.RoleEditor); err != nil {
+	inviteTok, err := st.InviteMember(ctx, hh, owner.UserID, email, store.RoleEditor)
+	_ = inviteTok
+	if err != nil {
 		t.Fatalf("invite: %v", err)
 	}
 	inv, _ := st.InvitesFor(ctx, u.UserID, email)
-	if err := st.AcceptInvite(ctx, inv[0].ID, u.UserID, email); err != nil {
+	if err := st.AcceptInvite(ctx, inv[0].ID, u.UserID, email, inviteTok); err != nil {
 		t.Fatalf("accept: %v", err)
 	}
 	if role != store.RoleEditor {

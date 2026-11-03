@@ -335,10 +335,17 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID int
 	// with no sid and every new account bounced straight back to the login page.
 	// Every pre-login value is cleared, which is the rotation New provided.
 	session, _ := s.sessions.Get(r, sessionName)
+	// An invitation link opened before signing in is the one value carried
+	// over: it is proof of a mailbox, not of an identity, and AcceptInvite
+	// still requires the invited address to match the account.
+	proof, _ := session.Values[sessionInviteProof].(string)
 	for k := range session.Values {
 		delete(session.Values, k)
 	}
 	session.Values[sessionID] = sid
+	if proof != "" {
+		session.Values[sessionInviteProof] = proof
+	}
 	if tok, err := randomToken(32); err == nil {
 		session.Values[sessionCSRFToken] = tok
 	} else {
@@ -527,12 +534,16 @@ func (s *Server) duplicateSubmit(w http.ResponseWriter, r *http.Request, userID 
 	if tok == "" {
 		return false
 	}
-	used, err := s.store.ConsumeFormToken(r.Context(), userID, tok)
+	// Claimed means this is the first submission of this form, however long
+	// it sat open; anything else means the entry was already saved. It used to
+	// treat an expired token as "already saved" too, and a form left open
+	// overnight was answered with a success message and nothing stored.
+	claimed, err := s.store.ClaimFormToken(r.Context(), userID, tok)
 	if err != nil {
-		s.serverError(w, r, fmt.Errorf("consume form token: %w", err))
+		s.serverError(w, r, fmt.Errorf("claim form token: %w", err))
 		return true
 	}
-	if !used {
+	if !claimed {
 		s.redirectSuccess(w, r, to, msg)
 		return true
 	}
@@ -571,6 +582,24 @@ func retryPhrase(d time.Duration) string {
 	default:
 		return fmt.Sprintf("in %d minutes", minutes)
 	}
+}
+
+// currentUser is the signed-in user for a page that does not require one, and
+// whether there is one.
+func (s *Server) currentUser(r *http.Request) (store.User, bool) {
+	session, err := s.sessions.Get(r, sessionName)
+	if err != nil {
+		return store.User{}, false
+	}
+	sid, ok := session.Values[sessionID].(string)
+	if !ok || sid == "" {
+		return store.User{}, false
+	}
+	u, err := s.store.SessionUser(r.Context(), sid)
+	if err != nil {
+		return store.User{}, false
+	}
+	return u, true
 }
 
 func (s *Server) signedIn(r *http.Request) bool {

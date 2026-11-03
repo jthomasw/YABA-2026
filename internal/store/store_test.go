@@ -920,7 +920,9 @@ func TestInvitationExpiresAfter24Hours(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create household: %v", err)
 	}
-	if err := st.InviteMember(ctx, shared, sc.UserID, "guest@example.com", store.RoleEditor); err != nil {
+	inviteTok, err := st.InviteMember(ctx, shared, sc.UserID, "guest@example.com", store.RoleEditor)
+	_ = inviteTok
+	if err != nil {
 		t.Fatalf("invite: %v", err)
 	}
 
@@ -950,7 +952,7 @@ func TestInvitationExpiresAfter24Hours(t *testing.T) {
 
 	// And accepting it is refused with a distinguishable error, so the page can
 	// say "expired, ask for another" rather than "no longer available".
-	err = st.AcceptInvite(ctx, mine[0].ID, guest.UserID, "guest@example.com")
+	err = st.AcceptInvite(ctx, mine[0].ID, guest.UserID, "guest@example.com", inviteTok)
 	if !errors.Is(err, store.ErrInviteExpired) {
 		t.Errorf("accept returned %v, want ErrInviteExpired", err)
 	}
@@ -963,7 +965,9 @@ func TestOwnerStillSeesAnExpiredInvitation(t *testing.T) {
 	ctx := context.Background()
 
 	shared, _ := st.CreateSharedHousehold(ctx, sc.UserID, "Flat 4B")
-	if err := st.InviteMember(ctx, shared, sc.UserID, "guest@example.com", store.RoleViewer); err != nil {
+	inviteTok, err := st.InviteMember(ctx, shared, sc.UserID, "guest@example.com", store.RoleViewer)
+	_ = inviteTok
+	if err != nil {
 		t.Fatalf("invite: %v", err)
 	}
 	pending, err := st.PendingInvites(ctx, shared)
@@ -989,13 +993,15 @@ func TestResendGivesAnotherWindow(t *testing.T) {
 	ctx := context.Background()
 
 	shared, _ := st.CreateSharedHousehold(ctx, sc.UserID, "Flat 4B")
-	if err := st.InviteMember(ctx, shared, sc.UserID, "guest@example.com", store.RoleEditor); err != nil {
+	inviteTok, err := st.InviteMember(ctx, shared, sc.UserID, "guest@example.com", store.RoleEditor)
+	_ = inviteTok
+	if err != nil {
 		t.Fatalf("invite: %v", err)
 	}
 	pending, _ := st.PendingInvites(ctx, shared)
 	expireInvite(t, st, pending[0].ID)
 
-	inv, err := st.ResendInvite(ctx, shared, pending[0].ID)
+	inv, _, err := st.ResendInvite(ctx, shared, pending[0].ID)
 	if err != nil {
 		t.Fatalf("resend: %v", err)
 	}
@@ -1011,7 +1017,7 @@ func TestResendGivesAnotherWindow(t *testing.T) {
 
 	// A household cannot refresh an invitation belonging to another.
 	other, _ := st.CreateSharedHousehold(ctx, sc.UserID, "Somewhere else")
-	if _, err := st.ResendInvite(ctx, other, pending[0].ID); !errors.Is(err, store.ErrNotFound) {
+	if _, _, err := st.ResendInvite(ctx, other, pending[0].ID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("resend crossed a household boundary: %v", err)
 	}
 }
@@ -1281,11 +1287,13 @@ func TestTransferOwnershipIsAtomic(t *testing.T) {
 
 	shared, _ := st.CreateSharedHousehold(ctx, sc.UserID, "Flat 4B")
 	guest := newSecondUser(t, st, "guest@example.com")
-	if err := st.InviteMember(ctx, shared, sc.UserID, "guest@example.com", store.RoleEditor); err != nil {
+	inviteTok, err := st.InviteMember(ctx, shared, sc.UserID, "guest@example.com", store.RoleEditor)
+	_ = inviteTok
+	if err != nil {
 		t.Fatalf("invite: %v", err)
 	}
 	invites, _ := st.InvitesFor(ctx, guest.UserID, "guest@example.com")
-	if err := st.AcceptInvite(ctx, invites[0].ID, guest.UserID, "guest@example.com"); err != nil {
+	if err := st.AcceptInvite(ctx, invites[0].ID, guest.UserID, "guest@example.com", inviteTok); err != nil {
 		t.Fatalf("accept: %v", err)
 	}
 
@@ -1320,11 +1328,13 @@ func TestOnlyAnOwnerCanTransfer(t *testing.T) {
 
 	shared, _ := st.CreateSharedHousehold(ctx, sc.UserID, "Flat 4B")
 	guest := newSecondUser(t, st, "guest@example.com")
-	if err := st.InviteMember(ctx, shared, sc.UserID, "guest@example.com", store.RoleEditor); err != nil {
+	inviteTok, err := st.InviteMember(ctx, shared, sc.UserID, "guest@example.com", store.RoleEditor)
+	_ = inviteTok
+	if err != nil {
 		t.Fatal(err)
 	}
 	invites, _ := st.InvitesFor(ctx, guest.UserID, "guest@example.com")
-	st.AcceptInvite(ctx, invites[0].ID, guest.UserID, "guest@example.com")
+	st.AcceptInvite(ctx, invites[0].ID, guest.UserID, "guest@example.com", inviteTok)
 
 	// The editor tries to take it.
 	if err := st.TransferOwnership(ctx, shared, guest.UserID, guest.UserID); err == nil {
@@ -1605,14 +1615,16 @@ func TestMembershipChangesAreRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.InviteMember(ctx, hh, alice.UserID, "bob@example.com", store.RoleEditor); err != nil {
+	inviteTok, err := st.InviteMember(ctx, hh, alice.UserID, "bob@example.com", store.RoleEditor)
+	_ = inviteTok
+	if err != nil {
 		t.Fatalf("invite: %v", err)
 	}
 	invites, err := st.InvitesFor(ctx, bobID, "bob@example.com")
 	if err != nil || len(invites) != 1 {
 		t.Fatalf("invites: %v (%d)", err, len(invites))
 	}
-	if err := st.AcceptInvite(ctx, invites[0].ID, bobID, "bob@example.com"); err != nil {
+	if err := st.AcceptInvite(ctx, invites[0].ID, bobID, "bob@example.com", inviteTok); err != nil {
 		t.Fatalf("accept: %v", err)
 	}
 	if err := st.SetRole(ctx, hh, alice.UserID, bobID, store.RoleViewer); err != nil {

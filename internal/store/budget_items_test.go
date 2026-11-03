@@ -85,8 +85,10 @@ func TestBudgetsAndBreakdownCountLineItemsTheSameWay(t *testing.T) {
 		got[lt.Label] = lt.Total
 		sum += lt.Total
 	}
+	// "food" typed in lower case is the same category as "Food", as it is for
+	// the budget above: one slice, under the capitalised spelling.
 	wantBreakdown := map[string]money.Cents{
-		"Food": 6000, "food": 1000, "Household": 2500, "Costco": 1500, store.Uncategorised: 700,
+		"Food": 7000, "Household": 2500, "Costco": 1500, store.Uncategorised: 700,
 	}
 	if len(got) != len(wantBreakdown) {
 		t.Errorf("breakdown = %+v, want %v", breakdown, wantBreakdown)

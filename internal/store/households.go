@@ -153,7 +153,22 @@ type Invite struct {
 	// that has happened.
 	ExpiresAt string
 	Expired   bool
+
+	// TokenHash is the hash of the secret emailed with the invitation, or ""
+	// for one sent before invitations had one. Accepting needs that secret
+	// (see AcceptInvite); it is never shown.
+	TokenHash string
+
+	// NeedsLink is set by the web layer for the invitation banner: true when
+	// this browser has not opened the invitation's email link yet, so it shows
+	// how to accept instead of an Accept button.
+	NeedsLink bool
 }
+
+// ErrInviteNeedsLink refuses to accept an invitation without the secret from
+// its email: owning an account with the invited address is not proof of owning
+// the mailbox, since nothing verifies an address at sign-up.
+var ErrInviteNeedsLink = errors.New("open the link in the invitation email to accept")
 
 // ── creating households ───────────────────────────────────────────────────────
 
@@ -633,16 +648,22 @@ var inviteTTLModifier = after(InviteTTL)
 // ErrInviteExpired is returned when an invitation is real but too old to use.
 var ErrInviteExpired = errors.New("invitation expired")
 
-func (s *Store) InviteMember(ctx context.Context, householdID, invitedBy int64, email string, role Role) error {
+// InviteMember creates an invitation and returns its secret, which belongs in
+// the link emailed to the invited address; only its hash is stored.
+func (s *Store) InviteMember(ctx context.Context, householdID, invitedBy int64, email string, role Role) (string, error) {
 	email = NormalizeEmail(email)
 	if email == "" {
-		return fmt.Errorf("enter an email address")
+		return "", fmt.Errorf("enter an email address")
 	}
 	if role != RoleEditor && role != RoleViewer {
-		return fmt.Errorf("invite someone as an editor or a viewer")
+		return "", fmt.Errorf("invite someone as an editor or a viewer")
+	}
+	token, err := newSessionID()
+	if err != nil {
+		return "", err
 	}
 
-	return s.inTx(ctx, func(tx *sql.Tx) error {
+	return token, s.inTx(ctx, func(tx *sql.Tx) error {
 		// Already in? Say so plainly rather than creating an invitation that
 		// could never be accepted.
 		var n int
@@ -659,9 +680,9 @@ func (s *Store) InviteMember(ctx context.Context, householdID, invitedBy int64, 
 		}
 
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO household_invites(household_id, email, role, invited_by, expires_at)
-			VALUES(?, ?, ?, ?, datetime('now', ?))`,
-			householdID, email, role, invitedBy, inviteTTLModifier)
+			INSERT INTO household_invites(household_id, email, role, invited_by, expires_at, token_hash)
+			VALUES(?, ?, ?, ?, datetime('now', ?), ?)`,
+			householdID, email, role, invitedBy, inviteTTLModifier, TokenHash(token))
 		if err != nil {
 			// idx_invites_open is partial on status='pending', so this can only
 			// mean an unanswered invitation already exists.
@@ -704,14 +725,20 @@ func (s *Store) PendingInvites(ctx context.Context, householdID int64) ([]Invite
 }
 
 // ResendInvite gives an unanswered invitation another 24 hours.
-func (s *Store) ResendInvite(ctx context.Context, householdID, inviteID int64) (Invite, error) {
+// ResendInvite gives an invitation another InviteTTL and a fresh secret,
+// returned for the new email; the link in the old one stops working.
+func (s *Store) ResendInvite(ctx context.Context, householdID, inviteID int64) (Invite, string, error) {
 	var inv Invite
-	err := s.inTx(ctx, func(tx *sql.Tx) error {
+	token, err := newSessionID()
+	if err != nil {
+		return inv, "", err
+	}
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `
 			UPDATE household_invites
-			SET expires_at = datetime('now', ?)
+			SET expires_at = datetime('now', ?), token_hash = ?
 			WHERE id = ? AND household_id = ? AND status = 'pending'`,
-			inviteTTLModifier, inviteID, householdID)
+			inviteTTLModifier, TokenHash(token), inviteID, householdID)
 		if err != nil {
 			return fmt.Errorf("extend invite: %w", err)
 		}
@@ -726,7 +753,30 @@ func (s *Store) ResendInvite(ctx context.Context, householdID, inviteID int64) (
 		).Scan(&inv.ID, &inv.HouseholdID, &inv.HouseholdName, &inv.Email,
 			&inv.Role, &inv.ExpiresAt)
 	})
-	return inv, err
+	return inv, token, err
+}
+
+// InviteByToken finds the unanswered, unexpired invitation an emailed secret
+// belongs to.
+func (s *Store) InviteByToken(ctx context.Context, token string) (Invite, error) {
+	var inv Invite
+	if strings.TrimSpace(token) == "" {
+		return inv, ErrNotFound
+	}
+	err := s.db.QueryRowContext(ctx, `
+		SELECT i.id, i.household_id, h.name, i.email, i.role, IFNULL(i.expires_at, ''), i.token_hash
+		FROM household_invites i
+		JOIN households h ON h.id = i.household_id
+		WHERE i.token_hash = ? AND i.status = 'pending' AND i.expires_at > datetime('now')`,
+		TokenHash(token)).Scan(&inv.ID, &inv.HouseholdID, &inv.HouseholdName, &inv.Email,
+		&inv.Role, &inv.ExpiresAt, &inv.TokenHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return inv, ErrNotFound
+	}
+	if err != nil {
+		return inv, fmt.Errorf("find invitation: %w", err)
+	}
+	return inv, nil
 }
 
 // TestOnlyExpireInvite ages an invitation past its window. It is for tests
@@ -761,7 +811,7 @@ func (s *Store) InvitesFor(ctx context.Context, userID int64, email string) ([]I
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.household_id, h.name, i.role, i.created_at,
 		       IFNULL(NULLIF(u.display_name, ''), IFNULL(u.email, '')),
-		       IFNULL(i.expires_at, '')
+		       IFNULL(i.expires_at, ''), IFNULL(i.token_hash, '')
 		FROM household_invites i
 		JOIN households h ON h.id = i.household_id
 		LEFT JOIN users u ON u.id = i.invited_by
@@ -783,7 +833,7 @@ func (s *Store) InvitesFor(ctx context.Context, userID int64, email string) ([]I
 	for rows.Next() {
 		var i Invite
 		if err := rows.Scan(&i.ID, &i.HouseholdID, &i.HouseholdName, &i.Role,
-			&i.CreatedAt, &i.InvitedBy, &i.ExpiresAt); err != nil {
+			&i.CreatedAt, &i.InvitedBy, &i.ExpiresAt, &i.TokenHash); err != nil {
 			return nil, err
 		}
 		i.Email = NormalizeEmail(email)
@@ -794,17 +844,24 @@ func (s *Store) InvitesFor(ctx context.Context, userID int64, email string) ([]I
 
 // AcceptInvite turns an invitation into a membership and switches the user into the
 // household.
-func (s *Store) AcceptInvite(ctx context.Context, inviteID, userID int64, email string) error {
+//
+// proof is the secret from the invitation's email link. It is required for
+// every invitation that has one: an account with the invited address is not
+// proof of owning that mailbox, so without it whoever registered the address
+// first -- or a typo of it -- could join the budget.
+func (s *Store) AcceptInvite(ctx context.Context, inviteID, userID int64, email, proof string) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		var householdID int64
 		var role Role
 		var expired bool
+		var tokenHash string
 		err := tx.QueryRowContext(ctx, `
 			SELECT household_id, role,
-			       expires_at IS NULL OR expires_at <= datetime('now')
+			       expires_at IS NULL OR expires_at <= datetime('now'),
+			       IFNULL(token_hash, '')
 			FROM household_invites
 			WHERE id = ? AND status = 'pending' AND email = ? COLLATE NOCASE`,
-			inviteID, NormalizeEmail(email)).Scan(&householdID, &role, &expired)
+			inviteID, NormalizeEmail(email)).Scan(&householdID, &role, &expired, &tokenHash)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -814,6 +871,9 @@ func (s *Store) AcceptInvite(ctx context.Context, inviteID, userID int64, email 
 		// Checked inside the transaction, not before it.
 		if expired {
 			return ErrInviteExpired
+		}
+		if tokenHash != "" && tokenHash != TokenHash(proof) {
+			return ErrInviteNeedsLink
 		}
 
 		if _, err := tx.ExecContext(ctx, `

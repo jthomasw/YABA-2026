@@ -451,14 +451,16 @@ func (r *testRig) addMember(hh int64, email string, role store.Role) string {
 	if err != nil {
 		r.t.Fatalf("create %s: %v", email, err)
 	}
-	if err := r.store.InviteMember(context.Background(), hh, r.userID, email, role); err != nil {
+	inviteTok, err := r.store.InviteMember(context.Background(), hh, r.userID, email, role)
+	_ = inviteTok
+	if err != nil {
 		r.t.Fatalf("invite %s: %v", email, err)
 	}
 	invites, err := r.store.InvitesFor(context.Background(), uid, email)
 	if err != nil || len(invites) != 1 {
 		r.t.Fatalf("invites for %s: %v (%d found)", email, err, len(invites))
 	}
-	if err := r.store.AcceptInvite(context.Background(), invites[0].ID, uid, email); err != nil {
+	if err := r.store.AcceptInvite(context.Background(), invites[0].ID, uid, email, inviteTok); err != nil {
 		r.t.Fatalf("accept for %s: %v", email, err)
 	}
 	return email
@@ -2044,8 +2046,10 @@ func TestExpiredInvitationSaysSo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rig.store.InviteMember(context.Background(), shared, rig.userID,
-		"guest@example.com", store.RoleEditor); err != nil {
+	inviteTok, err := rig.store.InviteMember(context.Background(), shared, rig.userID,
+		"guest@example.com", store.RoleEditor)
+	_ = inviteTok
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -2652,9 +2656,16 @@ func TestSignupActuallySignsTheUserIn(t *testing.T) {
 		t.Error("finishing setup should show the welcome message on the dashboard")
 	}
 
+	// Opening setup again once the budget has entries goes to the dashboard.
+	if again := rig.do("GET", "/setup", nil); again.Code != http.StatusSeeOther ||
+		again.Header().Get("Location") != "/dashboard" {
+		t.Errorf("/setup after setup: %d -> %q, want 303 -> /dashboard",
+			again.Code, again.Header().Get("Location"))
+	}
+
 	// Replaying the same form cannot add the starting balance twice.
 	rig.do("POST", "/setup", url.Values{
-		"csrf_token":               {rig.csrf("/setup")},
+		"csrf_token":               {rig.csrf("/dashboard")},
 		"form_token":               {formToken[1]},
 		"starting_balance":         {"2500.00"},
 		"expense_count":            {"3"},

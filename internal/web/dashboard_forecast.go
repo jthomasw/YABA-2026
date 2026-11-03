@@ -47,14 +47,8 @@ func forecastBalance(
 	cash := v.Cash.Float()
 	forecast[len(forecast)-1] = &cash
 
-	// Estimate daily spending from the latest month's expenses.
-	monthlySpend := 0.0
-	if len(v.Monthly) > 0 {
-		monthlySpend = v.Monthly[len(v.Monthly)-1].Expense.Float()
-	}
-
-	// Exclude scheduled expenses from the spending baseline.
-	// They will be applied separately on their due dates.
+	// Scheduled expenses are applied on their own dates below, so they are
+	// taken out of the everyday-spending baseline.
 	recurringMonthly := 0.0
 	scheduledBuckets := map[int64]bool{}
 
@@ -74,7 +68,7 @@ func forecastBalance(
 		}
 	}
 
-	for _, b := range v.Buckets {
+	for _, b := range v.NowBuckets {
 		if b.Due > 0 &&
 			b.NextDueDate() != "" &&
 			!scheduledBuckets[b.ID] {
@@ -82,10 +76,17 @@ func forecastBalance(
 		}
 	}
 
-	dailySpending := math.Max(
-		0,
-		monthlySpend-recurringMonthly,
-	) / 30.0
+	// Spending dated later this month is in this month's total but has not
+	// happened; it is applied on its own date below, so it must not also
+	// count towards the pace so far.
+	var futureSpend float64
+	thisMonth := today.Format(store.MonthLayout)
+	for date, net := range v.FutureCash {
+		if len(date) >= 7 && date[:7] == thisMonth && net < 0 {
+			futureSpend += -net.Float()
+		}
+	}
+	dailySpending := dailySpendingEstimate(v.Monthly, today, recurringMonthly, futureSpend)
 
 	// Store expected financial changes by date.
 	changes := map[string]float64{}
@@ -99,7 +100,7 @@ func forecastBalance(
 		addOccurrences(
 			changes,
 			r.NextDueDate,
-			r.StartDate,
+			anchorDay(r.StartDate),
 			r.FrequencyN,
 			r.FrequencyUnit,
 			r.Amount.Float(),
@@ -117,7 +118,7 @@ func forecastBalance(
 		addOccurrences(
 			changes,
 			r.NextDueDate,
-			r.StartDate,
+			anchorDay(r.StartDate),
 			r.FrequencyN,
 			r.FrequencyUnit,
 			-r.Amount.Float(),
@@ -127,27 +128,40 @@ func forecastBalance(
 	}
 
 	// Include manually scheduled bills that aren't already
-	// represented by active recurring expenses.
-	for _, b := range v.Buckets {
+	// represented by active recurring expenses. The first payment is only
+	// what is still owed on it: a bill already paid this month is not taken
+	// off again on its due date. Later months are the full amount, on the
+	// bill's own due day (so a bill due on the 31st lands on the 31st, not
+	// on the 30th it was clamped to in a shorter month).
+	for _, b := range v.NowBuckets {
 		if b.Due <= 0 || scheduledBuckets[b.ID] {
 			continue
 		}
 
-		due := b.NextDueDate()
-		if due == "" {
+		first, owed := nextBillPayment(b, today.Format(store.DateLayout))
+		if first == "" {
 			continue
 		}
+		firstDate, err := time.Parse(store.DateLayout, first)
+		if err != nil {
+			continue
+		}
+		if !firstDate.After(end) {
+			addOccurrences(changes, first, b.DueDay, 1, "month", -owed.Float(), today, firstDate)
+		}
 
-		addOccurrences(
-			changes,
-			due,
-			due,
-			1,
-			"month",
-			-b.Due.Float(),
-			today,
-			end,
-		)
+		next := store.NextMonthlyDue(b.DueDay, firstDate.AddDate(0, 0, 1).Format(store.DateLayout))
+		if next != "" {
+			addOccurrences(changes, next, b.DueDay, 1, "month", -b.Due.Float(), today, end)
+		}
+	}
+
+	// Entries already recorded for a future date: left out of today's cash,
+	// so they are applied on the day they are dated.
+	for date, net := range v.FutureCash {
+		if d, err := time.Parse(store.DateLayout, date); err == nil && d.After(today) && !d.After(end) {
+			changes[date] += net.Float()
+		}
 	}
 
 	// Calculate the predicted balance for each future day.
@@ -263,17 +277,24 @@ func monthlyEquivalent(amount float64, n int, unit string) float64 {
 }
 
 // addOccurrences adds scheduled income or expenses to future dates.
+//
+// An occurrence dated today or earlier has not been recorded yet -- a
+// schedule is posted when it is processed, which advances it past today --
+// so its money is not in today's cash. It is applied tomorrow rather than
+// dropped: a bill due today and still unpaid used to vanish from the
+// forecast. day is the day of the month a monthly schedule is anchored to;
+// 0 means the first due date's own day.
 func addOccurrences(
 	changes map[string]float64,
 	due string,
-	anchor string,
+	day int,
 	n int,
 	unit string,
 	amount float64,
 	start time.Time,
 	end time.Time,
 ) {
-	if n <= 0 {
+	if n <= 0 || amount == 0 {
 		return
 	}
 
@@ -281,15 +302,16 @@ func addOccurrences(
 	if err != nil {
 		return
 	}
-
-	anchorDate, err := time.Parse("2006-01-02", anchor)
-	if err != nil {
-		anchorDate = d
+	if day <= 0 {
+		day = d.Day()
 	}
+	tomorrow := start.AddDate(0, 0, 1).Format("2006-01-02")
 
 	for count := 0; count < 1000 && !d.After(end); count++ {
 		if d.After(start) {
 			changes[d.Format("2006-01-02")] += amount
+		} else {
+			changes[tomorrow] += amount
 		}
 
 		switch unit {
@@ -307,20 +329,102 @@ func addOccurrences(
 			)
 
 			last := target.AddDate(0, 1, -1).Day()
-			day := anchorDate.Day()
-
-			if day > last {
-				day = last
+			on := day
+			if on > last {
+				on = last
 			}
 
 			d = time.Date(
 				target.Year(),
 				target.Month(),
-				day, 0, 0, 0, 0, time.UTC,
+				on, 0, 0, 0, 0, time.UTC,
 			)
 
 		default:
 			return
 		}
 	}
+}
+
+// anchorDay is the day of the month a schedule started on, which its monthly
+// occurrences keep to; 0 when the date cannot be read.
+func anchorDay(start string) int {
+	t, err := time.Parse(store.DateLayout, start)
+	if err != nil {
+		return 0
+	}
+	return t.Day()
+}
+
+// nextBillPayment is when a monthly bill is next paid and how much: its next
+// due date and what is still owed on it this month. A bill already paid in
+// full this month is next paid on next month's due day, in full. "" when the
+// bill has no due day. b must be the current month's bill (Spent is this
+// month's).
+func nextBillPayment(b store.Bucket, today string) (string, store.Cents) {
+	due := b.NextDueDate()
+	if due == "" || b.Due <= 0 || len(today) < 7 {
+		return "", 0
+	}
+	if due[:7] != today[:7] {
+		return due, b.Due // already past this month's day: next month, in full
+	}
+	if owed := b.Due - b.Spent; owed > 0 {
+		return due, owed
+	}
+	// Paid this month: the next payment is next month's.
+	t, err := time.Parse(store.DateLayout, today)
+	if err != nil {
+		return "", 0
+	}
+	firstOfNext := time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+	return store.NextMonthlyDue(b.DueDay, firstOfNext.Format(store.DateLayout)), b.Due
+}
+
+// daysPerMonth is the average month, for turning a monthly amount into a daily one.
+const daysPerMonth = 365.25 / 12
+
+// dailySpendingEstimate is the everyday spending the forecast assumes per day:
+// the average of the last three full months that had any activity, less what
+// is paid on a schedule (applied on its own dates). The current month is not
+// used while there is any history: two days into November, November's
+// spending so far divided by a whole month made the forecast assume almost
+// nothing would be spent. A brand-new account with no full month yet falls
+// back to this month's pace so far.
+func dailySpendingEstimate(monthly []store.MonthPoint, today time.Time, recurringMonthly, futureSpend float64) float64 {
+	if len(monthly) == 0 {
+		return 0
+	}
+	thisMonth := today.Format(store.MonthLayout)
+	complete := monthly
+	var current *store.MonthPoint
+	if last := monthly[len(monthly)-1]; last.Month == thisMonth {
+		complete = monthly[:len(monthly)-1]
+		current = &monthly[len(monthly)-1]
+	}
+
+	// Skip the empty months before the account had any activity.
+	first := len(complete)
+	for i, m := range complete {
+		if m.Income > 0 || m.Expense > 0 {
+			first = i
+			break
+		}
+	}
+	window := complete[first:]
+	if len(window) > 3 {
+		window = window[len(window)-3:]
+	}
+	if len(window) > 0 {
+		var total float64
+		for _, m := range window {
+			total += m.Expense.Float()
+		}
+		return math.Max(0, total/float64(len(window))-recurringMonthly) / daysPerMonth
+	}
+
+	if current == nil || today.Day() <= 0 {
+		return 0
+	}
+	return math.Max(0, current.Expense.Float()-futureSpend-recurringMonthly) / float64(today.Day())
 }

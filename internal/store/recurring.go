@@ -637,6 +637,33 @@ func (r RecurringExpense) BucketRef() int64 {
 	return *r.BucketID
 }
 
+// MonthlyEquivalent is what the schedule costs in an average month: a weekly
+// $50 is about $216.67, every two months $300 is $150. Used to size things
+// measured per month, such as the emergency fund's essentials.
+func (r RecurringExpense) MonthlyEquivalent() Cents {
+	return monthlyEquivalent(r.Amount, r.FrequencyN, r.FrequencyUnit)
+}
+
+// monthlyEquivalent converts an amount paid every n days, weeks or months to
+// an average month, using 365.25/12 days per month.
+func monthlyEquivalent(amount Cents, n int, unit string) Cents {
+	if n <= 0 || amount <= 0 {
+		return 0
+	}
+	var perMonth float64
+	switch unit {
+	case "day":
+		perMonth = float64(amount) * (365.25 / 12) / float64(n)
+	case "week":
+		perMonth = float64(amount) * (365.25 / 12 / 7) / float64(n)
+	case "month":
+		perMonth = float64(amount) / float64(n)
+	default:
+		return 0
+	}
+	return Cents(int64(perMonth + 0.5))
+}
+
 // recurringExpenseSelect is the column list and join shared by every read of
 // recurring_expense, in the order scanRecurringExpense expects.
 const recurringExpenseSelect = `
@@ -935,6 +962,11 @@ func (s *Store) ProcessDueRecurringExpenses(ctx context.Context, sc Scope, asOf 
 // transactions are already committed and next_due_date has moved on, and the
 // month is re-poured again by the next edit or by Recalculate.
 func (s *Store) reallocateTouched(ctx context.Context, sc Scope, months map[string]bool) {
+	// Back-posted months also change what the current month expects to need
+	// (see ReallocateMonthOf), so it is re-poured as well.
+	if len(months) > 0 {
+		months[Today()[:7]] = true
+	}
 	for m := range months {
 		if err := s.Reallocate(ctx, sc, m); err != nil {
 			log.Printf("store: household %d: could not reallocate %s after a recurring catch-up: %v",

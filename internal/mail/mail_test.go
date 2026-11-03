@@ -415,7 +415,7 @@ func TestInvitationNamesTheBudgetAndTheRole(t *testing.T) {
 	m := New(f.config())
 
 	if err := m.Invitation(context.Background(), "someone@example.test",
-		"Household", "", "viewer", 48*time.Hour); err != nil {
+		"Household", "", "viewer", "https://yaba.test/invites/open?token=abc", 48*time.Hour); err != nil {
 		t.Fatalf("invitation: %v", err)
 	}
 	_, data := f.transcript()

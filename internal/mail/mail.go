@@ -311,8 +311,10 @@ func indent(s string) string {
 
 // ── the two messages ──────────────────────────────────────────────────────────
 
-// Invitation tells someone they have been added to a shared budget.
-func (m *Mailer) Invitation(ctx context.Context, to, household, invitedBy, role string,
+// Invitation tells someone they have been invited to a shared budget. link is
+// their personal accept link: opening it is what proves this mailbox is theirs,
+// so it is the only way to accept.
+func (m *Mailer) Invitation(ctx context.Context, to, household, invitedBy, role, link string,
 	expires time.Duration) error {
 	who := invitedBy
 	if strings.TrimSpace(who) == "" {
@@ -323,15 +325,17 @@ func (m *Mailer) Invitation(ctx context.Context, to, household, invitedBy, role 
   Budget:     %s
   Your role:  %s
 
-Sign in with this address to accept:
+To accept, open this link and sign in (or create an account) with this
+email address:
 
   %s
 
-This invitation expires in %s. After that, ask them to send it again.
+The link is just for you. It expires in %s; after that, ask them to send it
+again.
 
 If you weren't expecting this, you can ignore it — nothing has been shared with
 you unless you accept, and your own budget stays private either way.
-`, who, household, roleSentence(role), m.cfg.BaseURL, humanDuration(expires))
+`, who, household, roleSentence(role), link, humanDuration(expires))
 
 	return m.Send(ctx, Message{
 		To:      to,

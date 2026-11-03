@@ -350,6 +350,21 @@ func (s *Store) UpdateWithItems(
 	}
 
 	bucket, err := s.resolveBucket(ctx, sc, n.BucketID)
+	if errors.Is(err, ErrNotFound) && n.BucketID != nil {
+		// A bill removed since this expense was linked to it. Keeping the
+		// link it already has is fine -- the history still belongs to that
+		// bill -- and editing the note must not silently drop it. Only a new
+		// link to a removed bill is refused.
+		var keeps int
+		if qerr := s.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM transactions WHERE id = ? AND household_id = ? AND bucket_id = ?`,
+			id, sc.HouseholdID, *n.BucketID).Scan(&keeps); qerr != nil {
+			return fmt.Errorf("check existing bill link: %w", qerr)
+		}
+		if keeps > 0 {
+			bucket, err = *n.BucketID, nil
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -716,13 +731,16 @@ func (s *Store) Breakdown(ctx context.Context, sc Scope, kind Kind, month string
 		return nil, err
 	}
 
+	// Grouped without regard to case, like category budgets: "Salary" and
+	// "salary" are one source, not two slices. MIN picks the capitalised
+	// spelling to show, since upper case sorts first.
 	q := `
-		SELECT COALESCE(NULLIF(TRIM(label), ''), ?) AS grp,
+		SELECT MIN(COALESCE(NULLIF(TRIM(label), ''), ?)) AS grp,
 		       SUM(amount_cents)
 		FROM transactions
 		WHERE household_id = ? AND kind = ?` + clause
 	args := append([]any{Uncategorised, sc.HouseholdID, string(kind)}, span...)
-	q += ` GROUP BY grp ORDER BY SUM(amount_cents) DESC`
+	q += ` GROUP BY LOWER(COALESCE(NULLIF(TRIM(label), ''), '')) ORDER BY SUM(amount_cents) DESC`
 
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -768,6 +786,36 @@ func (s *Store) EssentialSplit(ctx context.Context, sc Scope, month string) (ess
 type Point struct {
 	Date    string
 	Balance Cents
+}
+
+// FutureCash is the cash effect of entries dated after `after` (YYYY-MM-DD):
+// money recorded now for a day that has not come yet, such as next Friday's
+// paycheck. It returns the net per date and the total. Cash counts these
+// already; the dashboard takes them out of today's balance and adds each one
+// to the forecast on its own day.
+func (s *Store) FutureCash(ctx context.Context, sc Scope, after string) (map[string]Cents, Cents, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT occurred_on, SUM(`+cashSignSQL+`)
+		FROM transactions
+		WHERE household_id = ? AND occurred_on > ?
+		GROUP BY occurred_on`, sc.HouseholdID, after)
+	if err != nil {
+		return nil, 0, fmt.Errorf("future cash: %w", err)
+	}
+	defer rows.Close()
+
+	byDate := map[string]Cents{}
+	var total Cents
+	for rows.Next() {
+		var date string
+		var net int64
+		if err := rows.Scan(&date, &net); err != nil {
+			return nil, 0, fmt.Errorf("scan future cash: %w", err)
+		}
+		byDate[date] = Cents(net)
+		total += Cents(net)
+	}
+	return byDate, total, rows.Err()
 }
 
 // BalanceSeries returns the running cash balance over time, accumulated in SQL with a

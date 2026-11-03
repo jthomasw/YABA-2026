@@ -284,6 +284,14 @@ func (p *GeminiProcessor) Process(ctx context.Context, job store.ReceiptJob) (Dr
 
 	d := toGeminiDraft(extract)
 
+	// The model said it could not read the receipt. Whatever total it still
+	// returned is a guess it disowned, so it is not prefilled, and its own
+	// confidence score is not shown as "very likely right" next to it.
+	if !extract.Legible {
+		d.Amount = 0
+		d.Confidence = 0
+	}
+
 	if !extract.Legible || d.Amount <= 0 {
 		log.Printf("worker: receipt job %d: Gemini could not read a total", job.ID)
 		return d, ErrNeedsReview

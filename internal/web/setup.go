@@ -44,6 +44,18 @@ type setupIncomeView struct {
 }
 
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
+	// First-time setup fills an empty personal budget. Once it has entries
+	// there is nothing to set up, and showing the form again only invites a
+	// second starting balance.
+	needed, err := s.store.SetupNeeded(r.Context(), mustUser(r).ID)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	if !needed {
+		s.redirectSuccess(w, r, "/dashboard", "Your budget is already set up.")
+		return
+	}
 	s.renderSetup(w, r, http.StatusOK, setupView{
 		Expenses:     defaultSetupExpenses(),
 		ExpenseCount: 2,
@@ -213,7 +225,12 @@ func (s *Server) handleSetupSubmit(w http.ResponseWriter, r *http.Request) {
 	if s.duplicateSubmit(w, r, user.ID, "/dashboard", "Welcome to YABA.") {
 		return
 	}
-	if err := s.store.InitializeBudget(r.Context(), scopeOf(r), startingBalance, expenses, incomes); err != nil {
+	err = s.store.InitializeBudget(r.Context(), user.ID, startingBalance, expenses, incomes)
+	switch {
+	case errors.Is(err, store.ErrAlreadySetUp):
+		s.redirectSuccess(w, r, "/dashboard", "Your budget is already set up.")
+		return
+	case err != nil:
 		s.restoreSubmissionToken(r, user.ID)
 		s.serverError(w, r, err)
 		return

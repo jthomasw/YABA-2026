@@ -478,19 +478,9 @@
             <p class="fund-balance">{{money .Balance}}</p>
           </div>
 
-          {{if .HasGoal}}
-          <div class="progress" role="progressbar"
-               aria-valuenow="{{pctInt .Progress}}" aria-valuemin="0" aria-valuemax="100"
-               aria-label="Progress towards {{money .Goal}}">
-            <div class="progress-bar {{if .Complete}}is-complete{{end}}"
-                 style="width: {{pct .Progress}}%"></div>
-          </div>
-          <p class="stat-note">
-            {{pctInt .Progress}}% of {{money .Goal}} · {{money .Remaining}} to go
-          </p>
-          {{end}}
-
-          <p class="projection">{{.Projection.Note}}</p>
+          {{/* No savings-goal bar or "reach it in N months" line here: the
+               emergency fund's target is the months-of-essentials figure above,
+               and a separate dollar goal with a deadline contradicted it. */}}
 
           {{if $.Role.CanMoveFunds}}
           <div class="fund-actions">
@@ -526,15 +516,19 @@
                 <label for="fname-{{.ID}}">Name</label>
                 <input id="fname-{{.ID}}" name="name" type="text" value="{{.Name}}" maxlength="40">
               </div>
+              {{/* The emergency fund's target is a number of months of essential
+                   expenses, and the dollar figure follows from it. It used to
+                   show a savings fund's "Target" and "Within (months)", and the
+                   deadline typed there was read as months of essentials: 24
+                   months to save $5,000 became a target of 24 months' bills.
+                   An empty goal clears any old dollar target. */}}
+              <input type="hidden" name="goal" value="">
               <div class="field">
-                <label for="fgoal-{{.ID}}">Target</label>
-                <input id="fgoal-{{.ID}}" name="goal" type="number" step="0.01" min="0"
-                       inputmode="decimal" value="{{amount .Goal}}">
-              </div>
-              <div class="field">
-                <label for="fmon-{{.ID}}">Within (months)</label>
-                <input id="fmon-{{.ID}}" name="target_months" type="number" min="0" max="600"
-                       value="{{.TargetMonths}}">
+                <label for="fmon-{{.ID}}">Months of essential expenses to aim for</label>
+                <input id="fmon-{{.ID}}" name="target_months" type="number" min="1" max="24"
+                       inputmode="numeric"
+                       value="{{if .TargetMonths}}{{.TargetMonths}}{{else}}3{{end}}">
+                <p class="hint">Three to six months is the usual advice.</p>
               </div>
               <button type="submit" class="btn btn-small btn-primary">Save</button>
             </form>

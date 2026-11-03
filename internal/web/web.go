@@ -259,24 +259,27 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET  /household", s.authed(s.handleHousehold))
 	mux.Handle("POST /household", s.authed(s.handleHouseholdCreate))
 	mux.Handle("POST /household/switch", s.authed(s.handleHouseholdSwitch))
-	mux.Handle("POST /household/rename", s.canManage(s.handleHouseholdRename))
-	mux.Handle("POST /household/delete", s.canManage(s.handleHouseholdDelete))
-	mux.Handle("POST /household/leave", s.authed(s.handleHouseholdLeave))
-	mux.Handle("POST /household/invite", s.canManage(s.handleInviteCreate))
-	mux.Handle("POST /household/invites/{id}/revoke", s.canManage(s.handleInviteRevoke))
+	mux.Handle("POST /household/rename", s.canManage(s.onShownHousehold(s.handleHouseholdRename)))
+	mux.Handle("POST /household/delete", s.canManage(s.onShownHousehold(s.handleHouseholdDelete)))
+	mux.Handle("POST /household/leave", s.authed(s.onShownHousehold(s.handleHouseholdLeave)))
+	mux.Handle("POST /household/invite", s.canManage(s.onShownHousehold(s.handleInviteCreate)))
+	mux.Handle("POST /household/invites/{id}/revoke", s.canManage(s.onShownHousehold(s.handleInviteRevoke)))
 	// Resending is its own action rather than revoke-then-invite: with a 24-hour
 	// expiry it will be needed often, and two steps that can half-fail is a poor
 	// way to do one thing.
-	mux.Handle("POST /household/invites/{id}/resend", s.canManage(s.handleInviteResend))
-	mux.Handle("POST /household/members/{id}/role", s.canManage(s.handleMemberRole))
-	mux.Handle("POST /household/members/{id}/remove", s.canManage(s.handleMemberRemove))
+	mux.Handle("POST /household/invites/{id}/resend", s.canManage(s.onShownHousehold(s.handleInviteResend)))
+	mux.Handle("POST /household/members/{id}/role", s.canManage(s.onShownHousehold(s.handleMemberRole)))
+	mux.Handle("POST /household/members/{id}/remove", s.canManage(s.onShownHousehold(s.handleMemberRemove)))
 	// Handing over the budget. One action, one transaction: promoting then
 	// demoting by hand leaves the household briefly co-owned, and the reverse
 	// order is blocked outright by the last-owner rule.
-	mux.Handle("POST /household/members/{id}/transfer", s.canManage(s.handleTransferOwnership))
+	mux.Handle("POST /household/members/{id}/transfer", s.canManage(s.onShownHousehold(s.handleTransferOwnership)))
 
 	// Answering an invitation is not scoped to the household being joined -- the user is
 	// not a member of it yet, so canManage would refuse.
+	// The link in an invitation email. Not behind authed: the secret is kept
+	// in this browser first, so it still counts after signing in.
+	mux.HandleFunc("GET  /invites/open", s.handleInviteOpen)
 	mux.Handle("POST /invites/{id}/accept", s.authed(s.handleInviteAccept))
 	mux.Handle("POST /invites/{id}/decline", s.authed(s.handleInviteDecline))
 
@@ -428,6 +431,11 @@ const (
 	sessionCSRFToken = "csrf"
 	sessionFlashText = "flash_text"
 	sessionFlashKind = "flash_kind"
+
+	// sessionInviteProof holds the secret from an invitation's email link once
+	// it has been opened in this browser; it is what lets Accept work. It
+	// survives signing in, so the link can be opened before logging in.
+	sessionInviteProof = "invite_proof"
 )
 
 // userCtxKey is unexported so no other package can plant a user in the context.
@@ -1223,6 +1231,10 @@ func (s *Server) baseView(w http.ResponseWriter, r *http.Request, title, nav str
 		if inv, err := s.store.InvitesFor(r.Context(), u.ID, u.Email); err != nil {
 			log.Printf("baseView: invites for user=%d: %v", u.ID, err)
 		} else {
+			proof := store.TokenHash(s.inviteProof(r))
+			for i := range inv {
+				inv[i].NeedsLink = inv[i].TokenHash != "" && inv[i].TokenHash != proof
+			}
 			v.Invites = inv
 		}
 	}
