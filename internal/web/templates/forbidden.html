@@ -36,7 +36,7 @@
     <p class="notice-lead">{{.Reason}}</p>
 
     <p class="hint">
-      You are {{if eq .Role.Label "Editor"}}an{{else}}a{{end}}
+      You are {{if eq .Role.Label "Viewer"}}a{{else}}an{{end}}
       <strong>{{.Role.Label}}</strong> of <strong>{{.Household}}</strong>.
       {{.Role.Explain}}
     </p>

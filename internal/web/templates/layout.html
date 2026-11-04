@@ -42,6 +42,7 @@
     <button type="button"
         class="theme-toggle"
         id="tutorial-launch"
+        data-can-add-entries="{{if .Role.CanEditEntries}}true{{else}}false{{end}}"
         aria-label="Start YABA Tutorial"
         title="Start YABA Tutorial">
       <span aria-hidden="true">?</span>
@@ -133,15 +134,18 @@
     <p class="invite-text">
       {{with .InvitedBy}}<strong>{{.}}</strong> invited{{else}}You are invited{{end}}
       you to share <strong>{{.HouseholdName}}</strong>
-      as {{if eq .Role.Label "Editor"}}an{{else}}a{{end}} {{.Role.Label}}.
+      as {{if eq .Role.Label "Viewer"}}a{{else}}an{{end}} {{.Role.Label}}.
       <span class="stat-note">{{.Role.Explain}}</span>
     </p>
     <span class="invite-actions">
       {{if .NeedsLink}}
-      {{/* Accepting needs the link from the invitation email: that is what
-           proves the invited mailbox is yours. */}}
+      {{/* This account was created after the invitation, so accepting needs
+           the link from the invitation email: that is what proves the invited
+           mailbox is yours, not just an account registered with its address. */}}
       <span class="stat-note">To accept, open the link in the invitation email.</span>
       {{else}}
+      {{/* Either way works: the button here, or the link in the email. */}}
+      <span class="stat-note">Accept here, or with the link in the invitation email.</span>
       <form method="POST" action="/invites/{{.ID}}/accept" class="inline-form">
         {{template "csrf" $}}
         <button type="submit" class="btn btn-small btn-primary">Accept</button>
@@ -161,7 +165,7 @@
   {{if and .Username (not .Personal)}}
   <p class="hh-context">
     Viewing the shared budget <strong>{{.Household}}</strong> · you are
-    {{if eq .Role.Label "Editor"}}an{{else}}a{{end}} {{.Role.Label}}
+    {{if eq .Role.Label "Viewer"}}a{{else}}an{{end}} {{.Role.Label}}
     · <a href="/household">manage sharing</a>
   </p>
   {{end}}

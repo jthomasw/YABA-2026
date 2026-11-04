@@ -7,6 +7,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (!tutorialButton) return;
 
+    // Whether this user can add income and expenses in the budget that's
+    // open. The header says so (data-can-add-entries); a viewer can't, and the
+    // dashboard doesn't give them the Add buttons the first two steps point
+    // at. Missing attribute (a page cached before this change) means "yes",
+    // and the dashboard is double-checked below once we're on it.
+    let canAddEntries = tutorialButton.dataset.canAddEntries !== "false";
+    if (window.location.pathname === "/dashboard" &&
+        !document.getElementById("tutorial-add-income") &&
+        !document.getElementById("tutorial-add-expense")) {
+        canAddEntries = false;
+    }
+
     // ==========================================
     // 1. Tutorial progress
     // ==========================================
@@ -52,6 +64,16 @@ document.addEventListener("DOMContentLoaded", () => {
         );
     }
 
+    // Ends the tutorial with a short note instead of reloading the page to look
+    // for something that isn't there. Reloading is what used to trap a viewer
+    // in an endless loop: no Add Income button, back to the dashboard, the
+    // dashboard resumes the tutorial, still no button, and round again.
+    function stopTutorial(message) {
+        cleanupTutorial();
+        clearTutorialStep();
+        showInstruction("Tutorial stopped", message);
+    }
+
     // ==========================================
     // 3. Welcome screen
     // ==========================================
@@ -65,11 +87,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <div class="tutorial-welcome-content">
             <h2 id="tutorial-welcome-title">Welcome to YABA!</h2>
 
-            <p>
-                Let's learn how to manage your money using YABA.
-                This interactive tutorial will show you how to
-                add income, record expenses, and understand your dashboard.
-            </p>
+            <p id="tutorial-welcome-intro"></p>
 
             <p>
                 You can skip the tutorial anytime and restart it
@@ -95,6 +113,15 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
         </div>
     `;
+
+    // Text, not markup, so nothing here is ever read as HTML.
+    dialog.querySelector("#tutorial-welcome-intro").textContent = canAddEntries
+        ? "Let's learn how to manage your money using YABA. " +
+          "This interactive tutorial will show you how to " +
+          "add income, record expenses, and understand your dashboard."
+        : "You can view this budget, but only its owner and editors can " +
+          "add income or expenses. This short tour shows you around " +
+          "the dashboard instead.";
 
     document.body.appendChild(dialog);
 
@@ -150,8 +177,18 @@ document.addEventListener("DOMContentLoaded", () => {
         const incomeButton = document.getElementById("tutorial-add-income");
 
         if (!incomeButton) {
-            setTutorialStep("income");
-            window.location.href = "/dashboard";
+            // Not on the dashboard: go there once, and pick up from there.
+            if (window.location.pathname !== "/dashboard") {
+                setTutorialStep("income");
+                window.location.href = "/dashboard";
+                return;
+            }
+            // On the dashboard and still no button: never reload.
+            if (!canAddEntries) {
+                showDashboardOverview();
+            } else {
+                stopTutorial("This step isn't available here. You can start the tutorial again with the ? button.");
+            }
             return;
         }
 
@@ -185,8 +222,16 @@ document.addEventListener("DOMContentLoaded", () => {
         const expenseButton = document.getElementById("tutorial-add-expense");
 
         if (!expenseButton) {
-            setTutorialStep("expense");
-            window.location.href = "/dashboard?tutorial=expense";
+            if (window.location.pathname !== "/dashboard") {
+                setTutorialStep("expense");
+                window.location.href = "/dashboard?tutorial=expense";
+                return;
+            }
+            if (!canAddEntries) {
+                showDashboardOverview();
+            } else {
+                stopTutorial("This step isn't available here. You can start the tutorial again with the ? button.");
+            }
             return;
         }
 
@@ -226,10 +271,15 @@ document.addEventListener("DOMContentLoaded", () => {
         cleanupTutorial();
         setTutorialStep("overview");
 
-        const instruction = showInstruction(
-            "Step 3: Your Dashboard",
-            "Great job! This is your Dashboard, where you can review your income, expenses, and overall budget. You've completed the YABA tutorial!"
-        );
+        const instruction = canAddEntries
+            ? showInstruction(
+                "Step 3: Your Dashboard",
+                "Great job! This is your Dashboard, where you can review your income, expenses, and overall budget. You've completed the YABA tutorial!"
+            )
+            : showInstruction(
+                "Your Dashboard",
+                "This is the Dashboard for the budget you're viewing. The tabs show its current funds, income, expenses and emergency fund, and View Transactions lists every entry. Only the owner and editors can add income or expenses, so those buttons aren't shown to you."
+            );
 
         const finishButton = document.createElement("button");
 
@@ -251,8 +301,13 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("tutorial-start").addEventListener("click", () => {
         dialog.close();
 
-        setTutorialStep("income");
-        highlightIncomeButton();
+        if (canAddEntries) {
+            setTutorialStep("income");
+            highlightIncomeButton();
+        } else {
+            // A viewer skips the two "add" steps they can't do.
+            showDashboardOverview();
+        }
     });
 
     // ==========================================

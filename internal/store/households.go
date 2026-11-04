@@ -159,9 +159,15 @@ type Invite struct {
 	// (see AcceptInvite); it is never shown.
 	TokenHash string
 
+	// AccountPredates is true when the invited person's account already
+	// existed when the invitation was sent. The owner then invited a known
+	// account rather than an address somebody might register afterwards, so
+	// the in-app Accept button is enough (see AcceptInvite).
+	AccountPredates bool
+
 	// NeedsLink is set by the web layer for the invitation banner: true when
-	// this browser has not opened the invitation's email link yet, so it shows
-	// how to accept instead of an Accept button.
+	// accepting needs the invitation's email link -- the account was created
+	// after the invitation and this browser hasn't opened the link yet.
 	NeedsLink bool
 }
 
@@ -811,7 +817,8 @@ func (s *Store) InvitesFor(ctx context.Context, userID int64, email string) ([]I
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.household_id, h.name, i.role, i.created_at,
 		       IFNULL(NULLIF(u.display_name, ''), IFNULL(u.email, '')),
-		       IFNULL(i.expires_at, ''), IFNULL(i.token_hash, '')
+		       IFNULL(i.expires_at, ''), IFNULL(i.token_hash, ''),
+		       i.created_at > IFNULL((SELECT me.created_at FROM users me WHERE me.id = ?), i.created_at)
 		FROM household_invites i
 		JOIN households h ON h.id = i.household_id
 		LEFT JOIN users u ON u.id = i.invited_by
@@ -823,7 +830,7 @@ func (s *Store) InvitesFor(ctx context.Context, userID int64, email string) ([]I
 		  AND i.expires_at > datetime('now')
 		  AND NOT EXISTS (SELECT 1 FROM household_members m
 		                  WHERE m.household_id = i.household_id AND m.user_id = ?)
-		ORDER BY i.created_at ASC, i.id ASC`, NormalizeEmail(email), userID)
+		ORDER BY i.created_at ASC, i.id ASC`, userID, NormalizeEmail(email), userID)
 	if err != nil {
 		return nil, fmt.Errorf("list my invites: %w", err)
 	}
@@ -833,7 +840,7 @@ func (s *Store) InvitesFor(ctx context.Context, userID int64, email string) ([]I
 	for rows.Next() {
 		var i Invite
 		if err := rows.Scan(&i.ID, &i.HouseholdID, &i.HouseholdName, &i.Role,
-			&i.CreatedAt, &i.InvitedBy, &i.ExpiresAt, &i.TokenHash); err != nil {
+			&i.CreatedAt, &i.InvitedBy, &i.ExpiresAt, &i.TokenHash, &i.AccountPredates); err != nil {
 			return nil, err
 		}
 		i.Email = NormalizeEmail(email)
@@ -855,13 +862,15 @@ func (s *Store) AcceptInvite(ctx context.Context, inviteID, userID int64, email,
 		var role Role
 		var expired bool
 		var tokenHash string
+		var accountPredates bool
 		err := tx.QueryRowContext(ctx, `
 			SELECT household_id, role,
 			       expires_at IS NULL OR expires_at <= datetime('now'),
-			       IFNULL(token_hash, '')
+			       IFNULL(token_hash, ''),
+			       created_at > IFNULL((SELECT created_at FROM users WHERE id = ?), created_at)
 			FROM household_invites
 			WHERE id = ? AND status = 'pending' AND email = ? COLLATE NOCASE`,
-			inviteID, NormalizeEmail(email)).Scan(&householdID, &role, &expired, &tokenHash)
+			userID, inviteID, NormalizeEmail(email)).Scan(&householdID, &role, &expired, &tokenHash, &accountPredates)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -872,7 +881,11 @@ func (s *Store) AcceptInvite(ctx context.Context, inviteID, userID int64, email,
 		if expired {
 			return ErrInviteExpired
 		}
-		if tokenHash != "" && tokenHash != TokenHash(proof) {
+		// The email link is needed only when the account was created after
+		// the invitation: that is the case where somebody could have signed
+		// up with an address they don't own in order to take it. An account
+		// the owner invited because it already existed can accept in the app.
+		if tokenHash != "" && tokenHash != TokenHash(proof) && !accountPredates {
 			return ErrInviteNeedsLink
 		}
 

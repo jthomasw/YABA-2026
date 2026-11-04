@@ -1243,7 +1243,8 @@ func (s *Server) baseView(w http.ResponseWriter, r *http.Request, title, nav str
 		} else {
 			proof := store.TokenHash(s.inviteProof(r))
 			for i := range inv {
-				inv[i].NeedsLink = inv[i].TokenHash != "" && inv[i].TokenHash != proof
+				inv[i].NeedsLink = inv[i].TokenHash != "" && inv[i].TokenHash != proof &&
+					!inv[i].AccountPredates
 			}
 			v.Invites = inv
 		}
