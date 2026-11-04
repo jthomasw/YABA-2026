@@ -23,8 +23,8 @@
 
       <div class="field">
         <label for="starting-balance">How much are you starting with?</label>
-        <input id="starting-balance" name="starting_balance" type="number"
-               min="0" step="0.01" inputmode="decimal" value="{{.StartingBalance}}">
+        <input id="starting-balance" name="starting_balance" type="text"
+               inputmode="decimal" autocomplete="off" value="{{.StartingBalance}}">
         <p class="hint">Leave blank or enter 0 if you are not sure yet.</p>
       </div>
 
@@ -50,7 +50,7 @@
             <div class="field">
               <label for="setup-expense-amount-{{.Index}}">Amount</label>
               <input id="setup-expense-amount-{{.Index}}" name="expense_amount_{{.Index}}"
-                     type="number" min="0.01" step="0.01" inputmode="decimal"
+                     type="text" inputmode="decimal" autocomplete="off"
                      value="{{.Amount}}" placeholder="0.00">
             </div>
             <div class="field">
@@ -109,7 +109,7 @@
             <div class="field">
               <label for="setup-income-amount-{{.Index}}">Amount</label>
               <input id="setup-income-amount-{{.Index}}" name="income_amount_{{.Index}}"
-                     type="number" min="0.01" step="0.01" inputmode="decimal"
+                     type="text" inputmode="decimal" autocomplete="off"
                      value="{{.Amount}}" placeholder="0.00">
             </div>
             <div class="field">
@@ -165,7 +165,7 @@
       <div class="field">
         <label for="setup-expense-amount-__INDEX__">Amount</label>
         <input id="setup-expense-amount-__INDEX__" name="expense_amount___INDEX__"
-               type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00">
+               type="text" inputmode="decimal" autocomplete="off" placeholder="0.00">
       </div>
       <div class="field">
         <label for="setup-expense-date-__INDEX__">Date / next due date</label>
@@ -215,7 +215,7 @@
       <div class="field">
         <label for="setup-income-amount-__INDEX__">Amount</label>
         <input id="setup-income-amount-__INDEX__" name="income_amount___INDEX__"
-               type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00">
+               type="text" inputmode="decimal" autocomplete="off" placeholder="0.00">
       </div>
       <div class="field">
         <label for="setup-income-date-__INDEX__">Date / next payday</label>

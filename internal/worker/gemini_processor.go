@@ -576,7 +576,7 @@ func toGeminiDraft(e geminiExtract) Draft {
 		Label:      category,
 		Payee:      e.Merchant,
 		Amount:     parseGeminiAmount(e.Total),
-		Date:       e.Date,
+		Date:       store.TidyDate(e.Date),
 		Category:   category,
 		Subtotal:   parseGeminiAmount(e.Subtotal),
 		Tax:        tax,

@@ -51,10 +51,27 @@ type DraftItem struct {
 // Everything is optional. A receipt photographed in bad light yields a draft
 // with nothing but Text, which is still an improvement on nothing: the user gets
 // the image on screen beside an empty form instead of having to find it again.
+// CheckDate tidies Date and moves an unreadable one to BadDate.
+func (d *ReceiptDraft) CheckDate() {
+	if d == nil || d.Date == "" {
+		return
+	}
+	if clean, ok := ReadableDate(d.Date); ok {
+		d.Date, d.BadDate = clean, ""
+		return
+	}
+	d.BadDate, d.Date = d.Date, ""
+}
+
 type ReceiptDraft struct {
 	Merchant string `json:"merchant,omitempty"`
 	Category string `json:"category,omitempty"`
 	Date     string `json:"date,omitempty"`
+
+	// BadDate is set (by CheckDate, never stored) when Date is not a real
+	// date: the text that was read, so the form can say so instead of letting
+	// the date box go blank and the expense quietly take today's date.
+	BadDate string `json:"-"`
 
 	Total    Cents `json:"total,omitempty"`
 	Subtotal Cents `json:"subtotal,omitempty"`

@@ -314,6 +314,7 @@
           <div class="fund-actions">
             <form method="POST" action="/funds/{{.ID}}/deposit" class="inline-form">
               {{template "csrf" $}}
+              {{if $.FundToken}}<input type="hidden" name="form_token" value="{{$.FundToken}}">{{end}}
               <input type="hidden" name="back" value="/dashboard?tab=current">
               <label class="visually-hidden" for="dep-{{.ID}}">Add to {{.Name}}</label>
               <input id="dep-{{.ID}}" name="amount" type="number" step="0.01" min="0.01"
@@ -323,6 +324,7 @@
 
             <form method="POST" action="/funds/{{.ID}}/withdraw" class="inline-form">
               {{template "csrf" $}}
+              {{if $.FundToken}}<input type="hidden" name="form_token" value="{{$.FundToken}}">{{end}}
               <input type="hidden" name="back" value="/dashboard?tab=current">
               <label class="visually-hidden" for="wd-{{.ID}}">Take out of {{.Name}}</label>
               <input id="wd-{{.ID}}" name="amount" type="number" step="0.01" min="0.01"
@@ -486,6 +488,7 @@
           <div class="fund-actions">
             <form method="POST" action="/funds/{{.ID}}/deposit" class="inline-form">
               {{template "csrf" $}}
+              {{if $.FundToken}}<input type="hidden" name="form_token" value="{{$.FundToken}}">{{end}}
               <input type="hidden" name="back" value="/dashboard?tab=emergency">
               <label class="visually-hidden" for="dep-{{.ID}}">Add to {{.Name}}</label>
               <input id="dep-{{.ID}}" name="amount" type="number" step="0.01" min="0.01"
@@ -495,6 +498,7 @@
 
             <form method="POST" action="/funds/{{.ID}}/withdraw" class="inline-form">
               {{template "csrf" $}}
+              {{if $.FundToken}}<input type="hidden" name="form_token" value="{{$.FundToken}}">{{end}}
               <input type="hidden" name="back" value="/dashboard?tab=emergency">
               <label class="visually-hidden" for="wd-{{.ID}}">Take out of {{.Name}}</label>
               <input id="wd-{{.ID}}" name="amount" type="number" step="0.01" min="0.01"

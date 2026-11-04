@@ -167,7 +167,7 @@
         <p class="hint">
           For a shop trip that covers several categories. The items must add up to
           the total above, so the category breakdown and your spending total agree.
-          Enter a discount or coupon as a negative amount, for example -2.00.
+          Enter a discount or coupon as a negative amount, for example -2.00, or tap &plusmn; next to its amount.
         </p>
 
         {{/* An added balancing line is called out rather than left to look like
@@ -201,9 +201,8 @@
                    list="category-options">
 
             <label class="visually-hidden" for="item-amt-{{.Position}}">Item amount</label>
-            <input id="item-amt-{{.Position}}" name="item_amount" type="number"
-                   step="0.01" inputmode="decimal"
-                   value="{{.Amount}}" placeholder="0.00">
+            <span class="item-amount"><input id="item-amt-{{.Position}}" name="item_amount" type="text" inputmode="decimal" autocomplete="off"
+                   value="{{.Amount}}" placeholder="0.00"><button type="button" class="btn btn-small btn-quiet item-sign" data-flip-sign hidden aria-label="Switch between a cost and a discount" title="Make this a discount (negative), or back">&plusmn;</button></span>
           </div>
           {{end}}
         </div>
@@ -216,7 +215,7 @@
           <label class="visually-hidden" for="item-cat-new">Item category</label>
           <input id="item-cat-new" name="item_category" type="text" maxlength="60" placeholder="Category" list="category-options">
           <label class="visually-hidden" for="item-amt-new">Item amount</label>
-          <input id="item-amt-new" name="item_amount" type="number" step="0.01" inputmode="decimal" placeholder="0.00">
+          <span class="item-amount"><input id="item-amt-new" name="item_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00"><button type="button" class="btn btn-small btn-quiet item-sign" data-flip-sign hidden aria-label="Switch between a cost and a discount" title="Make this a discount (negative), or back">&plusmn;</button></span>
         </div>
 
         <p class="item-tools">
@@ -260,6 +259,12 @@
           reading asks to be checked in plain words, and every reading is shown
           next to the image it came from rather than presented as fact.
         */}}
+        {{with .BadDate}}
+        <p class="callout callout-warn" role="alert">
+          The date on the receipt was read as <strong>{{.}}</strong>, which isn't
+          a real date. Enter the date from the picture below.
+        </p>
+        {{end}}
         {{if .HasTotal}}
         <p class="callout callout-{{if eq .Certainty "high"}}info{{else}}warn{{end}}" role="status">
           Read <strong>{{money .Total}}</strong>

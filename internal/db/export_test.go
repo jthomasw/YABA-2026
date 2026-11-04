@@ -5,8 +5,10 @@ import "time"
 // Test-only access to unexported helpers, for the external db_test package.
 
 var (
-	ParseSnapshotName = parseSnapshotName
-	FirstBackupDelay  = firstBackupDelay
+	ParseSnapshotName  = parseSnapshotName
+	FirstBackupDelay   = firstBackupDelay
+	ArchiveUploads     = archiveUploads
+	UploadsFingerprint = uploadsFingerprint
 )
 
 // SetBackupTiming shortens BackupLoop's waits and returns a function restoring them.

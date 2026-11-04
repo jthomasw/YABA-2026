@@ -197,7 +197,7 @@
         <p>
           {{money .Spent}} of {{money .Limit}}
           {{if .Over}}
-          <strong class="is-negative">{{money .Remaining}} over</strong>
+          <strong class="is-negative">{{money (overBy .Remaining)}} over</strong>
           {{else}}
           <span class="stat-note">{{money .Remaining}} left</span>
           {{end}}

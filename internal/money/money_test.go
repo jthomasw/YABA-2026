@@ -214,3 +214,19 @@ func TestCommasOnlyBetweenThousands(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSignBeforeDollar(t *testing.T) {
+	for in, want := range map[string]Cents{
+		"-$2.00": -200, "$-2.00": -200, "−$2.50": -250, "+$3": 300, "-$1,234.50": -123450,
+	} {
+		got, err := Parse(in)
+		if err != nil || got != want {
+			t.Errorf("Parse(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"--2", "-$-2", "+$-2", "-$+2", "-", "-$"} {
+		if _, err := Parse(bad); err == nil {
+			t.Errorf("Parse(%q) accepted", bad)
+		}
+	}
+}

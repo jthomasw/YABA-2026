@@ -190,6 +190,13 @@
           {{if not .Active}} &middot; <span class="tag">cancelled</span>{{end}}
         </p>
         {{if .Active}}<p class="stat-note">Next due {{dateName .NextDueDate}}</p>{{end}}
+        {{if or .Payee .Place .Note}}<p class="stat-note">
+          {{- with .Payee}}To {{.}}{{end}}
+          {{- if and .Payee .Place}} &middot; {{end}}
+          {{- with .Place}}At {{.}}{{end}}
+          {{- if and (or .Payee .Place) .Note}} &middot; {{end}}
+          {{- with .Note}}{{.}}{{end -}}
+        </p>{{end}}
       </div>
 
       {{if and .Active $.Role.CanEditEntries}}

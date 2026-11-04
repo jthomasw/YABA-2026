@@ -511,33 +511,38 @@ func (a *app) clearUploadsExcept(sqlDB *sql.DB, dir string, keepID int64) error 
 	}
 
 	// A shared entry is re-attributed to the kept user above, but its receipt is
-	// still physically stored in the uploader's directory.  Preserve every
-	// directory referenced by a surviving row instead of assuming keepID owns it.
+	// still physically stored in the uploader's directory. Preserve every
+	// directory referenced by a surviving row instead of assuming keepID owns
+	// it: saved expenses (transactions.receipt_path) and receipts uploaded but
+	// not yet entered (receipt_jobs.path), which survive the prune too.
 	keep := map[string]bool{strconv.FormatInt(keepID, 10): true}
-	rows, err := sqlDB.Query(`SELECT receipt_path FROM transactions WHERE receipt_path IS NOT NULL AND receipt_path <> ''`)
-	if err != nil {
-		return fmt.Errorf("list surviving receipt paths: %w", err)
-	}
-	for rows.Next() {
-		var stored string
-		if err := rows.Scan(&stored); err != nil {
-			rows.Close()
-			return err
+	var unplaced []string
+	for _, q := range []string{
+		`SELECT receipt_path FROM transactions WHERE receipt_path IS NOT NULL AND receipt_path <> ''`,
+		`SELECT path FROM receipt_jobs WHERE path <> ''`,
+	} {
+		paths, err := queryStrings(sqlDB, q)
+		if err != nil {
+			return fmt.Errorf("list surviving receipt paths: %w", err)
 		}
-		rel, err := filepath.Rel(dir, filepath.FromSlash(stored))
-		if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." {
-			continue
-		}
-		first := strings.Split(filepath.Clean(rel), string(os.PathSeparator))[0]
-		if first != "" && first != "." {
+		for _, stored := range paths {
+			first, ok := uploadFolderOf(dir, stored)
+			if !ok {
+				unplaced = append(unplaced, stored)
+				continue
+			}
 			keep[first] = true
 		}
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
+	// A path that can't be placed under the uploads folder (the server stored
+	// it relative to a different working directory, say) could belong to any
+	// of the folders about to be removed. Deleting nothing is recoverable;
+	// deleting a receipt somebody still needs is not.
+	if len(unplaced) > 0 {
+		fmt.Fprintf(a.out, "Left %s untouched: %d surviving receipt path(s) such as %q are not inside it, so it can't tell which folders are still needed.\n",
+			dir, len(unplaced), unplaced[0])
+		return nil
 	}
-	rows.Close()
 	removed := 0
 	for _, e := range entries {
 		if keep[e.Name()] {
@@ -552,6 +557,60 @@ func (a *app) clearUploadsExcept(sqlDB *sql.DB, dir string, keepID int64) error 
 		fmt.Fprintf(a.out, "Removed %d other user's receipt folder(s).\n", removed)
 	}
 	return nil
+}
+
+// queryStrings runs a one-column query and returns every value.
+func queryStrings(sqlDB *sql.DB, q string) ([]string, error) {
+	rows, err := sqlDB.Query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// uploadFolderOf names the folder directly under the uploads directory that a
+// stored receipt path lives in ("2" for uploads/2/abc.jpg). The server stores
+// paths relative to its own working directory, which need not be this
+// command's, and -uploads may be absolute when they are relative: so a path is
+// tried as given (made absolute), and then, when it starts with the uploads
+// folder's own name, as relative to that folder.
+func uploadFolderOf(dir, stored string) (string, bool) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", false
+	}
+	p := filepath.FromSlash(stored)
+	try := []string{p}
+	if !filepath.IsAbs(p) {
+		parts := strings.Split(filepath.Clean(p), string(os.PathSeparator))
+		if len(parts) > 1 && parts[0] == filepath.Base(absDir) {
+			try = append(try, filepath.Join(append([]string{absDir}, parts[1:]...)...))
+		}
+	}
+	for _, c := range try {
+		abs, err := filepath.Abs(c)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(absDir, abs)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			continue
+		}
+		first := strings.Split(rel, string(os.PathSeparator))[0]
+		if first != "" && first != "." {
+			return first, true
+		}
+	}
+	return "", false
 }
 
 // summarise prints a row count per table.

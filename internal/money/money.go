@@ -31,18 +31,32 @@ func (c Cents) Float() float64 {
 // "$1,234.56" or "-3.00" into Cents without ever touching a float.
 func Parse(s string) (Cents, error) {
 	s = strings.TrimSpace(s)
+	// The sign may come before or after the dollar sign: "-$2.00" is how
+	// Display writes a negative amount and how people type a discount, and
+	// "$-2.00" has always been accepted. A typographic minus (U+2212) or an
+	// en dash, which phone keyboards and pasted text produce, counts as one.
+	for _, m := range []string{"\u2212", "\u2013"} {
+		if strings.HasPrefix(s, m) {
+			s = "-" + s[len(m):]
+		}
+	}
+	neg, signed := false, false
+	if len(s) > 1 && (s[0] == '-' || s[0] == '+') && s[1] == '$' {
+		neg, signed = s[0] == '-', true
+		s = s[1:]
+	}
 	s = strings.TrimPrefix(s, "$")
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, ErrInvalidAmount
 	}
 
-	neg := false
 	switch s[0] {
-	case '-':
-		neg = true
-		s = s[1:]
-	case '+':
+	case '-', '+':
+		if signed {
+			return 0, ErrInvalidAmount // "-$-2", "+$-2"
+		}
+		neg = s[0] == '-'
 		s = s[1:]
 	}
 	if s == "" {

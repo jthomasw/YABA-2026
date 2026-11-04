@@ -138,6 +138,13 @@ func (s *Server) moveFund(w http.ResponseWriter, r *http.Request, deposit bool) 
 
 	back := fundBack(r)
 
+	// A double click, or the form sent again from Back, must not move the
+	// money twice: savings transfers can't be edited or deleted afterwards.
+	user, _ := userFrom(r)
+	if s.duplicateSubmit(w, r, user.ID, back, "That transfer was already made.") {
+		return
+	}
+
 	direction := "to take out of the fund"
 	if deposit {
 		direction = "to move into the fund"

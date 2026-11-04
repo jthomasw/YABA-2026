@@ -442,7 +442,7 @@ func (s *Server) handleExpenseCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := s.store.CreateRecurringExpense(
+	_, err := s.store.CreateRecurringExpenseWith(
 		r.Context(),
 		sc,
 		in.label,
@@ -452,6 +452,9 @@ func (s *Server) handleExpenseCreate(w http.ResponseWriter, r *http.Request) {
 		frequencyN,
 		frequencyUnit,
 		in.occurredOn,
+		// Who, Where and Why stay on the form for Recurring; they used to be
+		// dropped here without a word.
+		store.ExpenseDetails{Payee: in.payee, Place: in.place, Note: in.note},
 	)
 	if errors.Is(err, store.ErrNotFound) {
 		// The bill chosen under Pays towards was removed since the page was

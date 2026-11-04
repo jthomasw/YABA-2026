@@ -438,12 +438,17 @@ func (s *Server) handleTransactionForm(w http.ResponseWriter, r *http.Request) {
 				// stored before balancing existed still opens ready to save.
 				balanced := job.Draft.Balanced()
 				d := &balanced
+				d.CheckDate()
 				v.Draft = d
 				if d.Total > 0 {
 					v.Amount = d.Total.Input()
 				}
 				if d.Date != "" {
 					v.OccurredOn = d.Date
+				} else if d.BadDate != "" {
+					// Not today: an empty box the user has to fill in, with the
+					// callout saying why.
+					v.OccurredOn = ""
 				}
 				if d.Merchant != "" {
 					v.Payee = d.Merchant
@@ -567,7 +572,9 @@ func parseTransactionFormFor(r *http.Request, kind store.Kind) (transactionInput
 	// Income has no breakdown. The form hides the rows and disables them for
 	// income, but anything that arrives anyway (no script, or a stale page) is
 	// ignored rather than validated against a total the user cannot see.
-	if kind != store.KindIncome {
+	// A recurring expense has no breakdown either (a schedule stores none), so
+	// rows left over from switching One-time to Recurring are ignored too.
+	if kind != store.KindIncome && r.PostFormValue("expense_type") != "recurring" {
 		in.itemRows = readItemRows(r)
 	}
 
@@ -741,7 +748,21 @@ func (s *Server) handleTransactionCreate(w http.ResponseWriter, r *http.Request)
 				s.badRequest(w, "That receipt reference was not valid.")
 				return
 			}
-			if _, err := s.store.UnattachedReceipt(r.Context(), sc, jobID); err != nil {
+			job, err := s.store.UnattachedReceipt(r.Context(), sc, jobID)
+			if err == nil && strings.TrimSpace(r.PostFormValue("date")) == "" && job.Draft != nil {
+				// The receipt's date could not be read, so the date box was
+				// empty; saving it as today would put the expense in the wrong
+				// month without anyone noticing.
+				d := *job.Draft
+				d.CheckDate()
+				if d.BadDate != "" {
+					s.restoreSubmissionToken(r, user.ID)
+					s.rerenderTransactionForm(w, r, in,
+						"The date on this receipt couldn't be read. Enter it from the picture.", false, 0)
+					return
+				}
+			}
+			if err != nil {
 				if errors.Is(err, store.ErrNotFound) {
 					s.restoreSubmissionToken(r, user.ID)
 					s.rerenderTransactionForm(w, r, in,
@@ -1006,7 +1027,11 @@ func (s *Server) rerenderTransactionFormAt(w http.ResponseWriter, r *http.Reques
 			if job, err := s.store.UnattachedReceipt(r.Context(), sc, jobID); err == nil {
 				v.ReceiptJobID = job.ID
 				v.ReceiptName = job.OriginalName
-				v.Draft = job.Draft
+				if job.Draft != nil {
+					d := *job.Draft
+					d.CheckDate()
+					v.Draft = &d
+				}
 			}
 		}
 	}

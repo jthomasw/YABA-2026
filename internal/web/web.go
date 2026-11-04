@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	"github.com/gorilla/sessions"
+	"modernc.org/sqlite"
 
 	"github.com/jthomasw/YABA-2026/internal/mail"
 	"github.com/jthomasw/YABA-2026/internal/money"
@@ -1015,6 +1017,14 @@ var pages = []string{
 var funcs = template.FuncMap{
 	// money returns "$1,234.56", with the sign outside the symbol.
 	"money": func(c money.Cents) string { return c.Display() },
+	// overBy turns a negative "remaining" into the positive amount it is over
+	// by: "$20.00 over", not "-$20.00 over".
+	"overBy": func(c money.Cents) money.Cents {
+		if c < 0 {
+			return -c
+		}
+		return c
+	},
 	// amount returns "1234.56" for a number input's value attribute.
 	"amount": func(c money.Cents) string { return c.Input() },
 	// signed prefixes a plus so income and expenses read differently.
@@ -1328,9 +1338,32 @@ func isUserFacing(err error) bool {
 		}
 	}
 
+	// Anything from the database itself is never the user's to read, however
+	// it arrives. The SQLite driver's errors wrap nothing, so the leaf rule
+	// below used to let "database is locked (5)" or "constraint failed: ...
+	// (1811)" straight through when a store path returned one unwrapped.
+	if isInternal(err) {
+		return false
+	}
+
 	// Otherwise: a leaf is the store's own validation message; anything wrapping
 	// something else came from underneath and is not ours to show.
 	return errors.Unwrap(err) == nil
+}
+
+// isInternal reports whether err comes from the database, the filesystem or
+// the request's own plumbing rather than from the app's own checks.
+func isInternal(err error) bool {
+	var sqliteErr *sqlite.Error
+	var pathErr *fs.PathError
+	switch {
+	case errors.As(err, &sqliteErr), errors.As(err, &pathErr):
+		return true
+	case errors.Is(err, sql.ErrNoRows), errors.Is(err, sql.ErrTxDone), errors.Is(err, sql.ErrConnDone),
+		errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return true
+	}
+	return false
 }
 
 // writeJSON encodes v as a JSON response, buffered like render so a marshalling

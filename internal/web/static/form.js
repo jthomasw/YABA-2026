@@ -97,8 +97,17 @@
     // matches the server's arithmetic exactly instead of drifting on values like
     // 0.1 + 0.2.
     function cents(value) {
-      var s = String(value == null ? "" : value).trim();
-      if (s === "") return 0;
+      // Read the way the server reads it: "-$2.00", "$-2.00", "1,234.50" and
+      // a typographic minus are all fine.
+      var s = String(value == null ? "" : value).trim()
+        .replace(/^[\u2212\u2013]/, "-");
+      var neg = false;
+      if (s.charAt(0) === "-") { neg = true; s = s.slice(1).trim(); }
+      s = s.replace(/^\$/, "").trim();
+      if (s.charAt(0) === "-" && !neg) { neg = true; s = s.slice(1); }
+      if (/^\d{1,3}(,\d{3})+(\.|$)/.test(s)) s = s.replace(/,/g, "");
+      s = (neg ? "-" : "") + s;
+      if (s === "" || s === "-") return 0;
       var m = /^(-?)(\d*)(?:\.(\d{0,2}))?$/.exec(s);
       if (!m) return NaN;
       var whole = m[2] === "" ? 0 : parseInt(m[2], 10);
@@ -169,6 +178,20 @@
       });
     }
 
+    // The +/- button: a phone's number keypad has no minus key, so this is
+    // how a discount line is entered there. Shown only with script running.
+    document.querySelectorAll("[data-flip-sign]").forEach(function (b) { b.hidden = false; });
+    document.addEventListener("click", function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest("[data-flip-sign]") : null;
+      if (!btn) return;
+      var input = btn.parentNode.querySelector('input[name="item_amount"]');
+      if (!input) return;
+      var v = input.value.trim().replace(/^[\u2212\u2013]/, "-");
+      input.value = v.charAt(0) === "-" ? v.slice(1).trim() : "-" + v;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.focus();
+    });
+
     // Delegated, so rows added later are covered without rebinding.
     document.addEventListener("input", function (e) {
       if (e.target && (e.target.name === "item_amount" || e.target.id === "amount")) {
@@ -230,7 +253,15 @@
       if (saveLabel) {
         saveLabel.textContent = isRepeat ? "Save Recurring Expense" : "Save Expense";
       }
-      oneTime.forEach(function (el) { el.hidden = isRepeat; });
+      oneTime.forEach(function (el) {
+        el.hidden = isRepeat;
+        // Hidden is not enough: hidden inputs are still submitted, and the
+        // server used to check line items the user could no longer see
+        // against the recurring amount. Disabled controls are left out.
+        el.querySelectorAll("input, select, textarea").forEach(function (c) {
+          c.disabled = isRepeat;
+        });
+      });
     }
 
     types.forEach(function (input) { input.addEventListener("change", update); });

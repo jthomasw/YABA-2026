@@ -615,6 +615,12 @@ type RecurringExpense struct {
 	BucketID  *int64
 	Essential bool
 
+	// Payee, Place and Note are the Who, Where and Why from the form, copied
+	// onto every expense the schedule creates. Empty when not given.
+	Payee string
+	Place string
+	Note  string
+
 	// BucketName is the name of that budget line, or "" when there is none or
 	// it has since been archived. Display only.
 	BucketName string
@@ -670,7 +676,8 @@ const recurringExpenseSelect = `
 	SELECT r.id, r.household_id, r.user_id, r.label, r.amount_cents,
 	       r.bucket_id, r.essential, IFNULL(b.name, ''),
 	       r.frequency_n, r.frequency_unit, r.start_date, r.next_due_date,
-	       r.active, r.created_at, r.updated_at
+	       r.active, r.created_at, r.updated_at,
+	       r.payee, r.place, r.note
 	FROM recurring_expense r
 	LEFT JOIN expense_buckets b ON b.id = r.bucket_id AND b.archived_at IS NULL`
 
@@ -683,6 +690,7 @@ func scanRecurringExpense(row rowScanner) (RecurringExpense, error) {
 		&r.BucketID, &essential, &r.BucketName,
 		&r.FrequencyN, &r.FrequencyUnit, &r.StartDate, &r.NextDueDate,
 		&active, &r.CreatedAt, &r.UpdatedAt,
+		&r.Payee, &r.Place, &r.Note,
 	); err != nil {
 		return RecurringExpense{}, err
 	}
@@ -705,6 +713,29 @@ func (s *Store) CreateRecurringExpense(
 	frequencyN int,
 	frequencyUnit string,
 	startDate string,
+) (int64, error) {
+	return s.CreateRecurringExpenseWith(ctx, sc, label, amount, bucketID, essential,
+		frequencyN, frequencyUnit, startDate, ExpenseDetails{})
+}
+
+// ExpenseDetails are the optional Who, Where and Why of an expense.
+type ExpenseDetails struct {
+	Payee, Place, Note string
+}
+
+// CreateRecurringExpenseWith is CreateRecurringExpense with the optional Who,
+// Where and Why, which every expense the schedule creates then carries.
+func (s *Store) CreateRecurringExpenseWith(
+	ctx context.Context,
+	sc Scope,
+	label string,
+	amount Cents,
+	bucketID *int64,
+	essential bool,
+	frequencyN int,
+	frequencyUnit string,
+	startDate string,
+	d ExpenseDetails,
 ) (int64, error) {
 	if amount <= 0 {
 		return 0, errors.New("a recurring expense needs an amount greater than zero")
@@ -737,12 +768,14 @@ func (s *Store) CreateRecurringExpense(
 		INSERT INTO recurring_expense (
 			household_id, user_id, label, amount_cents,
 			bucket_id, essential,
-			frequency_n, frequency_unit, start_date, next_due_date
+			frequency_n, frequency_unit, start_date, next_due_date,
+			payee, place, note
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sc.HouseholdID, sc.UserID, cleanLabel(label), int64(amount),
 		bucketID, boolToInt(essential),
 		frequencyN, frequencyUnit, startDate, startDate,
+		cleanLabel(d.Payee), cleanLabel(d.Place), cleanNote(d.Note),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("create recurring expense: %w", err)
@@ -897,11 +930,11 @@ func (s *Store) ProcessDueRecurringExpenses(ctx context.Context, sc Scope, asOf 
 				res, err := tx.ExecContext(ctx, `
 					INSERT INTO transactions (
 						household_id, user_id, kind, label, amount_cents,
-						occurred_on, essential, bucket_id
+						occurred_on, essential, bucket_id, payee, place, note
 					)
-					VALUES (?, ?, 'expense', ?, ?, ?, ?, ?)`,
+					VALUES (?, ?, 'expense', ?, ?, ?, ?, ?, ?, ?, ?)`,
 					sc.HouseholdID, r.UserID, cleanLabel(r.Label), int64(r.Amount),
-					due, boolToInt(r.Essential), r.BucketID,
+					due, boolToInt(r.Essential), r.BucketID, r.Payee, r.Place, r.Note,
 				)
 				if err != nil {
 					return fmt.Errorf("create recurring expense transaction: %w", err)

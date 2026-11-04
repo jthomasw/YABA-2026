@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -103,6 +104,17 @@ func sqlMigration(version int, name string, stmts ...string) Migration {
 			return nil
 		},
 	}
+}
+
+// LatestVersion is the newest schema version this build can migrate to.
+func LatestVersion() int {
+	latest := 0
+	for _, m := range migrations() {
+		if m.Version > latest {
+			latest = m.Version
+		}
+	}
+	return latest
 }
 
 // Migrate applies every migration above the recorded version, each in its own
@@ -529,6 +541,7 @@ func migrations() []Migration {
 		// session and reset tokens. NULL is an invitation sent before this,
 		// accepted the old way; they expire within a day.
 		{Version: 25, Name: "invitations carry an emailed secret", Run: migrate025},
+		{Version: 26, Name: "recurring expenses keep who, where and why", Run: migrate026},
 	}
 }
 
@@ -555,6 +568,25 @@ func migrate025(tx *sql.Tx) error {
 	}
 	if _, err := tx.Exec(`ALTER TABLE household_invites ADD COLUMN token_hash TEXT`); err != nil {
 		return fmt.Errorf("add invitation secret: %w", err)
+	}
+	return nil
+}
+
+// migrate026 gives recurring expenses the payee, place and note a one-time
+// expense has, so what is typed on the form is kept and copied onto every
+// expense the schedule creates. Each column is added only if missing.
+func migrate026(tx *sql.Tx) error {
+	for _, col := range []string{"payee", "place", "note"} {
+		has, err := hasColumn(tx, "recurring_expense", col)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := tx.Exec(`ALTER TABLE recurring_expense ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add recurring_expense.%s: %w", col, err)
+		}
 	}
 	return nil
 }
@@ -1624,6 +1656,13 @@ func VerifySnapshot(ctx context.Context, path string) (Counts, error) {
 	if version == 0 {
 		return nil, fmt.Errorf("snapshot %s records no applied migrations", filepath.Base(path))
 	}
+	// A snapshot written by a newer build has tables or columns this one
+	// doesn't know about. Restoring it would leave Migrate reporting "up to
+	// date" while the code runs against a layout it doesn't understand.
+	if latest := LatestVersion(); version > latest {
+		return nil, fmt.Errorf("snapshot %s was made by a newer version of YABA (schema %d; this build knows up to %d). Restore it with that version or later",
+			filepath.Base(path), version, latest)
+	}
 
 	if version < 4 {
 		return snapshotCounts(ctx, snap)
@@ -1686,6 +1725,22 @@ func snapshotCounts(ctx context.Context, snap *sql.DB) (Counts, error) {
 // modifying what it verifies, but a driver that refuses the pragma falls back rather
 // than blocking startup on every pending migration.
 func openForVerify(ctx context.Context, path string) (*sql.DB, error) {
+	// Opening a path that isn't there makes SQLite create it, so a mistyped
+	// "-from" used to leave an empty file in the backup folder that then
+	// looked like the newest snapshot. Check it is a real, non-empty file first.
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("snapshot %s does not exist", path)
+		}
+		return nil, fmt.Errorf("snapshot %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("snapshot %s is not a file", path)
+	}
+	if info.Size() == 0 {
+		return nil, fmt.Errorf("snapshot %s is empty, so it is not a database", filepath.Base(path))
+	}
 	attempts := []string{
 		"?_pragma=query_only(true)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)",
 		"?_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)",
@@ -2052,6 +2107,12 @@ func archiveUploads(uploadDir, dest string) (int, error) {
 
 	stored := 0
 	walkErr := filepath.WalkDir(uploadDir, func(path string, d os.DirEntry, err error) error {
+		// A receipt (or a whole folder) deleted between the listing and the
+		// read -- a user discarding one while the nightly backup runs -- is
+		// simply not in this archive. It used to fail the whole backup.
+		if errors.Is(err, fs.ErrNotExist) && path != uploadDir {
+			return nil
+		}
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -2059,17 +2120,22 @@ func archiveUploads(uploadDir, dest string) (int, error) {
 		if err != nil {
 			return err
 		}
+		// Opened before its entry is created, so a file that has just vanished
+		// leaves no empty entry behind.
+		f, err := os.Open(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		defer f.Close()
 		// Always forward slashes: a zip written on Windows with backslashes in
 		// its entry names does not extract correctly anywhere else.
 		w, err := zw.Create(filepath.ToSlash(rel))
 		if err != nil {
 			return err
 		}
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
 		if _, err := io.Copy(w, f); err != nil {
 			return err
 		}
@@ -2103,10 +2169,18 @@ func uploadsFingerprint(dir string) (string, int, error) {
 	h := sha256.New()
 	files := 0
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		// Gone between the listing and the stat: deleted mid-backup, and so
+		// not part of what is being backed up.
+		if errors.Is(err, fs.ErrNotExist) && path != dir {
+			return nil
+		}
 		if err != nil || d.IsDir() {
 			return err
 		}
 		info, err := d.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}

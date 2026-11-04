@@ -41,6 +41,12 @@ type dashboardView struct {
 	RecurringExpensesSection recurringExpensesSection
 	RecurringIncomeSection   recurringIncomeSection
 
+	// FundToken is a one-time token carried by every Deposit and Take out form
+	// on the page. Any fund action reloads the dashboard (and so mints a new
+	// token), which means a second submission with the same token can only be
+	// a double click or a resent form -- and is ignored.
+	FundToken string
+
 	// Period.
 	Month      string // "" means all time
 	MonthLabel string
@@ -150,6 +156,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		PlannerOpen: r.URL.Query().Get("planner") == "open",
 		FundAddOpen: r.URL.Query().Get("fund") == "open",
 		ThisMonth:   store.Today()[:7],
+	}
+	if v.Role.CanMoveFunds() {
+		v.FundToken = s.issueFormToken(r, "fund")
 	}
 	v.MonthLabel = "All time"
 	if month != "" {

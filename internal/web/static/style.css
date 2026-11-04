@@ -1307,6 +1307,16 @@ a:hover { text-decoration: underline; }
   font-size: 16px;
   font-family: inherit;
 }
+/* The amount box and its +/- button share the third column. The button is
+   there because a phone's number keypad has no minus key. */
+.item-amount {
+  display: flex;
+  gap: .25rem;
+  align-items: stretch;
+}
+.item-amount input { min-width: 0; }
+.item-sign { flex: none; min-width: 2.25rem; padding-inline: .5rem; }
+
 /* A line the app added (tax, tip, "Other") rather than one read off the
    receipt: same inputs, set apart so it is never mistaken for a product. */
 .item-row-added input {

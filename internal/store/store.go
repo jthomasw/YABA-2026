@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jthomasw/YABA-2026/internal/money"
@@ -131,6 +132,39 @@ func ParseDate(s string) (string, error) {
 		return "", fmt.Errorf("date year is out of range")
 	}
 	return t.Format(DateLayout), nil
+}
+
+// TidyDate cleans up a date read off a receipt. A real date written loosely
+// ("2026-9-12", "2026/09/12") comes back as YYYY-MM-DD; anything that is not a
+// real date ("2026-02-30", "12/09") comes back exactly as it was, so the form
+// can show the user what was read and ask for the right one. Empty stays empty.
+func TidyDate(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if clean, ok := ReadableDate(s); ok {
+		return clean
+	}
+	return s
+}
+
+// ReadableDate reports whether s is a real calendar date in a year form, and
+// returns it as YYYY-MM-DD. An <input type="date"> silently blanks anything
+// else, which then saved as today; callers use this to catch that first.
+func ReadableDate(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	for _, layout := range []string{DateLayout, "2006-1-2", "2006/01/02", "2006/1/2"} {
+		t, err := time.Parse(layout, s)
+		if err != nil {
+			continue
+		}
+		if y := t.Year(); y < 1900 || y > 2200 {
+			return "", false
+		}
+		return t.Format(DateLayout), true
+	}
+	return "", false
 }
 
 // monthRange converts 2026-04 into the half-open interval [2026-04-01, 2026-05-01).
