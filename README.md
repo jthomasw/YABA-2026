@@ -23,7 +23,9 @@ framework, and every page works with scripting switched off.
 | SQLite | none — `modernc.org/sqlite` is pure Go, so there is no cgo and no system library |
 | a Gemini API key | optional, for reading receipts (`YABA_GEMINI_KEY`) |
 
-Dependencies are vendored, so a clean checkout builds with no network access.
+Dependencies are not vendored: the first `go build` downloads them from the Go module
+proxy (versions pinned by `go.sum`) and caches them, so later builds need no network
+access. To build fully offline, run `go mod vendor` once on a connected machine.
 
 Without `YABA_GEMINI_KEY` set, the app still accepts receipt uploads — it queues them
 for manual entry instead of reading them. Nothing fails; the feature degrades. The
@@ -203,8 +205,9 @@ gofmt -l .
 ```
 
 `gofmt -l` is the one to watch on Windows: the tree is stored with CRLF line endings,
-which `gofmt` reports as unformatted. Compare against a copy with LF endings if you
-need a clean answer, or rely on CI, which checks out with LF.
+which `gofmt` reports as unformatted. For a clean answer, run it on a copy with LF
+endings, such as a checkout on Linux or macOS. (The repository has no CI pipeline;
+run the commands above before every commit.)
 
 The suite is ordinary `go test` — no build tags, no external services, no fixtures to
 load. Store and web tests each build a real migrated SQLite database in a temp
