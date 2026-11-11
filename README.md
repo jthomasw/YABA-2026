@@ -119,14 +119,40 @@ cannot be used to sign in or reset a password.
 names plus `recurring.go`, `sessions.go`, `ratelimit.go` and `receipt_jobs.go` in
 `store`.
 
+The larger files are split further, so each holds one concern:
+
+| Package | File | What it holds |
+|---|---|---|
+| `web` | `web.go` | `Config`, `Server`, `New`, the route table, `ListenAndServe` |
+| | `middleware.go` | session context, `authed`, permission checks, logging, panic recovery, `/healthz` |
+| | `csrf.go` | CSRF tokens, body parsing and size limits, safe redirects |
+| | `flash.go` | one-shot flash messages |
+| | `render.go` | the template registry (`pages`), template funcs, `view`, error pages |
+| | `assets.go` | static file fingerprinting and serving |
+| | `transactions.go` | the Transactions list and CSV export |
+| | `transaction_form.go` | the add/edit form: fields, line items, parsing, re-rendering |
+| | `transaction_save.go` | create, update and delete handlers |
+| `store` | `transactions.go` | transaction kinds, CRUD, filtering and listing |
+| | `transaction_totals.go` | totals, breakdowns, balance and monthly series |
+| | `helpers.go` | row scanning and small SQL/text helpers |
+| | `recurring.go` | frequencies, date arithmetic, `ProcessAllDueRecurring` |
+| | `recurring_income.go` / `recurring_expense.go` | each schedule type and its catch-up |
+| | `households.go` / `invites.go` | roles and membership / invitations |
+| `db` | `db.go` | `Open`, `OpenReadOnly` |
+| | `migrate.go` | the migration runner and the `migrations()` list |
+| | `migrate001.go`, `migrate003.go`, `migrate004.go` | the larger one-off migrations |
+| | `backup.go` / `restore.go` / `lock.go` | snapshots and pruning / restore / the database lock |
+| `cmd/yaba` | `main.go` | flags and dispatch |
+| | `backup.go`, `reset.go`, `repair.go`, `passwd.go` | one file per command group |
+
 **Migrations are append-only and versioned.** Add a new numbered entry to
-`migrations()` in `internal/db/db.go`; never edit an existing one, because it has
+`migrations()` in `internal/db/migrate.go`; never edit an existing one, because it has
 already run on real databases. A pending migration triggers a verified backup first,
 and a failed backup aborts the migration.
 
 **Templates are a registry, not a directory scan.** A new page under
 `internal/web/templates/` must also be added to the `pages` list in
-`internal/web/web.go`, or rendering it returns `unknown page`.
+`internal/web/render.go`, or rendering it returns `unknown page`.
 
 **Scripts are enhancements.** Anything hidden on load is hidden *by the script*, not by
 the server, so the page works without it. Server-rendering `hidden` or
@@ -450,7 +476,7 @@ was deliberate, it is accepted automatically about an hour later, or at once wit
 `yaba backup -accept-empty`.
 
 **`render: unknown page "x.html"`.** The template was added but not registered in the
-`pages` list in `internal/web/web.go`.
+`pages` list in `internal/web/render.go`.
 
 **Receipts upload but are never read** ("Automatic reading isn't available on this
 server"). `YABA_GEMINI_KEY` is not set, or Google rejected it. Put the key in `.env` and
